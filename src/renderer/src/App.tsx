@@ -14,6 +14,13 @@ interface Meta {
 }
 type MetaMap = Record<Target, Meta>
 
+interface ChangesView {
+  target: Target
+  exists: boolean
+  files: WorktreeFile[]
+  summary: string | null
+}
+
 // @@ routing (ADR-0004): explicit @@target required; no @@ => not dispatched.
 function parseTargets(input: string): { targets: Target[]; text: string; error?: string } {
   const match = input.match(/^(?:@@\w+\s+)+/)
@@ -38,6 +45,7 @@ export default function App() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [repo, setRepo] = useState<{ name: string } | null>(null)
+  const [changes, setChanges] = useState<ChangesView | null>(null)
   const [meta, setMeta] = useState<MetaMap>({
     claude: { status: 'idle' },
     codex: { status: 'idle' },
@@ -50,7 +58,6 @@ export default function App() {
     })
   }, [])
 
-  // Structured sidecar: tokens / turn status / tool, from the transcript watcher.
   useEffect(() => {
     return window.api.onTranscript(({ target, event }) => {
       setMeta((prev) => {
@@ -80,6 +87,11 @@ export default function App() {
     } else if (r.reason === 'not a git repo') {
       setError('选的目录不是 git 仓库')
     }
+  }
+
+  async function showChanges(target: Target): Promise<void> {
+    const s = await window.api.worktreeStatus(target)
+    setChanges({ target, ...s })
   }
 
   function submit(): void {
@@ -118,7 +130,7 @@ export default function App() {
 
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-1 overflow-hidden p-1">
         {TARGETS.map((t) => (
-          <Pane key={t} target={t} meta={meta[t]} />
+          <Pane key={t} target={t} meta={meta[t]} onShowChanges={() => void showChanges(t)} />
         ))}
       </div>
 
@@ -138,11 +150,13 @@ export default function App() {
           发送
         </button>
       </div>
+
+      {changes && <ChangesModal changes={changes} onClose={() => setChanges(null)} />}
     </div>
   )
 }
 
-function Pane({ target, meta }: { target: Target; meta: Meta }) {
+function Pane({ target, meta, onShowChanges }: { target: Target; meta: Meta; onShowChanges: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -184,7 +198,12 @@ function Pane({ target, meta }: { target: Target; meta: Meta }) {
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded bg-neutral-900">
       <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-1 text-xs">
-        <span className="text-neutral-400">@@{target}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-neutral-400">@@{target}</span>
+          <button onClick={onShowChanges} className="text-neutral-600 hover:text-neutral-200">
+            改动
+          </button>
+        </div>
         <span className={`${statusColor} font-mono`}>
           {meta.status === 'idle' ? (
             'idle'
@@ -202,6 +221,60 @@ function Pane({ target, meta }: { target: Target; meta: Meta }) {
         </span>
       </div>
       <div ref={ref} className="min-h-0 flex-1 overflow-hidden p-1" />
+    </div>
+  )
+}
+
+function ChangesModal({ changes, onClose }: { changes: ChangesView; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-neutral-900 p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm text-neutral-200">@@{changes.target} 的改动</h2>
+          <div className="flex gap-2">
+            <button
+              className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+              disabled={!changes.exists}
+              onClick={() => void window.api.worktreeOpen(changes.target)}
+            >
+              在 Finder 打开
+            </button>
+            <button
+              className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+        <div className="overflow-auto">
+          {!changes.exists ? (
+            <p className="text-sm text-neutral-500">这个 agent 还没有工作目录——先发一条消息让它启动。</p>
+          ) : changes.files.length === 0 ? (
+            <p className="text-sm text-neutral-500">无改动（工作区干净）。</p>
+          ) : (
+            <>
+              {changes.summary && (
+                <p className="mb-2 font-mono text-xs text-emerald-400">{changes.summary}</p>
+              )}
+              <ul className="space-y-1 font-mono text-xs">
+                {changes.files.map((f, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="w-8 shrink-0 text-amber-400">{f.flag.trim() || '?'}</span>
+                    <span className="text-neutral-300">{f.path}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

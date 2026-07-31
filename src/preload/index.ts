@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 export type PickRepoResult = { ok: true; name: string } | { ok: false; reason: string }
+export interface WorktreeFile {
+  path: string
+  flag: string
+}
+export interface WorktreeStatus {
+  exists: boolean
+  files: WorktreeFile[]
+  summary: string | null
+}
 
 contextBridge.exposeInMainWorld('api', {
   run: (target: string, text: string): void => {
@@ -34,5 +43,7 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
   pickRepo: (): Promise<PickRepoResult> => ipcRenderer.invoke('repo:pick'),
-  getCurrentRepo: (): Promise<{ name: string } | null> => ipcRenderer.invoke('repo:current')
+  getCurrentRepo: (): Promise<{ name: string } | null> => ipcRenderer.invoke('repo:current'),
+  worktreeStatus: (target: string): Promise<WorktreeStatus> => ipcRenderer.invoke('worktree:status', { target }),
+  worktreeOpen: (target: string): Promise<boolean> => ipcRenderer.invoke('worktree:open', { target })
 })

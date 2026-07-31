@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { basename } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { BrowserWindow, dialog, type IpcMain, type OpenDialogOptions, type WebContents } from 'electron'
+import { BrowserWindow, dialog, shell, type IpcMain, type OpenDialogOptions, type WebContents } from 'electron'
 import type { AgentId } from './adapters/contract'
 import { PtyManager } from './pty-manager'
 import { WorktreeManager } from './worktree-manager'
@@ -11,8 +11,8 @@ import { claudeProjectDir, mapClaudeTranscript } from './adapters/claude/transcr
 import { SettingsStore } from './settings'
 
 // PTY = live TUI (agent:pty:data). Transcript sidecar = structured data (agent:transcript:event).
-// repo:pick / repo:current manage the base repo that worktrees branch from (RepoPicker). Only the
-// repo NAME is returned to the renderer; the full path stays in main.
+// repo:pick / repo:current manage the base repo. worktree:status / worktree:open inspect changes.
+// Only the repo NAME is returned to the renderer; full paths stay in main.
 let worktrees: WorktreeManager
 let ptys: PtyManager
 let settings: SettingsStore
@@ -103,9 +103,7 @@ export function registerIpc(ipcMain: IpcMain): void {
   ipcMain.handle('repo:pick', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const dialogOpts: OpenDialogOptions = { properties: ['openDirectory'], title: '选择一个 git 仓库' }
-    const res = win
-      ? await dialog.showOpenDialog(win, dialogOpts)
-      : await dialog.showOpenDialog(dialogOpts)
+    const res = win ? await dialog.showOpenDialog(win, dialogOpts) : await dialog.showOpenDialog(dialogOpts)
     if (res.canceled || res.filePaths.length === 0) return { ok: false as const, reason: 'canceled' }
     const dir = res.filePaths[0]
     if (!isGitRepo(dir)) return { ok: false as const, reason: 'not a git repo' }
@@ -117,5 +115,17 @@ export function registerIpc(ipcMain: IpcMain): void {
     worktrees.clearAll()
     stopAllTranscripts()
     return { ok: true as const, name: basename(top) }
+  })
+
+  ipcMain.handle('worktree:status', (_event, payload: { target: string }) => {
+    if (!isAgentId(payload.target)) return { exists: false, files: [], summary: null }
+    return worktrees.status(payload.target)
+  })
+
+  ipcMain.handle('worktree:open', async (_event, payload: { target: string }) => {
+    if (!isAgentId(payload.target)) return false
+    // shell.openPath returns '' on success, an error string otherwise.
+    const errMsg = await shell.openPath(worktrees.pathFor(payload.target))
+    return errMsg === ''
   })
 }

@@ -8,6 +8,15 @@ declare interface AgentEventView {
 }
 
 declare type PickRepoResult = { ok: true; name: string } | { ok: false; reason: string }
+declare interface WorktreeFile {
+  path: string
+  flag: string
+}
+declare interface WorktreeStatus {
+  exists: boolean
+  files: WorktreeFile[]
+  summary: string | null
+}
 
 declare interface Window {
   api: {
@@ -19,5 +28,7 @@ declare interface Window {
     onError: (cb: (p: { target: string; message: string }) => void) => () => void
     pickRepo: () => Promise<PickRepoResult>
     getCurrentRepo: () => Promise<{ name: string } | null>
+    worktreeStatus: (target: string) => Promise<WorktreeStatus>
+    worktreeOpen: (target: string) => Promise<boolean>
   }
 }
