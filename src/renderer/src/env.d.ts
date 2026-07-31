@@ -17,6 +17,7 @@ declare interface WorktreeStatus {
   files: WorktreeFile[]
   summary: string | null
 }
+declare type ApplyResult = { ok: true; branch: string } | { ok: false; reason: string }
 
 declare interface Window {
   api: {
@@ -30,5 +31,6 @@ declare interface Window {
     getCurrentRepo: () => Promise<{ name: string } | null>
     worktreeStatus: (target: string) => Promise<WorktreeStatus>
     worktreeOpen: (target: string) => Promise<boolean>
+    worktreeApply: (target: string) => Promise<ApplyResult>
   }
 }

@@ -225,12 +225,42 @@ function Pane({ target, meta, onShowChanges }: { target: Target; meta: Meta; onS
   )
 }
 
+function applyFailText(reason: string): string {
+  switch (reason) {
+    case 'dirty-base':
+      return '主仓库有未提交改动——先提交或 stash 再试'
+    case 'diverged':
+      return '主仓库已超前于该 worktree 起点（agent 跑完后主仓库有新提交）——需手动合并'
+    case 'no-changes':
+      return '没有改动可合并'
+    case 'no-worktree':
+      return '没有工作目录'
+    default:
+      return `git 操作失败（${reason}）`
+  }
+}
+
 function ChangesModal({ changes, onClose }: { changes: ChangesView; onClose: () => void }) {
+  const [applyMsg, setApplyMsg] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const canApply = changes.exists && changes.files.length > 0
+
+  async function apply(): Promise<void> {
+    if (
+      !window.confirm(
+        `把 @@${changes.target} 的改动 fast-forward 合并到主仓库当前分支？\n（仅快进；主仓库须干净，否则不会改动。）`
+      )
+    ) {
+      return
+    }
+    setBusy(true)
+    const r = await window.api.worktreeApply(changes.target)
+    setBusy(false)
+    setApplyMsg(r.ok ? `✓ 已合并到主仓库（branch: ${r.branch}）` : `✗ ${applyFailText(r.reason)}`)
+  }
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={onClose}>
       <div
         className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-neutral-900 p-4"
         onClick={(e) => e.stopPropagation()}
@@ -240,10 +270,17 @@ function ChangesModal({ changes, onClose }: { changes: ChangesView; onClose: () 
           <div className="flex gap-2">
             <button
               className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
-              disabled={!changes.exists}
+              disabled={!changes.exists || busy}
               onClick={() => void window.api.worktreeOpen(changes.target)}
             >
               在 Finder 打开
+            </button>
+            <button
+              className="rounded bg-blue-700 px-3 py-1 text-xs text-neutral-100 hover:bg-blue-600 disabled:opacity-40"
+              disabled={!canApply || busy}
+              onClick={() => void apply()}
+            >
+              {busy ? '合并中…' : '合并到主仓库'}
             </button>
             <button
               className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
@@ -253,6 +290,11 @@ function ChangesModal({ changes, onClose }: { changes: ChangesView; onClose: () 
             </button>
           </div>
         </div>
+
+        {applyMsg && (
+          <div className="mb-3 rounded bg-neutral-800 px-3 py-2 text-xs text-neutral-200">{applyMsg}</div>
+        )}
+
         <div className="overflow-auto">
           {!changes.exists ? (
             <p className="text-sm text-neutral-500">这个 agent 还没有工作目录——先发一条消息让它启动。</p>

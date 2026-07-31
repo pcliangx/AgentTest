@@ -10,6 +10,7 @@ export interface WorktreeStatus {
   files: WorktreeFile[]
   summary: string | null
 }
+export type ApplyResult = { ok: true; branch: string } | { ok: false; reason: string }
 
 contextBridge.exposeInMainWorld('api', {
   run: (target: string, text: string): void => {
@@ -45,5 +46,6 @@ contextBridge.exposeInMainWorld('api', {
   pickRepo: (): Promise<PickRepoResult> => ipcRenderer.invoke('repo:pick'),
   getCurrentRepo: (): Promise<{ name: string } | null> => ipcRenderer.invoke('repo:current'),
   worktreeStatus: (target: string): Promise<WorktreeStatus> => ipcRenderer.invoke('worktree:status', { target }),
-  worktreeOpen: (target: string): Promise<boolean> => ipcRenderer.invoke('worktree:open', { target })
+  worktreeOpen: (target: string): Promise<boolean> => ipcRenderer.invoke('worktree:open', { target }),
+  worktreeApply: (target: string): Promise<ApplyResult> => ipcRenderer.invoke('worktree:apply', { target })
 })

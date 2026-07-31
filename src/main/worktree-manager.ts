@@ -13,8 +13,11 @@ export interface WorktreeStatus {
   readonly summary: string | null
 }
 
-/** Creates one git worktree per agent off a shared base repo (ADR-0002: isolation + comparable diffs).
- *  Unified — never branches on agent name. Uses arg arrays (no shell, no injection surface). */
+export type ApplyFailReason = 'no-worktree' | 'no-changes' | 'dirty-base' | 'diverged' | 'git-error'
+export type ApplyResult = { readonly ok: true; readonly branch: string } | { readonly ok: false; readonly reason: ApplyFailReason }
+
+/** Creates one git worktree per agent off a shared base repo (ADR-0002). Unified — never branches on
+ *  agent name. Uses arg arrays (no shell, no injection surface). */
 export class WorktreeManager {
   constructor(private readonly root: string) {}
 
@@ -24,7 +27,6 @@ export class WorktreeManager {
 
   ensureWorktree(baseRepo: string, agentId: AgentId): string {
     const wt = this.pathFor(agentId)
-    // A git worktree has a `.git` file (not dir) — its presence means already set up.
     if (existsSync(join(wt, '.git'))) return wt
     mkdirSync(this.root, { recursive: true })
     execFileSync('git', ['-C', baseRepo, 'worktree', 'add', '--detach', wt, 'HEAD'], { stdio: 'ignore' })
@@ -39,8 +41,6 @@ export class WorktreeManager {
     }
   }
 
-  /** Wipe all worktrees so the next ensureWorktree re-creates them off a (possibly new) base repo.
-   *  Old base repos may retain a prunable worktree entry — harmless, `git worktree prune` cleans it. */
   clearAll(): void {
     rmSync(this.root, { recursive: true, force: true })
     mkdirSync(this.root, { recursive: true })
@@ -57,14 +57,52 @@ export class WorktreeManager {
     return { exists: true, files, summary }
   }
 
+  /** Land an agent's worktree changes into the base repo: commit them on a temp branch, then
+   *  fast-forward the base's current branch. Safe: refuses if the base is dirty or has diverged
+   *  (never leaves a half-merged state). The worktree switches from detached HEAD onto the branch. */
+  applyToBase(agentId: AgentId, baseRepo: string): ApplyResult {
+    const wt = this.pathFor(agentId)
+    if (!existsSync(join(wt, '.git'))) return { ok: false, reason: 'no-worktree' }
+    if (this.runGit(baseRepo, ['status', '--porcelain']).trim() !== '') return { ok: false, reason: 'dirty-base' }
+    if (this.runGit(wt, ['status', '--porcelain']).trim() === '') return { ok: false, reason: 'no-changes' }
+
+    const branch = `agenttest/${agentId}-${Date.now()}`
+    if (!this.runGitOk(wt, ['checkout', '-B', branch])) return { ok: false, reason: 'git-error' }
+    this.runGitOk(wt, ['add', '-A'])
+    if (
+      !this.runGitOk(wt, [
+        '-c',
+        'user.email=agent@test',
+        '-c',
+        'user.name=agenttest',
+        'commit',
+        '-m',
+        `agenttest: apply @@${agentId} changes`
+      ])
+    ) {
+      return { ok: false, reason: 'git-error' }
+    }
+    if (!this.runGitOk(baseRepo, ['merge', '--ff-only', branch])) {
+      this.runGitOk(baseRepo, ['merge', '--abort']) // never leave a conflicted merge behind
+      return { ok: false, reason: 'diverged' }
+    }
+    return { ok: true, branch }
+  }
+
   private runGit(wt: string, args: readonly string[]): string {
     try {
-      return execFileSync('git', ['-C', wt, ...args], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
+      return execFileSync('git', ['-C', wt, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
     } catch {
       return ''
+    }
+  }
+
+  private runGitOk(wt: string, args: readonly string[]): boolean {
+    try {
+      execFileSync('git', ['-C', wt, ...args], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
     }
   }
 

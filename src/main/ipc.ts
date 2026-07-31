@@ -128,4 +128,9 @@ export function registerIpc(ipcMain: IpcMain): void {
     const errMsg = await shell.openPath(worktrees.pathFor(payload.target))
     return errMsg === ''
   })
+
+  ipcMain.handle('worktree:apply', (_event, payload: { target: string }) => {
+    if (!isAgentId(payload.target)) return { ok: false as const, reason: 'no-worktree' as const }
+    return worktrees.applyToBase(payload.target, getDefaultBaseRepo())
+  })
 }
