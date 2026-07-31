@@ -3,26 +3,31 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Phase 1 stand-in for the "open a repo" flow (RepoPicker lands in Phase 4).
-// If AGENTTEST_BASE_REPO is set, use it; otherwise create a throwaway empty git repo so agents
-// run in an isolated, harmless cwd. Worktrees branch off this base.
-let cached: string | undefined
+// Base repo that agent worktrees branch from. Order: user-picked (RepoPicker) > env > throwaway
+// empty git repo (demo mode). Phase 4's RepoPicker sets the user-picked value.
+let configured: string | undefined
+let cachedTemp: string | undefined
+
+export function setBaseRepo(path: string | undefined): void {
+  configured = path
+}
 
 export function getDefaultBaseRepo(): string {
+  if (configured) return configured
   const env = process.env['AGENTTEST_BASE_REPO']
   if (env) return env
-  if (cached) return cached
+  if (cachedTemp) return cachedTemp
 
-  cached = join(tmpdir(), 'agenttest-base')
-  if (!existsSync(join(cached, '.git'))) {
-    mkdirSync(cached, { recursive: true })
-    execFileSync('git', ['init'], { cwd: cached, stdio: 'ignore' })
+  cachedTemp = join(tmpdir(), 'agenttest-base')
+  if (!existsSync(join(cachedTemp, '.git'))) {
+    mkdirSync(cachedTemp, { recursive: true })
+    execFileSync('git', ['init'], { cwd: cachedTemp, stdio: 'ignore' })
     // worktree add needs a resolvable HEAD -> one empty commit.
     execFileSync(
       'git',
       ['-c', 'user.email=agent@test', '-c', 'user.name=agenttest', 'commit', '--allow-empty', '-m', 'init'],
-      { cwd: cached, stdio: 'ignore' }
+      { cwd: cachedTemp, stdio: 'ignore' }
     )
   }
-  return cached
+  return cachedTemp
 }

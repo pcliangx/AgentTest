@@ -1,23 +1,28 @@
+import { execFileSync } from 'node:child_process'
+import { basename } from 'node:path'
 import { realpathSync } from 'node:fs'
-import type { IpcMain, WebContents } from 'electron'
+import { BrowserWindow, dialog, type IpcMain, type WebContents } from 'electron'
 import type { AgentId } from './adapters/contract'
 import { PtyManager } from './pty-manager'
 import { WorktreeManager } from './worktree-manager'
-import { getDefaultBaseRepo } from './workspace'
+import { getDefaultBaseRepo, setBaseRepo } from './workspace'
 import { TranscriptWatcher } from './transcript-watcher'
 import { claudeProjectDir, mapClaudeTranscript } from './adapters/claude/transcribe'
+import { SettingsStore } from './settings'
 
-// PTY = live TUI (agent:pty:data). Transcript sidecar = structured data (agent:transcript:event):
-// tails ~/.claude/projects/<realpath-cwd>/<sid>.jsonl and emits messages/usage/tool/session/turn.
+// PTY = live TUI (agent:pty:data). Transcript sidecar = structured data (agent:transcript:event).
+// repo:pick / repo:current manage the base repo that worktrees branch from (RepoPicker).
 let worktrees: WorktreeManager
 let ptys: PtyManager
+let settings: SettingsStore
 let sender: WebContents | null = null
 const transcripts = new Map<AgentId, TranscriptWatcher>()
 
 export function initServices(userDataDir: string): void {
+  settings = new SettingsStore(`${userDataDir}/settings.json`)
+  setBaseRepo(settings.baseRepo)
   worktrees = new WorktreeManager(`${userDataDir}/worktrees`)
-  for (const w of transcripts.values()) w.stop()
-  transcripts.clear()
+  stopAllTranscripts()
   ptys = new PtyManager(
     (agent) => worktrees.ensureWorktree(getDefaultBaseRepo(), agent),
     (agent, data) => {
@@ -29,6 +34,11 @@ export function initServices(userDataDir: string): void {
       }
     }
   )
+}
+
+function stopAllTranscripts(): void {
+  for (const w of transcripts.values()) w.stop()
+  transcripts.clear()
 }
 
 function isAgentId(x: string): x is AgentId {
@@ -73,5 +83,32 @@ export function registerIpc(ipcMain: IpcMain): void {
   ipcMain.on('agent:pty:resize', (event, payload: { target: string; cols: number; rows: number }) => {
     sender = event.sender
     if (isAgentId(payload.target)) ptys.resize(payload.target, payload.cols, payload.rows)
+  })
+
+  ipcMain.handle('repo:current', () => {
+    const p = settings.baseRepo
+    return p ? { path: p, name: basename(p) } : null
+  })
+
+  ipcMain.handle('repo:pick', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const res = win
+      ? await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: '选择一个 git 仓库' })
+      : await dialog.showOpenDialog({ properties: ['openDirectory'], title: '选择一个 git 仓库' })
+    if (res.canceled || res.filePaths.length === 0) return { ok: false as const, reason: 'canceled' }
+    const dir = res.filePaths[0]
+    try {
+      execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
+    } catch {
+      return { ok: false as const, reason: 'not a git repo' }
+    }
+    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+    settings.setBaseRepo(top)
+    setBaseRepo(top)
+    // Reset workspaces so agents re-launch in worktrees of the new repo.
+    ptys.disposeAll()
+    worktrees.clearAll()
+    stopAllTranscripts()
+    return { ok: true as const, path: top, name: basename(top) }
   })
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentId } from './adapters/contract'
 
@@ -23,5 +23,12 @@ export class WorktreeManager {
     } catch {
       // best-effort
     }
+  }
+
+  /** Wipe all worktrees so the next ensureWorktree re-creates them off a (possibly new) base repo.
+   *  Old base repos may retain a prunable worktree entry — harmless, `git worktree prune` cleans it. */
+  clearAll(): void {
+    rmSync(this.root, { recursive: true, force: true })
+    mkdirSync(this.root, { recursive: true })
   }
 }

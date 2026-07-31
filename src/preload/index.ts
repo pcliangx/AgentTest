@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export type PickRepoResult = { ok: true; path: string; name: string } | { ok: false; reason: string }
+
 contextBridge.exposeInMainWorld('api', {
   run: (target: string, text: string): void => {
     ipcRenderer.send('agent:run', { target, text })
@@ -30,5 +32,7 @@ contextBridge.exposeInMainWorld('api', {
     return () => {
       ipcRenderer.off('agent:error', h)
     }
-  }
+  },
+  pickRepo: (): Promise<PickRepoResult> => ipcRenderer.invoke('repo:pick'),
+  getCurrentRepo: (): Promise<{ path: string; name: string } | null> => ipcRenderer.invoke('repo:current')
 })

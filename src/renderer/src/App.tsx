@@ -37,11 +37,18 @@ function parseTargets(input: string): { targets: Target[]; text: string; error?:
 export default function App() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [repo, setRepo] = useState<{ name: string } | null>(null)
   const [meta, setMeta] = useState<MetaMap>({
     claude: { status: 'idle' },
     codex: { status: 'idle' },
     kimi: { status: 'idle' }
   })
+
+  useEffect(() => {
+    void window.api.getCurrentRepo().then((r) => {
+      if (r) setRepo({ name: r.name })
+    })
+  }, [])
 
   // Structured sidecar: tokens / turn status / tool, from the transcript watcher.
   useEffect(() => {
@@ -65,14 +72,27 @@ export default function App() {
     })
   }, [])
 
+  async function pickRepo(): Promise<void> {
+    const r = await window.api.pickRepo()
+    if (r.ok) {
+      setRepo({ name: r.name })
+      setError(null)
+    } else if (r.reason === 'not a git repo') {
+      setError('选的目录不是 git 仓库')
+    }
+  }
+
   function submit(): void {
     const { targets, text, error: parseError } = parseTargets(input.trim())
     if (parseError || targets.length === 0) {
       setError(parseError ?? '无目标')
       return
     }
-    setError(null)
-    // Reset per-target meta on a new dispatch.
+    if (!repo) {
+      setError('未选择仓库——agent 会跑在空临时目录。点「打开仓库」选一个 git 仓库再开始。')
+    } else {
+      setError(null)
+    }
     setMeta((prev) => {
       const next = { ...prev }
       for (const t of targets) next[t] = { ...next[t], status: 'running' }
@@ -84,8 +104,20 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
-      <header className="border-b border-neutral-800 px-4 py-2 text-sm text-neutral-400">
-        AgentTest · PTY 原生 TUI + 结构化 transcript 旁路 · 输入栏用 <code className="text-neutral-200">@@</code> 路由
+      <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
+        <div className="flex items-center gap-2 text-neutral-400">
+          <span className="text-neutral-200">AgentTest</span>
+          <span className="text-neutral-700">·</span>
+          <span className={repo ? 'text-neutral-300' : 'text-amber-400'}>
+            {repo ? repo.name : '演示模式（空临时仓库）'}
+          </span>
+        </div>
+        <button
+          className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+          onClick={() => void pickRepo()}
+        >
+          打开仓库
+        </button>
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-1 overflow-hidden p-1">
