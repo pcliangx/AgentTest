@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","cwd":"<worktree>","session_id":"<session-id>","tools":["Bash","Read","Edit","Write","..."],"model":"<model>","permissionMode":"bypassPermissions"}
+{"type":"assistant","message":{"id":"<msg-id>","type":"message","role":"assistant","model":"<model>","content":[{"type":"text","text":"ready"}],"stop_reason":null,"usage":{"input_tokens":0,"output_tokens":0}},"parent_tool_use_id":null,"session_id":"<session-id>","timestamp":"<iso>"}
+{"type":"result","is_error":false,"session_id":"<session-id>","subtype":"success","result":"ready","terminal_reason":"completed","stop_reason":"end_turn","num_turns":1,"total_cost_usd":0.0,"duration_api_ms":0,"usage":{"input_tokens":0,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}
