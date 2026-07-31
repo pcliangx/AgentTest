@@ -14,6 +14,8 @@ export function setBaseRepo(path: string | undefined): void {
 
 export function getDefaultBaseRepo(): string {
   if (configured) return configured
+  // AGENTTEST_BASE_REPO is trusted developer input (dev/test override); not validated like the
+  // user-picked path. A bad value just makes worktree creation fail visibly.
   const env = process.env['AGENTTEST_BASE_REPO']
   if (env) return env
   if (cachedTemp) return cachedTemp

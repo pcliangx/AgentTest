@@ -7,7 +7,7 @@ declare interface AgentEventView {
   payload: unknown
 }
 
-declare type PickRepoResult = { ok: true; path: string; name: string } | { ok: false; reason: string }
+declare type PickRepoResult = { ok: true; name: string } | { ok: false; reason: string }
 
 declare interface Window {
   api: {
@@ -18,6 +18,6 @@ declare interface Window {
     onTranscript: (cb: (p: { target: string; event: AgentEventView }) => void) => () => void
     onError: (cb: (p: { target: string; message: string }) => void) => () => void
     pickRepo: () => Promise<PickRepoResult>
-    getCurrentRepo: () => Promise<{ path: string; name: string } | null>
+    getCurrentRepo: () => Promise<{ name: string } | null>
   }
 }

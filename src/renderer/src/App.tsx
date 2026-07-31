@@ -88,11 +88,7 @@ export default function App() {
       setError(parseError ?? '无目标')
       return
     }
-    if (!repo) {
-      setError('未选择仓库——agent 会跑在空临时目录。点「打开仓库」选一个 git 仓库再开始。')
-    } else {
-      setError(null)
-    }
+    setError(null)
     setMeta((prev) => {
       const next = { ...prev }
       for (const t of targets) next[t] = { ...next[t], status: 'running' }

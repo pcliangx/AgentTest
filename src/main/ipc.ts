@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { basename } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { BrowserWindow, dialog, type IpcMain, type WebContents } from 'electron'
+import { BrowserWindow, dialog, type IpcMain, type OpenDialogOptions, type WebContents } from 'electron'
 import type { AgentId } from './adapters/contract'
 import { PtyManager } from './pty-manager'
 import { WorktreeManager } from './worktree-manager'
@@ -11,7 +11,8 @@ import { claudeProjectDir, mapClaudeTranscript } from './adapters/claude/transcr
 import { SettingsStore } from './settings'
 
 // PTY = live TUI (agent:pty:data). Transcript sidecar = structured data (agent:transcript:event).
-// repo:pick / repo:current manage the base repo that worktrees branch from (RepoPicker).
+// repo:pick / repo:current manage the base repo that worktrees branch from (RepoPicker). Only the
+// repo NAME is returned to the renderer; the full path stays in main.
 let worktrees: WorktreeManager
 let ptys: PtyManager
 let settings: SettingsStore
@@ -60,6 +61,15 @@ function ensureTranscript(target: AgentId): void {
   transcripts.set(target, watcher)
 }
 
+function isGitRepo(dir: string): boolean {
+  try {
+    execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function registerIpc(ipcMain: IpcMain): void {
   ipcMain.on('agent:run', (event, payload: { target: string; text: string }) => {
     sender = event.sender
@@ -87,21 +97,18 @@ export function registerIpc(ipcMain: IpcMain): void {
 
   ipcMain.handle('repo:current', () => {
     const p = settings.baseRepo
-    return p ? { path: p, name: basename(p) } : null
+    return p ? { name: basename(p) } : null
   })
 
   ipcMain.handle('repo:pick', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
+    const dialogOpts: OpenDialogOptions = { properties: ['openDirectory'], title: '选择一个 git 仓库' }
     const res = win
-      ? await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: '选择一个 git 仓库' })
-      : await dialog.showOpenDialog({ properties: ['openDirectory'], title: '选择一个 git 仓库' })
+      ? await dialog.showOpenDialog(win, dialogOpts)
+      : await dialog.showOpenDialog(dialogOpts)
     if (res.canceled || res.filePaths.length === 0) return { ok: false as const, reason: 'canceled' }
     const dir = res.filePaths[0]
-    try {
-      execFileSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' })
-    } catch {
-      return { ok: false as const, reason: 'not a git repo' }
-    }
+    if (!isGitRepo(dir)) return { ok: false as const, reason: 'not a git repo' }
     const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
     settings.setBaseRepo(top)
     setBaseRepo(top)
@@ -109,6 +116,6 @@ export function registerIpc(ipcMain: IpcMain): void {
     ptys.disposeAll()
     worktrees.clearAll()
     stopAllTranscripts()
-    return { ok: true as const, path: top, name: basename(top) }
+    return { ok: true as const, name: basename(top) }
   })
 }

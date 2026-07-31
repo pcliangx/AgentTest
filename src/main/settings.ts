@@ -26,8 +26,9 @@ export class SettingsStore {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
       writeFileSync(this.file, JSON.stringify(this.data, null, 2))
-    } catch {
-      // best-effort persistence
+    } catch (e) {
+      // surface persistence failures; in-memory state still applies for the session
+      console.error('[settings] failed to persist:', e)
     }
   }
 }

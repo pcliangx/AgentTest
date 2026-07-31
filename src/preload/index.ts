@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-export type PickRepoResult = { ok: true; path: string; name: string } | { ok: false; reason: string }
+export type PickRepoResult = { ok: true; name: string } | { ok: false; reason: string }
 
 contextBridge.exposeInMainWorld('api', {
   run: (target: string, text: string): void => {
@@ -34,5 +34,5 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
   pickRepo: (): Promise<PickRepoResult> => ipcRenderer.invoke('repo:pick'),
-  getCurrentRepo: (): Promise<{ path: string; name: string } | null> => ipcRenderer.invoke('repo:current')
+  getCurrentRepo: (): Promise<{ name: string } | null> => ipcRenderer.invoke('repo:current')
 })
