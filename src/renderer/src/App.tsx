@@ -6,6 +6,14 @@ import '@xterm/xterm/css/xterm.css'
 type Target = 'claude' | 'codex' | 'kimi'
 const TARGETS: readonly Target[] = ['claude', 'codex', 'kimi']
 
+interface Meta {
+  status: 'idle' | 'running' | 'done'
+  in?: number
+  out?: number
+  tool?: string
+}
+type MetaMap = Record<Target, Meta>
+
 // @@ routing (ADR-0004): explicit @@target required; no @@ => not dispatched.
 function parseTargets(input: string): { targets: Target[]; text: string; error?: string } {
   const match = input.match(/^(?:@@\w+\s+)+/)
@@ -29,6 +37,33 @@ function parseTargets(input: string): { targets: Target[]; text: string; error?:
 export default function App() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [meta, setMeta] = useState<MetaMap>({
+    claude: { status: 'idle' },
+    codex: { status: 'idle' },
+    kimi: { status: 'idle' }
+  })
+
+  // Structured sidecar: tokens / turn status / tool, from the transcript watcher.
+  useEffect(() => {
+    return window.api.onTranscript(({ target, event }) => {
+      setMeta((prev) => {
+        const t = target as Target
+        const m: Meta = { ...prev[t] }
+        const p = (event.payload ?? {}) as Record<string, unknown>
+        if (event.kind === 'assistant-text') m.status = 'running'
+        else if (event.kind === 'tool-start') {
+          m.status = 'running'
+          m.tool = typeof p.tool === 'string' ? p.tool : m.tool
+        } else if (event.kind === 'usage') {
+          if (typeof p.inputTokens === 'number') m.in = p.inputTokens
+          if (typeof p.outputTokens === 'number') m.out = p.outputTokens
+        } else if (event.kind === 'turn-complete') {
+          m.status = 'done'
+        }
+        return { ...prev, [t]: m }
+      })
+    })
+  }, [])
 
   function submit(): void {
     const { targets, text, error: parseError } = parseTargets(input.trim())
@@ -37,6 +72,12 @@ export default function App() {
       return
     }
     setError(null)
+    // Reset per-target meta on a new dispatch.
+    setMeta((prev) => {
+      const next = { ...prev }
+      for (const t of targets) next[t] = { ...next[t], status: 'running' }
+      return next
+    })
     targets.forEach((t) => window.api.run(t, text))
     setInput('')
   }
@@ -44,12 +85,12 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="border-b border-neutral-800 px-4 py-2 text-sm text-neutral-400">
-        AgentTest · PTY 原生 TUI · 输入栏用 <code className="text-neutral-200">@@</code> 路由，或直接在终端里打字
+        AgentTest · PTY 原生 TUI + 结构化 transcript 旁路 · 输入栏用 <code className="text-neutral-200">@@</code> 路由
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-1 overflow-hidden p-1">
         {TARGETS.map((t) => (
-          <Pane key={t} target={t} />
+          <Pane key={t} target={t} meta={meta[t]} />
         ))}
       </div>
 
@@ -73,7 +114,7 @@ export default function App() {
   )
 }
 
-function Pane({ target }: { target: Target }) {
+function Pane({ target, meta }: { target: Target; meta: Meta }) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -109,9 +150,29 @@ function Pane({ target }: { target: Target }) {
     }
   }, [target])
 
+  const statusColor =
+    meta.status === 'running' ? 'text-amber-400' : meta.status === 'done' ? 'text-emerald-400' : 'text-neutral-500'
+
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded bg-neutral-900">
-      <div className="border-b border-neutral-800 px-3 py-1 text-xs text-neutral-400">@@{target}</div>
+      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-1 text-xs">
+        <span className="text-neutral-400">@@{target}</span>
+        <span className={`${statusColor} font-mono`}>
+          {meta.status === 'idle' ? (
+            'idle'
+          ) : (
+            <>
+              {meta.in !== undefined || meta.out !== undefined ? (
+                <span className="text-neutral-300">
+                  ↑{meta.in ?? 0} ↓{meta.out ?? 0}
+                </span>
+              ) : null}
+              <span className="ml-2">{meta.status}</span>
+              {meta.tool ? <span className="ml-2 text-neutral-500">{meta.tool}</span> : null}
+            </>
+          )}
+        </span>
+      </div>
       <div ref={ref} className="min-h-0 flex-1 overflow-hidden p-1" />
     </div>
   )

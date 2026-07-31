@@ -1,7 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-// PTY surface: run() feeds the @@ bar into a target agent's PTY; ptyInput passes direct keystrokes;
-// ptyResize syncs xterm dimensions. onPtyData streams the agent's TUI bytes back to the renderer.
 contextBridge.exposeInMainWorld('api', {
   run: (target: string, text: string): void => {
     ipcRenderer.send('agent:run', { target, text })
@@ -17,6 +15,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('agent:pty:data', h)
     return () => {
       ipcRenderer.off('agent:pty:data', h)
+    }
+  },
+  onTranscript: (cb: (p: { target: string; event: unknown }) => void): (() => void) => {
+    const h = (_e: unknown, p: { target: string; event: unknown }): void => cb(p)
+    ipcRenderer.on('agent:transcript:event', h)
+    return () => {
+      ipcRenderer.off('agent:transcript:event', h)
     }
   },
   onError: (cb: (p: { target: string; message: string }) => void): (() => void) => {
