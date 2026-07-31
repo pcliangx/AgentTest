@@ -1,19 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 
 type Target = 'claude' | 'codex' | 'kimi'
 const TARGETS: readonly Target[] = ['claude', 'codex', 'kimi']
 
-interface ParseResult {
-  targets: Target[]
-  text: string
-  error?: string
-}
-
-// @@ routing (ADR-0004): targets must be explicit; no @@ => not dispatched.
-function parseTargets(input: string): ParseResult {
+// @@ routing (ADR-0004): explicit @@target required; no @@ => not dispatched.
+function parseTargets(input: string): { targets: Target[]; text: string; error?: string } {
   const match = input.match(/^(?:@@\w+\s+)+/)
   if (!match) {
-    return { targets: [], text: input, error: '必须以 @@target 开头（如 @@claude / @@all）' }
+    return { targets: [], text: input, error: '必须以 @@target 开头（@@claude / @@codex / @@kimi / @@all）' }
   }
   const prefix = match[0]
   const mentions = prefix.match(/@@(\w+)/g)!.map((s) => s.slice(2))
@@ -32,18 +29,6 @@ function parseTargets(input: string): ParseResult {
 export default function App() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [events, setEvents] = useState<Record<Target, AgentEventView[]>>({
-    claude: [],
-    codex: [],
-    kimi: []
-  })
-
-  useEffect(() => {
-    const off = window.api.onEvent(({ target, event }) => {
-      setEvents((prev) => ({ ...prev, [target]: [...prev[target as Target], event] }))
-    })
-    return off
-  }, [])
 
   function submit(): void {
     const { targets, text, error: parseError } = parseTargets(input.trim())
@@ -52,11 +37,6 @@ export default function App() {
       return
     }
     setError(null)
-    setEvents((prev) => {
-      const next = { ...prev }
-      targets.forEach((t) => (next[t] = []))
-      return next
-    })
     targets.forEach((t) => window.api.run(t, text))
     setInput('')
   }
@@ -64,12 +44,12 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="border-b border-neutral-800 px-4 py-2 text-sm text-neutral-400">
-        AgentTest · Phase 0（dummy spawn · IPC 全链路验证）
+        AgentTest · PTY 原生 TUI · 输入栏用 <code className="text-neutral-200">@@</code> 路由，或直接在终端里打字
       </header>
 
-      <div className="grid flex-1 grid-cols-3 gap-2 overflow-hidden p-2">
+      <div className="grid min-h-0 flex-1 grid-cols-3 gap-1 overflow-hidden p-1">
         {TARGETS.map((t) => (
-          <Pane key={t} target={t} events={events[t]} />
+          <Pane key={t} target={t} />
         ))}
       </div>
 
@@ -93,41 +73,46 @@ export default function App() {
   )
 }
 
-function Pane({ target, events }: { target: Target; events: AgentEventView[] }) {
+function Pane({ target }: { target: Target }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const term = new Terminal({
+      fontFamily: 'menlo, monospace',
+      fontSize: 12,
+      theme: { background: '#0a0a0a', foreground: '#e5e5e5' }
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(el)
+    fit.fit()
+    window.api.ptyResize(target, term.cols, term.rows)
+
+    const offData = window.api.onPtyData(({ target: t, data }) => {
+      if (t === target) term.write(data)
+    })
+    const inputDisp = term.onData((data) => window.api.ptyInput(target, data))
+    const onResize = () => {
+      fit.fit()
+      window.api.ptyResize(target, term.cols, term.rows)
+    }
+    window.addEventListener('resize', onResize)
+
+    return () => {
+      offData()
+      inputDisp.dispose()
+      window.removeEventListener('resize', onResize)
+      term.dispose()
+    }
+  }, [target])
+
   return (
-    <div className="flex flex-col overflow-hidden rounded bg-neutral-900">
+    <div className="flex min-h-0 flex-col overflow-hidden rounded bg-neutral-900">
       <div className="border-b border-neutral-800 px-3 py-1 text-xs text-neutral-400">@@{target}</div>
-      <div className="flex-1 space-y-1 overflow-auto p-2 font-mono text-xs">
-        {events.length === 0 ? (
-          <span className="text-neutral-600">idle</span>
-        ) : (
-          events.map((e, i) => (
-            <div key={i}>
-              <span className="text-neutral-500">[{e.kind}]</span> {summarize(e)}
-            </div>
-          ))
-        )}
-      </div>
+      <div ref={ref} className="min-h-0 flex-1 overflow-hidden p-1" />
     </div>
   )
-}
-
-function summarize(e: AgentEventView): string {
-  const p = (e.payload ?? {}) as Record<string, unknown>
-  switch (e.kind) {
-    case 'assistant-text':
-      return String(p.text ?? '')
-    case 'tool-start':
-      return `${p.tool}(${p.arg ?? ''})`
-    case 'tool-end':
-      return `${p.tool} → ${p.status}`
-    case 'usage':
-      return `tokens=${p.tokens}`
-    case 'turn-complete':
-      return '✓ turn complete'
-    case 'process-exited':
-      return `exit code=${p.code}`
-    default:
-      return JSON.stringify(p)
-  }
 }

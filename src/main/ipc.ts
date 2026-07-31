@@ -1,54 +1,52 @@
-import type { IpcMain } from 'electron'
-import { getAdapter } from './adapters/registry'
-import type { AgentEvent, AgentId } from './adapters/contract'
-import { SessionStore } from './session-store'
+import type { IpcMain, WebContents } from 'electron'
+import type { AgentId } from './adapters/contract'
+import { PtyManager } from './pty-manager'
 import { WorktreeManager } from './worktree-manager'
 import { getDefaultBaseRepo } from './workspace'
-import { startRun } from './run-manager'
 
-let sessionStore: SessionStore
+// PTY-primary IPC (ADR-0001 updated): the @@ bar and direct terminal typing both write into the
+// target agent's long-lived PTY; agent TUI output streams back as terminal bytes (xterm renders).
 let worktrees: WorktreeManager
+let ptys: PtyManager
+let sender: WebContents | null = null
 
-/** Call once from app.whenReady with app.getPath('userData'). */
 export function initServices(userDataDir: string): void {
-  sessionStore = new SessionStore(`${userDataDir}/sessions.json`)
   worktrees = new WorktreeManager(`${userDataDir}/worktrees`)
+  ptys = new PtyManager(
+    (agent) => worktrees.ensureWorktree(getDefaultBaseRepo(), agent),
+    (agent, data) => {
+      if (sender && !sender.isDestroyed()) sender.send('agent:pty:data', { target: agent, data })
+    },
+    (agent, code) => {
+      if (sender && !sender.isDestroyed()) {
+        sender.send('agent:pty:data', { target: agent, data: `\r\n\r\n[process exited · code ${code}]\r\n` })
+      }
+    }
+  )
+}
+
+function isAgentId(x: string): x is AgentId {
+  return x === 'claude' || x === 'codex' || x === 'kimi'
 }
 
 export function registerIpc(ipcMain: IpcMain): void {
   ipcMain.on('agent:run', (event, payload: { target: string; text: string }) => {
-    const target = payload.target as AgentId
-    const adapter = getAdapter(target)
-    const send = (e: AgentEvent): void => event.sender.send('agent:event', { target, event: e })
-
-    if (!adapter) {
-      send({
-        kind: 'error',
-        occurredAt: Date.now(),
-        source: 'inferred',
-        payload: { message: `no adapter registered for @@${target} yet (Phase 1 only ships claude)` }
-      })
+    sender = event.sender
+    const { target, text } = payload
+    if (!isAgentId(target)) {
+      event.sender.send('agent:error', { target, message: `unknown @@${target}` })
       return
     }
+    ptys.write(target, `${text}\r`)
+  })
 
-    const cwd = worktrees.ensureWorktree(getDefaultBaseRepo(), target)
-    const nativeSessionId = sessionStore.get(target) // undefined => fresh start
+  ipcMain.on('agent:pty:input', (event, payload: { target: string; data: string }) => {
+    sender = event.sender
+    if (isAgentId(payload.target)) ptys.write(payload.target, payload.data)
+  })
 
-    startRun({
-      adapter,
-      cwd,
-      text: payload.text,
-      nativeSessionId,
-      onEvent: (e) => {
-        // Persist the native conversation id as soon as we see it, so the next @@<target> resumes.
-        if (e.kind === 'session-identified') {
-          const sid = (e.payload as { sessionId?: string }).sessionId
-          if (sid) sessionStore.set(target, sid)
-        }
-        send(e)
-      },
-      onExit: (code) =>
-        send({ kind: 'process-exited', occurredAt: Date.now(), source: 'inferred', payload: { code } })
-    })
+  ipcMain.on('agent:pty:resize', (event, payload: { target: string; cols: number; rows: number }) => {
+    sender = event.sender
+    if (isAgentId(payload.target)) ptys.resize(payload.target, payload.cols, payload.rows)
   })
 }
