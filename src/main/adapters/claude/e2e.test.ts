@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { claudeAdapter } from './adapter'
 import { startRun } from '../../run-manager'
-import type { AgentEvent } from '../contract'
+import { extractNativeSessionId, type AgentEvent } from '../contract'
 
 const RUN = process.env['AGENTTEST_E2E'] === '1'
 
@@ -42,11 +42,11 @@ describe.skipIf(!RUN)('Claude adapter e2e (real claude)', () => {
     expect(kinds).toContain('turn-complete')
     expect(kinds).toContain('session-identified')
 
-    const sid = claudeAdapter.extractSessionId(events)
+    const sid = extractNativeSessionId(events)
     expect(typeof sid).toBe('string')
     expect(sid!.length).toBeGreaterThan(0)
 
-    // --bare should keep output clean: no hook-driven session events leak as warnings/errors.
+    // Structured stdout must remain decodable even when the local Claude profile has hooks/plugins.
     const errors = events.filter((e) => e.kind === 'error')
     expect(errors).toHaveLength(0)
 

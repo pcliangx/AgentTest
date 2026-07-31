@@ -6,6 +6,18 @@ declare interface AgentEventView {
   source: string
   payload: unknown
 }
+declare type RunStartResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'busy' | 'unknown-agent' | 'start-failed' | 'terminal-active'
+    }
+declare type TerminalOpenResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'unknown-agent' | 'structured-run-active' | 'spawn-failed'
+    }
 
 declare type PickRepoResult = { ok: true; name: string } | { ok: false; reason: string }
 declare interface WorktreeFile {
@@ -21,12 +33,14 @@ declare type ApplyResult = { ok: true; branch: string } | { ok: false; reason: s
 
 declare interface Window {
   api: {
-    run: (target: string, text: string) => void
+    run: (target: string, text: string) => Promise<RunStartResult>
+    cancel: (target: string) => Promise<boolean>
+    terminalOpen: (target: string) => Promise<TerminalOpenResult>
+    terminalClose: (target: string) => Promise<boolean>
     ptyInput: (target: string, data: string) => void
     ptyResize: (target: string, cols: number, rows: number) => void
     onPtyData: (cb: (p: { target: string; data: string }) => void) => () => void
-    onTranscript: (cb: (p: { target: string; event: AgentEventView }) => void) => () => void
-    onError: (cb: (p: { target: string; message: string }) => void) => () => void
+    onAgentEvent: (cb: (p: { target: string; event: AgentEventView }) => void) => () => void
     pickRepo: () => Promise<PickRepoResult>
     getCurrentRepo: () => Promise<{ name: string } | null>
     worktreeStatus: (target: string) => Promise<WorktreeStatus>

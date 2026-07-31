@@ -49,4 +49,12 @@ export class BoundedJsonlDecoder {
 
     return { values, warnings }
   }
+
+  /** Parse a final unterminated frame after stdout closes. */
+  flush(): Decoded {
+    if (this.buffer.length === 0) return { values: [], warnings: [] }
+    const buffer = this.buffer
+    this.buffer = ''
+    return this.feed(Buffer.from(`${buffer}\n`, 'utf8'))
+  }
 }

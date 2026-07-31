@@ -1,6 +1,5 @@
-// Claude transcript mapper (pure). Parses one JSONL record from
-// ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl into AgentEvents. This is the structured
-// sidecar to the PTY: authoritative (agent-authored) messages + usage + tool calls + session/turn.
+// Legacy Claude transcript mapper (pure). It is retained for transcript inspection
+// and compatibility, but ADR-0007's default Chat path consumes stream-json directly.
 import type { AgentEvent } from '../contract'
 
 function isRecord(v: unknown): v is Record<string, unknown> {

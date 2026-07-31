@@ -1,42 +1,130 @@
-# Adapter stream-json probe — 2026-07-31
+# Agent runtime protocol probe — 2026-07-31
 
-> 三家 CLI 的真实调用方式、事件 schema、以及 probe 中暴露的跨切面问题。
-> Sanitized 样本见各 `fixtures/sample.jsonl`。本结论供 Phase 1 decoder 实现参考。
+> 本文记录当前结构化主链路的命令、协议与验证边界。迁移依据和 open-design
+> 源码定位见 [`docs/research/open-design-agent-communication.md`](../../../docs/research/open-design-agent-communication.md)。
 
-## 工作调用（已验证）
+## 本机 CLI 版本
 
-| Agent | 命令 | 关键点 |
-| --- | --- | --- |
-| Claude Code | `claude -p "<text>" --output-format stream-json --verbose --dangerously-skip-permissions` | `--output-format stream-json` 在 print 模式**必须配 `--verbose`**，否则报错；stdin 需接 `/dev/null` |
-| Kimi Code | `kimi -p "<text>" --output-format stream-json` | `-p` 模式**不能与 `--auto` 同用**（报 `Cannot combine --prompt with --auto`）；prompt 模式本就非交互 |
-| Codex | `codex exec "<text>" --json --dangerously-bypass-approvals-and-sandbox` | `--json` = JSONL；沙箱/审批旁路用该 flag |
+| Agent | 版本 |
+| --- | --- |
+| Claude Code | 2.1.220 |
+| Codex CLI | 0.146.0 |
+| Kimi Code | 0.31.0 |
 
-探测 cwd：隔离的临时 git 仓库（`/tmp/agenttest-probe`，已 `git init`），避免污染主仓库。
+版本只是本次本机验证快照，不是硬编码的最低版本。可选参数必须做 capability probe，
+不能只按这个版本假定所有用户都支持。
 
-## 事件 schema（各家不同——印证 per-adapter decoder 的必要）
+## 当前工作调用
 
-**Claude Code** — `{type, subtype, ...}`
-- `system/init`：含 `session_id`、`tools`、`model`、`permissionMode`。
-- `assistant`：`message.content[].text`（助手文本）+ `message.usage`。
-- `result`：汇总——`session_id`、`usage`、`total_cost_usd`、`result`、`terminal_reason:"completed"`、`subtype:"success"`。
-- session_id 来源：`system/init` 或 `result`。resume：`claude -p ... --resume <session_id>`。
+| Agent | 启动方式 | prompt 输入 | 输出 | 会话连续性 |
+| --- | --- | --- | --- | --- |
+| Claude | `claude -p --input-format stream-json --output-format stream-json --verbose --permission-mode bypassPermissions` | 一行 Claude user JSON，terminal turn 后 EOF | stream-json / JSONL | `--resume <session-id>` |
+| Codex | `codex exec --json --skip-git-repo-check ...` | 原始文本 stdin，立即 EOF | Codex JSONL | `codex exec resume ... <thread-id>` |
+| Kimi | `kimi acp` | newline-delimited ACP JSON-RPC | newline-delimited ACP JSON-RPC | 每轮 `session/new` + bounded transcript |
 
-**Kimi Code** — 极简 `{role, ...}`
-- `{role:"assistant", content:"..."}`。
-- `{role:"meta", type:"session.resume_hint", session_id, command}`——**直接给出 resume 命令**。
-- session_id 来源：`meta/session.resume_hint`。resume：`kimi -r <session_id>`（或 `-S`）。
+所有子进程均由 `RunManager` 使用参数数组、`shell: false` 和 pipe stdio 启动；
+prompt 不放在 argv 中。
 
-**Codex** — `{type, ...}`，thread/turn/item 模型
-- `thread.started`（`thread_id`）、`turn.started`、`item.completed`（嵌套 `item`，含 message/error 等）、`error`。
-- thread_id 来源：`thread.started`。resume：`codex exec resume` / `codex resume`。
+## Claude Code
 
-## probe 暴露的跨切面问题（Phase 1 必须处理）
+### 参数
 
-1. **配置继承导致巨噪**：嵌套调用继承了用户环境的全部 hooks/plugins/MCP/skills。Claude 的 `system/init` 事件体积巨大（列出全部工具/skill/plugin/MCP/路径），且 SessionStart hook 把 superpowers 全文注入输出；Codex 也有 `Skill descriptions were shortened`。**Phase 1 各 adapter 应以"干净 profile"启动**（如 claude 指向精简 settings、禁用 hooks/plugins；codex/kimi 隔离配置），否则 stdout 被非业务事件淹没。
-2. **模型经代理**：Claude 实际模型为 `glm-5.2[1m]`、`apiKeySource:"none"`；Codex 出现 WebSocket→HTTPS 回退与多次 `request timed out`。环境走代理（与 `Magic-Proxy` 一致）。**Electron 应用若复用同一环境，需确认代理/鉴权可达；Codex exec 当前因网络重试而"看似卡住"**。
-3. **resume 可靠性待验证**：三家都暴露了 session/thread id，但 `--resume` 是否真恢复完整上下文仍需 per-adapter fixture 验证（ADR-0001 的已知风险）。Kimi 直接给 resume 命令，最易接入。
+- `--verbose` 是 stream-json print 模式的必要参数。
+- `--include-partial-messages` 只在 `claude -p --help` 包含该 flag 时加入；
+  老版本不支持时仍可依赖完整 assistant/result 事件。
+- structured run 使用 `--permission-mode bypassPermissions`。
+- Terminal 模式单独使用 `--dangerously-skip-permissions`，不复用 structured argv。
 
-## 对计划的影响
+### 输入与事件
 
-- Claude-first 顺序成立：Claude 与 Kimi 的 schema 清晰、resume 信号明确，先做；**Codex 因网络/超时与配置继承最不稳，放最后**，且 Phase 1 前需先解决其代理连通性。
-- "干净 profile 启动"应作为 ADR-0001 的实施补充（不改变决策，只约束实现）。
+首条 stdin：
+
+```json
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}
+```
+
+decoder 处理：
+
+- `system/init` 的 session id；
+- `stream_event` 的 text、thinking、tool-input delta；
+- 完整 assistant content 和 tool use；
+- result usage/error/terminal reason；
+- partial 与最终 assistant wrapper 的去重；
+- `parent_tool_use_id` 非空的 sidechain 不驱动主回合结束。
+
+stdin 在 terminal turn 后关闭，进程 close 后 run 才真正结束。
+
+## Codex CLI
+
+fresh argv 核心：
+
+```text
+exec --json --skip-git-repo-check --sandbox workspace-write
+-c sandbox_workspace_write.network_access=true -C <cwd>
+```
+
+resume argv 核心：
+
+```text
+exec resume --json --skip-git-repo-check
+-c sandbox_mode="workspace-write"
+-c sandbox_workspace_write.network_access=true <thread-id>
+```
+
+decoder 处理 `thread.started`、turn started/completed、agent message、reasoning、
+command/tool item、usage、error 与 reconnect warning。
+
+注意：当前用户环境走代理时，Codex 可能经历 WebSocket → HTTPS 回退和网络重试，
+表现为首个事件延迟；不能把无输出直接当作进程死亡。
+
+## Kimi Code / ACP
+
+握手顺序：
+
+```text
+initialize
+  -> session/new
+  -> session/prompt
+  -> session/update*
+  -> prompt response
+```
+
+- client capability 声明 `terminal: false`；
+- `session/request_permission` 自动选择允许选项并返回 JSON-RPC response；
+- message/thought chunk 映射为 assistant/thinking；
+- tool call/update 映射为 tool start/end；
+- prompt result 映射 usage 与 turn complete；
+- 每个协议阶段有 progress watchdog；
+- 取消先发 `session/cancel`，再关闭 stdin，最后由 SIGTERM/SIGKILL 兜底。
+
+当前 Kimi adapter 未声明可靠的 ACP `session/load`，因此每轮 `session/new`，由
+SessionStore 回放最多 20 个已成功回合。
+
+## 验证层级
+
+默认测试使用 fake CLI 覆盖：
+
+- 三种 stdin/stdout 形态；
+- partial 去重、session/thread 捕获、usage、工具事件；
+- ACP permission、watchdog 与 protocol cancellation；
+- clean early exit、用户取消、进程组退出；
+- native resume 只发送最新 turn；
+- transcript adapter 回放历史；
+- repo 清理前等待 active run 真正退出。
+
+真实 CLI E2E 必须显式开启：
+
+```bash
+AGENTTEST_E2E=1 npx vitest run <file>
+```
+
+它依赖本机鉴权、代理与模型额度。未运行时只能声称协议 fixture/fake CLI 通过，
+不能声称三家真实 CLI 已完成产品冒烟验证。
+
+## 历史 probe 的结论修正
+
+- “Claude stream-json 不流式”只对未启用 partial 的旧参数成立，不是结构化协议限制。
+- Kimi 的 `-p --output-format stream-json` 是旧实验路径；当前主链路是 `kimi acp`。
+- Codex 当前采用 workspace-write sandbox，不使用
+  `--dangerously-bypass-approvals-and-sandbox`。
+- PTY 适合原生 TUI，但不再承担默认 `@@` 路由或结构化状态来源。

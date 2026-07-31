@@ -1,17 +1,10 @@
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import type { AgentId } from './adapters/contract'
-import { discoverExecutable } from './adapters/shared/discover'
+import { getAdapter } from './adapters/registry'
 
-// Interactive (long-lived) PTY per agent — the architecture doc's 方案 A channel. Each agent runs
-// its native TUI; follow-ups are just typing into the same process (model-2 §4.1 over PTY), so no
-// cold start and full streaming. Spawned in an isolated worktree (ADR-0002), with per-agent
-// autonomy flags (ADR-0003).
-const SPECS: Record<AgentId, { readonly exe: string; readonly args: readonly string[] }> = {
-  claude: { exe: discoverExecutable('claude'), args: ['--dangerously-skip-permissions'] },
-  codex: { exe: discoverExecutable('codex'), args: [] },
-  kimi: { exe: discoverExecutable('kimi'), args: ['--yolo'] }
-}
-
+// Explicit Terminal/takeover channel (ADR-0007). Each agent runs its native TUI
+// in the same isolated worktree used by structured Chat, so IPC must keep the
+// two channels mutually exclusive.
 function cleanEnv(): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
@@ -33,21 +26,29 @@ export class PtyManager {
     const existing = this.ptys.get(agent)
     if (existing) return existing
 
-    const spec = SPECS[agent]
-    const pty = ptySpawn(spec.exe, [...spec.args], {
+    const adapter = getAdapter(agent)
+    if (!adapter) throw new Error(`unknown agent: ${agent}`)
+    const pty = ptySpawn(adapter.executable, [...adapter.terminalArgv], {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,
       cwd: this.resolveCwd(agent),
       env: cleanEnv()
     })
-    pty.onData((data) => this.onData(agent, data))
+    this.ptys.set(agent, pty)
+    pty.onData((data) => {
+      if (this.ptys.get(agent) === pty) this.onData(agent, data)
+    })
     pty.onExit(({ exitCode }) => {
+      if (this.ptys.get(agent) !== pty) return
       this.ptys.delete(agent)
       this.onExit(agent, exitCode)
     })
-    this.ptys.set(agent, pty)
     return pty
+  }
+
+  has(agent: AgentId): boolean {
+    return this.ptys.has(agent)
   }
 
   write(agent: AgentId, data: string): void {

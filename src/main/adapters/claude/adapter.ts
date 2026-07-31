@@ -1,36 +1,48 @@
 import type { AgentAdapter } from '../contract'
-import { mapClaudeEvent } from './decode'
-import { discoverExecutable } from '../shared/discover'
+import { createClaudeEventDecoder } from './decode'
+import { discoverExecutable, executableHelpIncludes } from '../shared/discover'
 
-// Model-1 (one-shot + resume). --bare skips hooks/LSP/plugins so stdout isn't flooded with
-// config-inheritance noise (see PROBE.md). --verbose is required for stream-json in print mode.
-const EXECUTABLE = discoverExecutable('claude')
-const AUTO_APPROVE = ['--dangerously-skip-permissions'] as const
+const TERMINAL_ARGV = ['--dangerously-skip-permissions'] as const
+const STRUCTURED_PERMISSION_ARGV = ['--permission-mode', 'bypassPermissions'] as const
 
-function baseArgv(text: string): readonly string[] {
-  return ['-p', text, '--output-format', 'stream-json', '--verbose', '--bare', ...AUTO_APPROVE]
+export interface ClaudeAdapterOptions {
+  readonly executable?: string
+  readonly partialMessages?: boolean
 }
 
-export const claudeAdapter: AgentAdapter = {
-  id: 'claude',
-  displayName: 'Claude Code',
-  executable: EXECUTABLE,
-  autoApproveFlags: AUTO_APPROVE,
+export function createClaudeAdapter(options: ClaudeAdapterOptions = {}): AgentAdapter {
+  const executable = options.executable ?? discoverExecutable('claude')
+  const partialMessages =
+    options.partialMessages ??
+    executableHelpIncludes(executable, ['-p', '--help'], '--include-partial-messages')
 
-  buildStartArgv: ({ text }) => baseArgv(text),
+  return {
+    id: 'claude',
+    displayName: 'Claude Code',
+    executable,
+    terminalArgv: TERMINAL_ARGV,
+    conversationMode: 'native-resume',
+    protocol: {
+      kind: 'jsonl',
+      promptInput: 'claude-stream-json',
+      createDecoder: createClaudeEventDecoder
+    },
 
-  buildResumeArgv: ({ text, nativeSessionId }) =>
-    ['-p', text, '--output-format', 'stream-json', '--verbose', '--bare', ...AUTO_APPROVE, '--resume', nativeSessionId],
-
-  mapRaw: (raw) => mapClaudeEvent(raw),
-
-  extractSessionId: (events) => {
-    for (const e of events) {
-      if (e.kind === 'session-identified') {
-        const sid = (e.payload as { sessionId?: unknown }).sessionId
-        if (typeof sid === 'string') return sid
-      }
+    buildArgv: ({ nativeSessionId }) => {
+      const argv = [
+        '-p',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        ...STRUCTURED_PERMISSION_ARGV
+      ]
+      if (partialMessages) argv.push('--include-partial-messages')
+      if (nativeSessionId) argv.push('--resume', nativeSessionId)
+      return argv
     }
-    return null
   }
 }
+
+export const claudeAdapter = createClaudeAdapter()

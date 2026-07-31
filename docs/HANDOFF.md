@@ -1,134 +1,236 @@
 # AgentTest — 交接文档（给 Codex）
 
-> 交接日期：2026-07-31　·　最新提交：`a2b02bb`　·　分支：`main`（已推送 origin）
-> 这份文档面向接手继续开发的 AI/人。读完它 + 跑一次 `npm run dev` 就能上手。
+> 更新日期：2026-07-31 · 当前提交基线：`25aeda7` · 分支：`main`
+>
+> 当前工作树包含一次尚未提交的结构化通道迁移。本文描述迁移后的代码状态。
 
 ## 1. 这是什么
 
-一个 **Electron 桌面壳**，嵌入三个编码 agent CLI（**Claude Code / Codex CLI / Kimi Code**）：
+AgentTest 是一个 Electron 桌面壳，统一编排 Claude Code、Codex CLI 和 Kimi Code：
 
-- 统一输入栏用 `@@` 路由（`@@claude` / `@@codex` / `@@kimi` / `@@all`），无 `@@` 不派发；
-- 每个 agent 一个**常驻 PTY**（`node-pty` + `xterm.js`），跑各自的**原生交互式 TUI**——流式、暖进程、即时 follow-up；
-- 每 agent 跑在一个**隔离的 git worktree**（基于用户选的仓库），互不踩；
-- **transcript 旁路**：tail claude 的会话日志，提供结构化数据（token / 回合状态 / 工具）显示在 pane 标题栏；
-- **改动视图**：每 pane 可查看该 worktree 改了哪些文件，并「合并到主仓库」（fast-forward）。
+- 统一输入栏用 `@@claude` / `@@codex` / `@@kimi` / `@@all` 显式路由；
+- 默认 Chat 走厂商提供的结构化 stdio 协议，事件归一化后渲染；
+- 每个 agent 在独立 git worktree 内运行，互不覆盖；
+- 每个 pane 可显式切换到 Terminal，以 PTY 运行原生交互式 TUI；
+- 可查看各 worktree 的改动，并 fast-forward 合并到主仓库。
 
-## 2. 当前状态（已完成）
+现行架构决策见
+[ADR-0007](./adr/0007-structured-chat-pty-terminal.md)：**结构化 Chat 是默认编排通道，
+PTY 只负责 Terminal 接管**。ADR-0006 已被取代。
+
+## 2. 当前状态
 
 | 能力 | 状态 |
-|---|---|
-| 脚手架（electron-vite + React + TS + Tailwind v4） | ✅ |
-| `@@` 路由 + 三 pane（xterm） | ✅ |
-| PTY 长驻（claude/codex/kimi 交互式 TUI） | ✅（codex/kimi 仅 claude 经人肉确认；见 §8） |
-| worktree 隔离 + RepoPicker（打开真实仓库） | ✅ |
-| claude transcript 旁路（结构化元数据） | ✅ |
-| 改动视图（git status/diff）+ 合并到主仓库（ff-only） | ✅ |
-| 结构化 adapter（模型一，一击+resume，claude） | ✅ 但**已休眠**（见 §6） |
+| --- | --- |
+| Electron + React + TypeScript + Tailwind 脚手架 | ✅ |
+| `@@` 显式路由与三 pane | ✅ |
+| Claude stream-json + partial capability probe + native resume | ✅ 单测；真实 E2E 需显式运行 |
+| Codex `exec --json` + native thread resume | ✅ fake CLI 集成测试；真实 E2E 待跑 |
+| Kimi ACP JSON-RPC + permission/cancel + transcript replay | ✅ fake CLI 集成测试；真实 E2E 待跑 |
+| 归一化 Chat UI（文本、thinking、工具、usage、状态、错误） | ✅ |
+| Terminal PTY 接管及结构化 run 互斥 | ✅ |
+| worktree 隔离、RepoPicker、改动查看与 ff-only 合并 | ✅ |
+| 仓库切换前等待结构化子进程退出 | ✅ |
+| 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
 
-提交链：`0bba951`→`24a4692`→`f144c18`→`172db7d`→`27c3450`→`6a5dd09`→`c9ed9b6`→`2c264aa`→`c76cee6`→`a2b02bb`。
+旧 `TranscriptWatcher` 与 Claude transcript mapper 仍保留，但不再属于默认主链路；
+不要用它们从 PTY 输出推断结构化状态。
 
-## 3. 先读这些（按顺序）
+## 3. 先读这些
 
-1. **本文档**。
-2. `docs/adr/0006-v0.1-pty-primary.md` —— **当前架构决策**（PTY 为主通道）。
-3. `docs/PLAN-v0.1.md` —— 原始规划；注意其"方案 B 结构化 / 模型一"已被 **ADR-0006 修订**为 PTY 为主，仅作背景。
-4. `src/main/adapters/PROBE.md` —— 三家 CLI 的真实调用参数、事件 schema、跨切面坑。
-5. `agent-adapter-architecture.md`（仓库根）—— 原始调研，Adapter 设计的背景思想。
+1. 本文档。
+2. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
+3. [open-design 通信调研](./research/open-design-agent-communication.md)。
+4. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
+5. 根目录 `agent-adapter-architecture.md`。
+
+`docs/PLAN-v0.1.md` 和 ADR-0001 至 ADR-0006 是历史背景；发生冲突时以 ADR-0007
+和当前代码为准。
 
 ## 4. 技术栈与命令
 
-- Electron + `electron-vite`（main/preload 走 CJS；**无** `"type":"module"`）+ React 19 + TypeScript **7** + Tailwind **v4**（`@tailwindcss/vite`，CSS 用 `@import "tailwindcss"`）+ `vitest` + `node-pty`（原生）+ `@xterm/xterm`。
+当前 `package.json` 的核心版本：
+
+- Electron 43.2、electron-vite 5、Vite 8.2；
+- React 19.2、TypeScript 7.0；
+- Tailwind CSS 4.3、Vitest 4.1；
+- node-pty 1.1、xterm 6。
+
+main/preload 仍由 electron-vite 以 CJS 构建；不要给 `package.json` 添加
+`"type": "module"`。
 
 ```bash
-npm run dev            # 起 Electron 开发（会打开窗口）
-npm run build          # electron-vite 打包 main/preload/renderer
-npm run typecheck      # tsc 两套配置（node + web）
-npm test               # vitest 单测（e2e 默认 skip）
-AGENTTEST_E2E=1 npx vitest run <file>   # 跑真实 CLI 的 e2e（会花额度）
-npm run rebuild:native # 重编 node-pty 对齐 Electron ABI（重装 node_modules 后必跑）
+npm install --legacy-peer-deps
+npm run rebuild:native
+npm run dev
+
+npm run typecheck
+npm test
+npm run build
+
+AGENTTEST_E2E=1 npx vitest run <e2e-test-file>
 ```
 
-- npm registry 走 npmmirror；装依赖用 `--legacy-peer-deps`（Vite/Electron peer 严格解析会冲突）。
-- **GUI 流程无法在 agent 内驱动**：typecheck/build/test 能自动验；渲染/对话框/合并按钮要**人肉跑 `npm run dev` 验**。
+重装 `node_modules` 后必须重新运行 `npm run rebuild:native`，使 node-pty ABI
+与 Electron 对齐。默认测试不会调用真实 agent，避免消耗额度。
 
-## 5. 架构（当前）
+## 5. 当前架构
 
-**双通道**：
-- **PTY**（主）：`PtyManager` 每 agent 一个长驻 `node-pty` 进程，跑交互式 TUI；字节流 → `agent:pty:data` → renderer 的 xterm。`@@` 路由 = 往目标 PTY 写 `text\r`；也支持直接在终端打字。
-- **transcript 旁路**（claude）：`TranscriptWatcher` 轮询 tail `~/.claude/projects/<编码cwd>/<sid>.jsonl` → 解析成结构化事件 → `agent:transcript:event` → pane 标题栏显示 token/状态/工具。
+```text
+renderer (React)
+  ├─ Chat: invoke agent:run / agent:cancel
+  │          │
+  │          v
+  │   AgentRuntime -- SessionStore
+  │          │
+  │          v
+  │     RunManager -- spawn(shell:false, pipes, per-turn process)
+  │          │
+  │          ├─ Claude: stream-json decoder
+  │          ├─ Codex: JSONL decoder
+  │          └─ Kimi: ACP JSON-RPC session driver
+  │
+  └─ Terminal: node-pty raw bytes <-> xterm
 
-**IPC 通道**（`src/main/ipc.ts`）：
-- renderer→main（send）：`agent:run {target,text}`、`agent:pty:input {target,data}`、`agent:pty:resize {target,cols,rows}`
-- main→renderer（send）：`agent:pty:data {target,data}`、`agent:transcript:event {target,event}`、`agent:error {target,message}`
-- invoke（请求/响应）：`repo:pick`、`repo:current`、`worktree:status {target}`、`worktree:open {target}`、`worktree:apply {target}`
-
-**worktree 隔离**：`WorktreeManager` 每 agent 一个 `git worktree add --detach`，基于 `SettingsStore` 选中的 base repo（`getDefaultBaseRepo()`）。`@@all` → 三家各自 worktree 独立改。
-
-**进程分工**：main（Node）= PTY/git/adapter/持久化/IPC；preload = `contextBridge`（只暴露受控 API）；renderer（React）= xterm + 输入栏 + 弹窗。
-
-## 6. 关键约定（务必遵守）
-
-- **语言**：面向用户的文案/文档用**中文**；代码、标识符、路径、commit 信息用**英文**。
-- **registry/router 禁止 `switch(agentId)`**（见 `adapters/contract.ts`、`registry.ts` 注释；原始调研 §2/§13）。新增 adapter 不应改 router/run-manager。
-- **结构化代码（模型一）保留但休眠**：`run-manager.ts`、`adapters/claude/{adapter,decode}.ts`、`session-store.ts`、`registry.ts` 当前不在主流程（PTY 接管），但已测、保留作未来 model-2 双向（ADR-0005）或元数据旁路复用。**别删。**
-- **CJS main**：`__dirname` 可用；别加 `"type":"module"`（会破坏 Electron main）。electron-vite 自动外部化 `dependencies`（node-pty 不打进 bundle）。
-- **TS7**：`moduleResolution: "Node"` 与 `baseUrl` 已被移除——用 `"Bundler"`、别用 `baseUrl`。
-
-## 7. 安全约定
-
-- **子进程一律用 `execFileSync`/`spawn` + 参数数组**，禁止 `exec` 拼字符串（防注入；见 `worktree-manager.ts`、`discover.ts`、`ipc.ts` 的 `isGitRepo`）。
-- **只把仓库名（basename）回传 renderer**，完整路径留在 main。
-- 合并主仓库前 UI 二次确认 + 前置"主仓库须干净"+ 仅 `--ff-only`（失败即 `merge --abort`，不留半状态）。
-
-## 8. 已知坑（每个都耗过真实时间，务必看）
-
-1. **node-pty 是原生模块**：`rm -rf node_modules` 重装后必须 `npm run rebuild:native`（`electron-rebuild` 按 Electron ABI 编译）。`allow-scripts`（npm 11 安全特性）会拦 postinstall——`esbuild`、`electron`、`node-pty`、`fsevents` 的 install 脚本被拦，需手动跑（esbuild: `node node_modules/esbuild/install.js`；electron: 带 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 跑 install）。
-2. **claude transcript 路径**：claude 用 **realpath** 命名 projects 目录——macOS 上 `/var`→`/private/var`，必须 `realpathSync(cwd)` 再编码（`ipc.ts` 的 `ensureTranscript` 已做）。
-3. **claude 目录编码**：每个**非字母数字**字符 → `-`（含下划线、空格、`/`），见 `transcribe.ts` 的 `claudeProjectDir`。早期只替换 `/\:空格` 漏了 `_`，e2e 逼出来。
-4. **transcript 落盘时机**：交互式 claude 在**一个 turn 完成后**才写 transcript（启动/被早期 kill 时不写）。`-p` 模式也按 turn。watcher 要容忍文件晚出现 + 最后一行可能**无结尾换行**（`transcript-watcher.ts` 已处理残余 buffer）。
-5. **`-p` transcript 没有 `system` 记录**：session id 从 `user` 记录取（`transcribe.ts`）。
-6. **交互式 claude 调用**：`-p --output-format stream-json --verbose --bare`；`--verbose` 是 stream-json 在 print 模式的硬性要求，`--bare` 跳过 hooks/LSP/plugins（消除配置继承噪声、还更快）。
-7. **git push 走 HTTPS**：用户全局有 `url.https://github.com/.insteadof git@github.com:`，`git@github.com:` 会被改写成 HTTPS。符合既有配置，别强改 SSH。
-8. **npm `tail` 掩盖退出码**：typecheck 用 `set -o pipefail` 包住管道，否则失败被 `tail` 吞掉。
-
-## 9. 还没做 / 下一步（挑一个开干）
-
-按价值排序：
-
-1. **codex/kimi transcript 旁路**：probe 它俩的会话日志（`~/.codex/sessions/`、`~/.kimi-code/`），写各自的 `mapXxxTranscript` + projectDir 解析，在 `ensureTranscript` 里按 agent 分派。让三个 pane 都有 token/状态。
-2. **确认 codex/kimi 在 app 里真能跑**：目前只 claude 经人肉确认。`@@codex 你好`/`@@kimi 你好` 试；codex 之前 `exec` 模式有网络重试（见 PROBE.md），交互式可能不同。
-3. **对比视图**：并排 diff 两个 agent 的 worktree（竞技场核心体验）。
-4. **UX**：Split（并排）/Focus（Tab）切换（ADR 里的 A+C）、每 pane「重启 agent」、改动文件数实时显示。
-5. **model-2 duplex**（ADR-0005，延后）：claude `--input-format stream-json` 双向，解锁 mid-run steer/中断——但失去原生 TUI。
-
-## 10. 代码地图
-
+每条路径的 cwd -> 对应 agent 的独立 git worktree
 ```
+
+### 5.1 声明式 adapter
+
+`AgentAdapter` 只声明：
+
+- executable、Terminal argv；
+- `buildArgv()`；
+- `jsonl` 或 `acp-json-rpc` 协议；
+- `native-resume` 或 `transcript` 会话策略。
+
+`registry.ts` 只组合 adapter。router、runtime、worktree manager 禁止出现
+`switch(agentId)` 或同类 agent 特判。
+
+### 5.2 三家结构化协议
+
+- **Claude**：`claude -p --input-format stream-json --output-format stream-json
+  --verbose --permission-mode bypassPermissions`。prompt 是一行 user JSON。
+  `--include-partial-messages` 仅在 `claude -p --help` 探测支持时添加。捕获
+  session id，后续使用 `--resume`。
+- **Codex**：新回合使用 `codex exec --json ... -C <cwd>`；原始 prompt 写入
+  stdin 后 EOF。捕获 thread id，后续使用 `codex exec resume --json ... <id>`。
+- **Kimi**：启动 `kimi acp`，依次执行 `initialize → session/new →
+  session/prompt`。处理 `session/update`、权限请求和 `session/cancel`。当前未用
+  `session/load`，每轮以 bounded transcript 补历史。
+
+三者都映射为 `AgentEvent`：assistant、thinking、tool start/end、usage、session、
+turn complete、warning、error 和 process exited。
+
+### 5.3 生命周期与持久化
+
+- 同一 agent 同时只能有一个 structured run。
+- 协议 `turn-complete` 后进入 finishing；收到进程 `close` 才真正释放 run。
+- 仅 `exit code === 0`、协议已完成且没有 error 时，记录本轮 transcript/session。
+- native resume 失败会清除旧 session id；下一轮用已完成 transcript 重建。
+- 取消使用进程组 SIGTERM/SIGKILL；ACP 先发 `session/cancel`。
+- 切换 base repo 时先 `await runtime.disposeAll()`，再清理 worktree/session。
+
+### 5.4 Chat 与 Terminal 互斥
+
+- structured run 活跃时不能打开同一 agent 的 Terminal；
+- Terminal PTY 活跃时不能发起同一 agent 的 structured run；
+- PTY 只承载原生 TUI，不参与默认 `@@` 路由和语义解析。
+
+### 5.5 IPC
+
+renderer → main：
+
+- invoke：`agent:run`、`agent:cancel`、`agent:terminal:open`、
+  `agent:terminal:close`；
+- send：`agent:pty:input`、`agent:pty:resize`；
+- repo/worktree：`repo:pick`、`repo:current`、`worktree:status`、
+  `worktree:open`、`worktree:apply`。
+
+main → renderer：
+
+- `agent:event { target, event }`；
+- `agent:pty:data { target, data }`。
+
+preload 只通过 `contextBridge` 暴露上述受控 API；完整仓库路径不发送给 renderer。
+
+## 6. 关键约定
+
+- 面向用户的文案和文档用中文；代码、标识符、路径和提交信息用英文。
+- 子进程使用 `spawn` / `execFileSync` 加参数数组，固定 `shell: false`；禁止拼 shell
+  命令。
+- vendor 差异只能进入 adapter/decoder/protocol driver，不能进入 router。
+- 结构化事件必须来源于协议；推断事件不得驱动成功生命周期。
+- SessionStore 只记录成功回合，历史最多 20 轮，每条消息最多 12,000 字符。
+- 合并主仓库前 UI 二次确认，主仓库必须干净，只允许 `--ff-only`。
+- 不要删除结构化 adapter、旧 transcript mapper 或 PTY；它们现在各有清晰职责。
+
+## 7. 已知坑
+
+1. **node-pty 原生 ABI**：重装依赖后必须 `npm run rebuild:native`。npm 11
+   `allow-scripts` 可能拦截 electron/esbuild/node-pty 安装脚本。
+2. **Claude partial flag 不是所有版本都有**：必须保留 help capability gate；没有
+   partial 时 decoder 仍需接受完整 assistant/result 事件。
+3. **Claude stream-json stdin 不能过早 EOF**：写入首条 user JSON 后保持打开，
+   收到 terminal turn 后再关闭；否则可能截断工具链或 result。
+4. **不要把 `turn-complete` 当作进程已退出**：UI/Terminal/worktree 清理必须以
+   `process-exited`/`finished` 为边界。
+5. **Codex resume argv 与 fresh argv 不对称**：当前 resume 子命令不带 `-C`；
+   child 本身已在 worktree cwd 启动。用户环境的代理可能导致网络重试。
+6. **Kimi ACP 是有状态握手**：每个阶段都有 watchdog；权限请求需回 JSON-RPC
+   response；取消优先 `session/cancel`，再由信号兜底。
+7. **PTY 与 structured run 必须互斥**：否则两个 agent 进程会同时修改同一个
+   worktree。
+8. **Electron main 是 CJS**：`__dirname` 可用；不要通过 `"type":"module"` 处理
+   Vitest 的 Vite config warning。
+9. **真实 CLI 测试有成本且依赖本机鉴权/代理**：默认 skip，交付前明确记录是否跑过。
+
+## 8. 代码地图
+
+```text
 src/main/
-  index.ts              app 生命周期 + initServices + registerIpc
-  ipc.ts                IPC 总编排（PTY/ transcript/ repo/ worktree）★改交互先看这
-  pty-manager.ts        每 agent 长驻 PTY（node-pty）
-  worktree-manager.ts   git worktree 增删 + status + applyToBase（合并）
-  transcript-watcher.ts 轮询 tail 会话日志（通用）
-  workspace.ts          base repo 解析（用户选 > env > 临时空仓）
-  settings.ts           持久化 base repo
-  run-manager.ts        【休眠】结构化一击 spawn（model-2 复用）
+  index.ts                     Electron 生命周期
+  ipc.ts                       IPC 与服务总编排
+  agent-runtime.ts             run 独占、会话恢复、成功持久化
+  run-manager.ts               每 turn 子进程、stdio、取消、退出边界
+  session-store.ts             native session + bounded transcript
+  pty-manager.ts               显式 Terminal 的 node-pty
+  worktree-manager.ts          worktree/status/apply
   adapters/
-    contract.ts         AgentAdapter / AgentEvent 类型
-    registry.ts         组合 adapter（禁 switch）
-    PROBE.md            三家 CLI 调用与 schema 笔记
-    claude/{adapter,decode,transcribe}.ts  结构化 adapter + transcript mapper
-    claude/*.test.ts    单测 + e2e（AGENTTEST_E2E=1）
-    shared/{bounded-jsonl-decoder,discover}.ts
-src/preload/index.ts    contextBridge 受控 API + 类型
-src/renderer/           React + xterm + 输入栏 + 改动弹窗（App.tsx）
-docs/                   PLAN-v0.1.md、adr/0001..0006、（本 HANDOFF.md）
+    contract.ts                声明式 adapter 与 AgentEvent 合同
+    registry.ts                adapter 组合（禁 agent 特判）
+    claude/{adapter,decode}.ts  Claude stream-json
+    codex/{adapter,decode}.ts   Codex JSONL
+    kimi/adapter.ts             Kimi ACP runtime 定义
+    shared/                     executable discovery、capability probe、JSONL buffer
+  protocols/acp-session.ts     ACP JSON-RPC driver
+src/preload/index.ts           contextBridge API
+src/renderer/src/
+  App.tsx                      Chat/Terminal UI、@@ 路由、worktree 弹窗
+  chat-state.ts                纯事件 reducer
+docs/
+  adr/0007-*.md                当前架构决策
+  research/open-design-*.md    迁移依据
 ```
 
-## 11. 工作纪律（怎么接手不翻车）
+## 9. 下一步
 
-- 改代码后、提交前必跑：`npm run typecheck && npm test && npm run build`（用 `set -o pipefail`）。
-- 真实 CLI 的验证写 e2e（`describe.skipIf(!process.env.AGENTTEST_E2E)`），默认 skip 不烧额度。
-- **GUI 流程要人肉验**：agent 内无法驱动 Electron 窗口——交付时如实标注"待手动验"。
-- commit 信息：`type: 简述`（feat/fix/docs），结尾加 `Co-Authored-By:` 行（本项目用 `Claude Fable 5 <noreply@anthropic.com>`；Codex 接手可换自己的）。
-- 方向性决策（如换通道/改 ADR）写进 `docs/adr/`，别悄悄掉头。
+1. 在真实 Electron 窗口分别验证 Claude/Codex/Kimi：首轮、续轮、取消、Terminal
+   接管、`@@all` 并发和仓库切换。
+2. 为 Codex 与 Kimi 增加 opt-in 真实 CLI E2E；Claude E2E 覆盖 capability-on/off。
+3. 丰富结构化 Chat：Markdown、工具详情、diff/approval 展示、可恢复的历史视图。
+4. 增加 CLI version/auth/capability 状态页，避免把 spawn/auth 错误只显示成通用失败。
+5. 基准测试 structured cold start 与 PTY warm follow-up 的 p50/p95，再决定是否需要
+   可选的长驻 duplex runtime。
+6. 做三家 worktree 的并排 diff/对比视图。
+
+## 10. 交付纪律
+
+提交前必跑：
+
+```bash
+npm run typecheck && npm test && npm run build
+```
+
+另外执行 `git diff --check`。真实 CLI E2E 与 Electron GUI 冒烟不能假装已自动完成；
+未运行时在交付说明中明确标注。
