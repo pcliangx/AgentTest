@@ -1,11 +1,11 @@
 import type { AgentAdapter, AgentId } from './contract'
+import { claudeAdapter } from './claude/adapter'
 
-// Phase 0: no real adapters yet — the dummy run bypasses this registry (see run-manager.ts).
-// Phase 1 plugs in the Claude adapter here; Phase 2/3 add codex/kimi.
+// Phase 1: only Claude is real. codex/kimi return undefined from getAdapter until Phase 2/3.
 //
-// INVARIANT: this file only composes. Adding a fourth adapter must NOT require changes in
-// router / run-manager / worktree-manager, and must NOT introduce switch(agentId) (doc §2/§13).
-export const adapters: readonly AgentAdapter[] = []
+// INVARIANT: this file only composes. Adding an adapter must NOT require changes in router /
+// run-manager / worktree-manager, and must NOT introduce switch(agentId) (doc §2/§13).
+export const adapters: readonly AgentAdapter[] = [claudeAdapter]
 
 const byId = new Map<AgentId, AgentAdapter>(adapters.map((a) => [a.id, a]))
 

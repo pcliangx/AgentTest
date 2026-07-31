@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'node:path'
-import { registerIpc } from './ipc'
+import { initServices, registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -28,6 +28,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  initServices(app.getPath('userData'))
   registerIpc(ipcMain)
   createWindow()
 

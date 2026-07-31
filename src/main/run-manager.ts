@@ -1,30 +1,29 @@
 // Run manager — owns one agent run's process lifecycle.
-//
-// Phase 0: spawns a DUMMY node script (scripts/dummy-agent.mjs) that emits fake AgentEvent-shaped
-// JSONL. This proves the spawn → stdout → bounded decode → IPC → pane pipeline end-to-end before
-// any real adapter exists.
-//
-// Phase 1 replaces startDummyRun with a version that takes an AgentAdapter from the registry and
-// spawns the real CLI (claude -p --output-format stream-json ...). The seam is already here.
+// Spawns the agent CLI, feeds stdout through a per-run BoundedJsonlDecoder, maps raw events via the
+// adapter, and reports AgentEvents + exit. Per-run decoder state => safe under concurrent runs.
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { join } from 'node:path'
 import { BoundedJsonlDecoder } from './adapters/shared/bounded-jsonl-decoder'
-import type { AgentEvent, AgentEventKind } from './adapters/contract'
+import type { AgentAdapter, AgentEvent } from './adapters/contract'
 
-export interface DummyRunOptions {
-  readonly target: string
+export interface RunOptions {
+  readonly adapter: AgentAdapter
   readonly cwd: string
+  readonly text: string
+  /** If present, the run resumes this native conversation; otherwise it starts fresh. */
+  readonly nativeSessionId?: string
   readonly onEvent: (event: AgentEvent) => void
   readonly onExit: (code: number | null) => void
 }
 
-export function startDummyRun(opts: DummyRunOptions): ChildProcess {
-  const script = join(opts.cwd, 'scripts', 'dummy-agent.mjs')
-  // ELECTRON_RUN_AS_NODE runs the bundled Node on the script instead of launching another window.
-  const child = spawn(process.execPath, [script, opts.target], {
+export function startRun(opts: RunOptions): ChildProcess {
+  const argv = opts.nativeSessionId
+    ? opts.adapter.buildResumeArgv({ text: opts.text, nativeSessionId: opts.nativeSessionId })
+    : opts.adapter.buildStartArgv({ text: opts.text })
+
+  const child = spawn(opts.adapter.executable, [...argv], {
     cwd: opts.cwd,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe']
   })
 
@@ -36,7 +35,9 @@ export function startDummyRun(opts: DummyRunOptions): ChildProcess {
     for (const w of warnings) {
       opts.onEvent({ kind: 'warning', occurredAt: now, source: 'protocol', payload: { message: w } })
     }
-    for (const v of values) opts.onEvent(normalize(v, now))
+    for (const v of values) {
+      for (const e of opts.adapter.mapRaw(v)) opts.onEvent(e)
+    }
   })
 
   child.stderr?.on('data', (d: Buffer) => {
@@ -48,17 +49,16 @@ export function startDummyRun(opts: DummyRunOptions): ChildProcess {
     })
   })
 
+  child.on('error', (err) => {
+    opts.onEvent({
+      kind: 'error',
+      occurredAt: Date.now(),
+      source: 'inferred',
+      payload: { message: `spawn error: ${err.message}` }
+    })
+  })
+
   child.on('exit', (code) => opts.onExit(code))
 
   return child
-}
-
-function normalize(value: unknown, fallbackAt: number): AgentEvent {
-  const o = (value ?? {}) as Record<string, unknown>
-  return {
-    kind: (o['kind'] as AgentEventKind) ?? 'warning',
-    occurredAt: (o['occurredAt'] as number) ?? fallbackAt,
-    source: (o['source'] as AgentEvent['source']) ?? 'protocol',
-    payload: o['payload'] ?? {}
-  }
 }

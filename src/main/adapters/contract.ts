@@ -23,6 +23,14 @@ export interface AgentEvent {
   readonly payload: unknown
 }
 
+export interface StartInput {
+  readonly text: string
+}
+export interface ResumeInput {
+  readonly text: string
+  readonly nativeSessionId: string
+}
+
 export interface AgentAdapter {
   readonly id: AgentId
   readonly displayName: string
@@ -31,9 +39,10 @@ export interface AgentAdapter {
   /** Per-agent auto-approve flags (e.g. ['--dangerously-skip-permissions']). See ADR-0003. */
   readonly autoApproveFlags: readonly string[]
 
-  buildStartArgv(input: { readonly text: string }): readonly string[]
-  buildResumeArgv(input: { readonly text: string; readonly nativeSessionId: string }): readonly string[]
-  /** Incremental, bounded decoder: feed a stdout chunk, return zero or more events. */
-  decode(chunk: Buffer): readonly AgentEvent[]
+  buildStartArgv(input: StartInput): readonly string[]
+  buildResumeArgv(input: ResumeInput): readonly string[]
+  /** Pure + stateless: map one parsed raw event to zero or more AgentEvents. Per-run line buffering
+   *  lives in run-manager (one BoundedJsonlDecoder per run) so concurrent runs never share state. */
+  mapRaw(raw: unknown): readonly AgentEvent[]
   extractSessionId(events: readonly AgentEvent[]): string | null
 }
