@@ -1,22 +1,30 @@
-# AgentTest — 交接文档（给 Codex）
+# AgentTest — Claude Code / Codex 续开发文档
 
-> 更新日期：2026-07-31 · 当前提交基线：`25aeda7` · 分支：`main`
+> 更新日期：2026-07-31 · 结构化通道基线：`ba49614` · 分支：`main`
 >
-> 当前工作树包含一次尚未提交的结构化通道迁移。本文描述迁移后的代码状态。
+> 本文是 Claude Code 与 Codex 共用的当前状态说明；实时 HEAD 和工作树状态以
+> `git log` / `git status` 为准。
 
 ## 1. 这是什么
 
-AgentTest 是一个 Electron 桌面壳，统一编排 Claude Code、Codex CLI 和 Kimi Code：
+AgentTest 是一个本地多 Agent 编码工作台，以 Electron 统一编排 Claude Code、
+Codex CLI 和 Kimi Code：
 
-- 统一输入栏用 `@@claude` / `@@codex` / `@@kimi` / `@@all` 显式路由；
+- 当前基线用 `@@claude` / `@@codex` / `@@kimi` / `@@all` 显式路由；
 - 默认 Chat 走厂商提供的结构化 stdio 协议，事件归一化后渲染；
-- 每个 agent 在独立 git worktree 内运行，互不覆盖；
+- 当前每个 Provider 在独立 git worktree 内运行，互不覆盖；
 - 每个 pane 可显式切换到 Terminal，以 PTY 运行原生交互式 TUI；
 - 可查看各 worktree 的改动，并 fast-forward 合并到主仓库。
 
+当前产品路线见 [PLAN-v0.2](./PLAN-v0.2.md)：下一阶段从“三 pane 运行器”升级为
+**Project-first 工作台**。一个 Project 可创建任意数量、用户命名的 Agent
+Instance；Claude Code、Codex、Kimi Code 只是 Provider。Agent 通过 Tab 打开，
+通过 Panel 分屏管理。
+
 现行架构决策见
 [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)：**结构化 Chat 是默认编排通道，
-PTY 只负责 Terminal 接管**。ADR-0006 已被取代。
+PTY 只负责 Terminal 接管**；产品对象决策见
+[ADR-0008](./adr/0008-project-first-agent-instances.md)。ADR-0006 已被取代。
 
 ## 2. 当前状态
 
@@ -31,6 +39,10 @@ PTY 只负责 Terminal 接管**。ADR-0006 已被取代。
 | Terminal PTY 接管及结构化 run 互斥 | ✅ |
 | worktree 隔离、RepoPicker、改动查看与 ff-only 合并 | ✅ |
 | 仓库切换前等待结构化子进程退出 | ✅ |
+| Project-first 信息架构与 Provider/Instance 领域模型 | ✅ 设计基线 |
+| 5 实例 Tab/Panel A/B/C 方向稿 + D 推荐组合稿 | 🟡 待用户确认 |
+| D 推荐稿独立本地 HTML | ✅ 无构建、无网络依赖 |
+| Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
 
 旧 `TranscriptWatcher` 与 Claude transcript mapper 仍保留，但不再属于默认主链路；
@@ -39,13 +51,17 @@ PTY 只负责 Terminal 接管**。ADR-0006 已被取代。
 ## 3. 先读这些
 
 1. 本文档。
-2. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
-3. [open-design 通信调研](./research/open-design-agent-communication.md)。
-4. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
-5. 根目录 `agent-adapter-architecture.md`。
+2. [领域词汇表](../CONTEXT.md)。
+3. [PLAN-v0.2](./PLAN-v0.2.md)。
+4. [UX-v0.2](./UX-v0.2.md)；设计门禁完成前暂停生产功能开发。
+5. [ADR-0008](./adr/0008-project-first-agent-instances.md)。
+6. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
+7. [open-design 通信调研](./research/open-design-agent-communication.md)。
+8. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
+9. 根目录 `agent-adapter-architecture.md`。
 
-`docs/PLAN-v0.1.md` 和 ADR-0001 至 ADR-0006 是历史背景；发生冲突时以 ADR-0007
-和当前代码为准。
+`docs/PLAN-v0.1.md` 和 ADR-0001 至 ADR-0006 是历史背景；发生冲突时以当前代码、
+最新 Accepted ADR 和 PLAN-v0.2 为准。
 
 ## 4. 技术栈与命令
 
@@ -209,20 +225,26 @@ src/renderer/src/
   App.tsx                      Chat/Terminal UI、@@ 路由、worktree 弹窗
   chat-state.ts                纯事件 reducer
 docs/
-  adr/0007-*.md                当前架构决策
+  PLAN-v0.2.md                  当前产品与工程路线
+  UX-v0.2.md                    当前信息架构、流程与状态
+  adr/0007-*.md                结构化 Chat / PTY 通道决策
+  adr/0008-*.md                Project-first / Agent Instance 决策
   research/open-design-*.md    迁移依据
+CONTEXT.md                      Project、Agent、Tab、Panel 领域词汇
 ```
 
 ## 9. 下一步
 
-1. 在真实 Electron 窗口分别验证 Claude/Codex/Kimi：首轮、续轮、取消、Terminal
-   接管、`@@all` 并发和仓库切换。
-2. 为 Codex 与 Kimi 增加 opt-in 真实 CLI E2E；Claude E2E 覆盖 capability-on/off。
-3. 丰富结构化 Chat：Markdown、工具详情、diff/approval 展示、可恢复的历史视图。
-4. 增加 CLI version/auth/capability 状态页，避免把 spawn/auth 错误只显示成通用失败。
-5. 基准测试 structured cold start 与 PTY warm follow-up 的 p50/p95，再决定是否需要
-   可选的长驻 duplex runtime。
-6. 做三家 worktree 的并排 diff/对比视图。
+UI/UX 设计在外部进行。设计确认后，将选择同步回 UX/PLAN，再按以下顺序恢复生产开发：
+
+1. 确认 Project/Agent Directory、New Agent、Tab 与 Panel 的操作；
+2. 确认关闭 Tab、停止 Agent、删除 Agent 和 Project 切换的语义；
+3. 按 PLAN-v0.2 顺序恢复 Provider Doctor、ProjectStore、Agent Instance、
+   Tabs/Panels 和实例级 runtime/worktree 的生产开发。
+
+不要继续实现 Task-first TaskStore，也不要先实现从 assistant 普通文本自动触发的
+agent-to-agent `@@`。当前代码的 `AgentId` 实际是 ProviderId；生产迁移必须将它与
+AgentInstanceId 分开。
 
 ## 10. 交付纪律
 

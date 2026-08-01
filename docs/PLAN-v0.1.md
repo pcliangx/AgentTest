@@ -1,9 +1,10 @@
 # AgentTest v0.1 规划
 
-> **历史规划说明**：本文件保留最初范围与推导过程。当前实现和通道职责以
+> **历史规划说明**：本文件保留最初范围与推导过程。当前产品路线以
+> [PLAN-v0.2](./PLAN-v0.2.md) 为准，当前实现和通道职责以
 > [ADR-0007](./adr/0007-structured-chat-pty-terminal.md) 与
-> [HANDOFF](./HANDOFF.md) 为准：结构化 Chat 为默认，PTY 作为显式 Terminal
-> 接管保留。下文“不需要 node-pty”等原始范围描述不再代表现状。
+> [HANDOFF](./HANDOFF.md) 为准。下文“不需要 node-pty”等原始范围描述不再代表
+> 现状。
 
 > 状态：草案（已与产品负责人达成共识，2026-07-31）
 > 关联：[agent-adapter-architecture.md](../agent-adapter-architecture.md)（Adapter 设计参考）、[docs/adr/](./adr/)（决策记录）
