@@ -495,7 +495,9 @@ export function DispatchPicker({
           <p role="alert" className="text-xs text-amber-400">
             {projectBlockReason === 'project-archived'
               ? 'Project 已归档，不能创建新派发。'
-              : 'Project Root 不可用，不能创建新派发。'}
+              : projectBlockReason === 'project-root-unavailable'
+                ? 'Project Root 不可用，不能创建新派发。'
+                : 'Project 尚未初始化或绑定 Git 仓库，不能创建新派发。'}
           </p>
         )}
 

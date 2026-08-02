@@ -367,6 +367,33 @@ describe('Dispatch — Agent Tab composer', () => {
     expect(port.commands).toHaveLength(0)
   })
 
+  it('blocks both composer and Picker when the Project repository is not ready', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].repositoryReadiness = 'not-ready'
+    snapshot.projects[0].currentSurface = 'agents'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Project 尚未初始化或绑定 Git 仓库')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+
+    const dialog = await openPicker(user)
+    expect(dialog).toHaveTextContent(
+      'Project 尚未初始化或绑定 Git 仓库，不能创建新派发'
+    )
+    expect(
+      within(dialog).getByRole('button', { name: /cx_review/ })
+    ).toBeDisabled()
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
+  })
+
   it('explains why the composer is disabled for an archived Agent', async () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].currentSurface = 'agents'
@@ -1604,6 +1631,43 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       projectId: project.projectId,
       targets: [target.agentInstanceId],
       instruction: 'must not dispatch without a root'
+    })
+
+    expect(instructionResult.ok).toBe(false)
+    expect(dispatchResult.ok).toBe(false)
+    if (!instructionResult.ok) {
+      expect(instructionResult.reason).toBe('unavailable')
+    }
+    if (!dispatchResult.ok) {
+      expect(dispatchResult.reason).toBe('unavailable')
+    }
+    expect(await adapter.getSnapshot()).toEqual(before)
+  })
+
+  it('rejects composer and Dispatch commands atomically when the Project repository is not ready', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    project.repositoryReadiness = 'not-ready'
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    const adapter = new MockScenarioAdapter(snapshot)
+    const before = await adapter.getSnapshot()
+
+    const instructionResult = await adapter.dispatch({
+      commandId: id('cmd-repository-not-ready-instruction', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'send-agent-instruction',
+      projectId: project.projectId,
+      agentInstanceId: target.agentInstanceId,
+      instruction: 'must wait for a Git repository',
+      mode: 'start-or-queue'
+    })
+    const dispatchResult = await adapter.dispatch({
+      commandId: id('cmd-repository-not-ready-dispatch', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'must not dispatch without a Git repository'
     })
 
     expect(instructionResult.ok).toBe(false)

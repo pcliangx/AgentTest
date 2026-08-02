@@ -14,12 +14,27 @@ import type {
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
+import type { ProjectDispatchBlockReason } from './dispatchability'
 import {
   getDispatchBlockReason,
   getProjectDispatchBlockReason,
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
+
+function projectExecutionUnavailableMessage(
+  reason: ProjectDispatchBlockReason,
+  action: '发送新指令' | '创建新派发'
+): string {
+  switch (reason) {
+    case 'project-archived':
+      return `Project 已归档，不能${action}`
+    case 'project-root-unavailable':
+      return `Project Root 不可用，不能${action}`
+    case 'project-repository-not-ready':
+      return `Project 尚未初始化或绑定 Git 仓库，不能${action}`
+  }
+}
 
 type PostDispatchEvent = Omit<
   Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
@@ -215,9 +230,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(
             command,
             'unavailable',
-            projectBlockReason === 'project-archived'
-              ? 'Project 已归档，不能发送新指令'
-              : 'Project Root 不可用，不能发送新指令'
+            projectExecutionUnavailableMessage(
+              projectBlockReason,
+              '发送新指令'
+            )
           )
         }
         // Composer addresses exactly one instance — no multi-target fan-out.
@@ -303,9 +319,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(
             command,
             'unavailable',
-            projectBlockReason === 'project-archived'
-              ? 'Project 已归档，不能创建新派发'
-              : 'Project Root 不可用，不能创建新派发'
+            projectExecutionUnavailableMessage(
+              projectBlockReason,
+              '创建新派发'
+            )
           )
         }
         // Instruction must be non-empty (#6 P2-5).

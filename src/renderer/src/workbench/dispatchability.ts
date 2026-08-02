@@ -16,14 +16,21 @@ export type DispatchBlockReason = 'agent-unavailable'
 export type ProjectDispatchBlockReason =
   | 'project-archived'
   | 'project-root-unavailable'
+  | 'project-repository-not-ready'
 
 /** Returns why a Project cannot accept new execution-producing commands. */
 export function getProjectDispatchBlockReason(
-  project: Pick<ProjectViewModel, 'lifecycle' | 'rootAvailability'>
+  project: Pick<
+    ProjectViewModel,
+    'lifecycle' | 'rootAvailability' | 'repositoryReadiness'
+  >
 ): ProjectDispatchBlockReason | undefined {
   if (project.lifecycle === 'archived') return 'project-archived'
   if (project.rootAvailability === 'unavailable') {
     return 'project-root-unavailable'
+  }
+  if (project.repositoryReadiness === 'not-ready') {
+    return 'project-repository-not-ready'
   }
   return undefined
 }

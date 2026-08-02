@@ -788,6 +788,11 @@ function ChatState({
           <p className="text-neutral-500">
             Project Root 不可用；仅可查看历史记录，请先恢复或重新定位 Root。
           </p>
+        ) : projectBlockReason === 'project-repository-not-ready' ? (
+          <p className="text-neutral-500">
+            Project 尚未初始化或绑定 Git 仓库；仅可查看历史记录，请先完成 Git
+            初始化或绑定。
+          </p>
         ) : agent.runtimeState === 'unavailable' ? (
           <p className="text-neutral-500">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
