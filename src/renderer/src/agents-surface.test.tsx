@@ -20,9 +20,16 @@ async function gotoAgentsSurface() {
 /** Names of agent buttons currently listed in the directory. */
 function directoryNames(directory: HTMLElement): string[] {
   const list = within(directory).getByRole('list', { name: 'Agent 列表' })
-  return within(list)
-    .queryAllByRole('button')
-    .map((b) => b.textContent ?? '')
+  return (
+    within(list)
+      .queryAllByRole('button')
+      // Entry rows also carry a secondary "open in new panel" action (#4);
+      // only the primary open button represents the entry itself.
+      .filter(
+        (b) => !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开')
+      )
+      .map((b) => b.textContent ?? '')
+  )
 }
 
 describe('Agents surface — Agent Directory', () => {
@@ -174,7 +181,7 @@ describe('Agents surface — New Agent', () => {
 describe('Agents surface — unique Agent Tab', () => {
   it('opening an instance from the directory adds its tab; reopening only focuses it', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    const ccSql = within(directory).getByRole('button', { name: /cc_sql/ })
+    const ccSql = within(directory).getByRole('button', { name: /^cc_sql/ })
 
     await user.click(ccSql)
     expect(
@@ -182,7 +189,7 @@ describe('Agents surface — unique Agent Tab', () => {
     ).toBe(1)
 
     // Click again — still exactly one tab, now selected.
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const tabs = await screen.findAllByRole('tab', { name: /cc_sql/ })
     expect(tabs).toHaveLength(1)
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
@@ -190,7 +197,7 @@ describe('Agents surface — unique Agent Tab', () => {
 
   it('switching between tabs activates the clicked one', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     await screen.findAllByRole('tab', { name: /cc_sql/ })
 
     await user.click(screen.getByRole('tab', { name: /cc_data/ }))
@@ -211,7 +218,7 @@ describe('Agents surface — unique Agent Tab', () => {
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
 
     expect(screen.queryByRole('tab', { name: /cc_data/ })).toBeNull()
-    const entry = within(directory).getByRole('button', { name: /cc_data/ })
+    const entry = within(directory).getByRole('button', { name: /^cc_data/ })
     expect(entry).toHaveTextContent('运行中')
   })
 
@@ -258,7 +265,7 @@ describe('Agents surface — Agent View', () => {
 
   it('marks a tab whose instance has an open attention item', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const tab = (await screen.findAllByRole('tab', { name: /cc_sql/ }))[0]
     expect(
       within(tab).getByRole('img', { name: '有待处理事项' })
@@ -270,7 +277,7 @@ describe('Agents surface — port-driven chat state (#20)', () => {
   it('shows the neutral empty chat state for a ready agent', async () => {
     const { user, directory } = await gotoAgentsSurface()
     await user.click(
-      within(directory).getByRole('button', { name: /cx_review/ })
+      within(directory).getByRole('button', { name: /^cx_review/ })
     )
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('发送首条消息')
@@ -279,7 +286,7 @@ describe('Agents surface — port-driven chat state (#20)', () => {
   it('shows an unavailable notice instead of the empty prompt for unavailable agents', async () => {
     const { user, directory } = await gotoAgentsSurface()
     await user.click(
-      within(directory).getByRole('button', { name: /kimi_docs/ })
+      within(directory).getByRole('button', { name: /^kimi_docs/ })
     )
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Provider 不可用')
@@ -292,26 +299,26 @@ describe('Agents surface — identity and view state (#20)', () => {
     const { user, directory } = await gotoAgentsSurface()
 
     // cc_data is the only open tab and active in its panel → 当前可见.
-    expect(within(directory).getByRole('button', { name: /cc_data/ })).toHaveTextContent(
+    expect(within(directory).getByRole('button', { name: /^cc_data/ })).toHaveTextContent(
       '当前可见'
     )
     // cx_anti holds a Terminal takeover in the mock scenario.
     expect(
-      within(directory).getByRole('button', { name: /cx_anti/ })
+      within(directory).getByRole('button', { name: /^cx_anti/ })
     ).toHaveTextContent('Terminal 接管')
     // cx_review is not open anywhere → no view-state badge.
     expect(
-      within(directory).getByRole('button', { name: /cx_review/ })
+      within(directory).getByRole('button', { name: /^cx_review/ })
     ).not.toHaveTextContent('已打开')
 
     // Opening cc_sql makes it the visible tab; cc_data stays open in background.
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     await screen.findAllByRole('tab', { name: /cc_sql/ })
-    expect(within(directory).getByRole('button', { name: /cc_sql/ })).toHaveTextContent(
+    expect(within(directory).getByRole('button', { name: /^cc_sql/ })).toHaveTextContent(
       '当前可见'
     )
     expect(
-      within(directory).getByRole('button', { name: /cc_data/ })
+      within(directory).getByRole('button', { name: /^cc_data/ })
     ).toHaveTextContent('已打开')
 
     // Tabs carry the provider as secondary identity.

@@ -1,19 +1,19 @@
 import { useMemo, useState } from 'react'
 import type {
   AgentInstanceViewModel,
-  AgentProviderId,
   AgentRuntimeState,
   CommandResult,
-  PanelId,
   ProjectViewModel,
   WorkbenchCommandBody,
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { providerLabel, RUNTIME_STATE_LABEL } from './agent-display'
+import { WorkspaceArea } from './workspace-layout'
 
 /**
- * Agents surface — Agent Directory, single-panel workspace with unique
- * Agent Tabs, and the Agent View with its four secondary entries.
+ * Agents surface — Agent Directory, the split-tree workspace with unique
+ * Agent Tabs (see `workspace-layout.tsx`), and the New Agent dialog.
  *
  * All facts come from the WorkbenchPort snapshot; every mutation is a
  * typed command sent through the port. The renderer never keys interactions
@@ -21,52 +21,6 @@ import { id } from './workbench/contract'
  */
 
 export type SendCommand = (body: WorkbenchCommandBody) => Promise<CommandResult>
-
-// ---------------------------------------------------------------------------
-// Display metadata (labels only — never business branching)
-// ---------------------------------------------------------------------------
-
-const PROVIDER_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  'kimi-code': 'Kimi Code',
-  'gemini-cli': 'Gemini CLI'
-}
-
-function providerLabel(providerId: AgentProviderId): string {
-  return PROVIDER_LABEL[providerId] ?? providerId
-}
-
-const RUNTIME_STATE_LABEL: Record<AgentRuntimeState, string> = {
-  ready: '就绪',
-  queued: '排队中',
-  starting: '启动中',
-  running: '运行中',
-  finishing: '收尾中',
-  'needs-input': '需要输入',
-  'permission-requested': '等待权限',
-  failed: '失败',
-  cancelled: '已取消',
-  interrupted: '已中断',
-  unavailable: '不可用',
-  archived: '已归档'
-}
-
-const TERMINAL_STATE_LABEL: Record<AgentInstanceViewModel['terminalState'], string> = {
-  closed: 'Terminal 未接管',
-  opening: 'Terminal 正在打开',
-  active: 'Terminal 接管中',
-  failed: 'Terminal 打开失败'
-}
-
-type AgentSubView = 'chat' | 'activity' | 'changes' | 'terminal'
-
-const SUB_VIEWS: Array<{ view: AgentSubView; label: string }> = [
-  { view: 'chat', label: '对话' },
-  { view: 'activity', label: '活动' },
-  { view: 'changes', label: '改动' },
-  { view: 'terminal', label: 'Terminal' }
-]
 
 // ---------------------------------------------------------------------------
 // Agents surface
@@ -209,6 +163,20 @@ function AgentDirectory({
     })
   }
 
+  const openAgentInNewPanel = (
+    agentInstanceId: AgentInstanceViewModel['agentInstanceId']
+  ) => {
+    void sendCommand({
+      kind: 'change-layout',
+      projectId: project.projectId,
+      operation: {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId,
+        direction: 'horizontal'
+      }
+    })
+  }
+
   return (
     <aside
       role="region"
@@ -290,9 +258,9 @@ function AgentDirectory({
           else if (openTabs.has(agent.agentInstanceId)) viewBadges.push('已打开')
           if (agent.terminalState === 'active') viewBadges.push('Terminal 接管')
           return (
-            <li key={agent.agentInstanceId}>
+            <li key={agent.agentInstanceId} className="flex items-stretch">
               <button
-                className="block w-full rounded px-2 py-1.5 text-left hover:bg-neutral-900"
+                className="block min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-neutral-900"
                 onClick={() => openAgent(agent.agentInstanceId)}
               >
                 <span className="flex items-center gap-1.5">
@@ -314,6 +282,16 @@ function AgentDirectory({
                   {RUNTIME_STATE_LABEL[agent.runtimeState]}
                   {viewBadges.length > 0 && ` · ${viewBadges.join(' · ')}`}
                 </span>
+              </button>
+              <button
+                aria-label={`在新 Panel 打开 ${agent.name}`}
+                className="shrink-0 rounded px-1.5 text-xs text-neutral-600 hover:bg-neutral-900 hover:text-neutral-300"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openAgentInNewPanel(agent.agentInstanceId)
+                }}
+              >
+                ⇱
               </button>
             </li>
           )
@@ -354,9 +332,9 @@ function NewAgentDialog({
   const [providerId, setProviderId] = useState<string>(
     readyProviders[0]?.providerId ?? ''
   )
-  const [open, setOpen] = useState<'current-panel' | 'background'>(
-    'current-panel'
-  )
+  const [open, setOpen] = useState<
+    'current-panel' | 'background' | 'new-panel'
+  >('current-panel')
   const [error, setError] = useState<string | null>(null)
 
   const submit = async () => {
@@ -416,10 +394,13 @@ function NewAgentDialog({
             className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={open}
             onChange={(e) =>
-              setOpen(e.target.value as 'current-panel' | 'background')
+              setOpen(
+                e.target.value as 'current-panel' | 'background' | 'new-panel'
+              )
             }
           >
             <option value="current-panel">当前 Panel</option>
+            <option value="new-panel">新 Panel</option>
             <option value="background">后台打开</option>
           </select>
         </label>
@@ -446,274 +427,5 @@ function NewAgentDialog({
         </div>
       </div>
     </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Workspace — panels and unique Agent Tabs
-// ---------------------------------------------------------------------------
-
-function WorkspaceArea({
-  project,
-  snapshot,
-  openAttentionTargets,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  snapshot: WorkbenchViewModel
-  openAttentionTargets: Set<string>
-  sendCommand: SendCommand
-}) {
-  const layout = project.layout
-  const panelEntries = Object.entries(layout.panels)
-
-  if (!layout.root || panelEntries.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-neutral-500">
-          尚未打开任何 Agent，请从左侧目录选择。
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1">
-      {panelEntries.map(([panelId, panel]) => (
-        <PanelView
-          key={panelId}
-          project={project}
-          panelId={id(panelId, 'PanelId')}
-          tabs={panel.tabs}
-          activeTabId={panel.activeTabId}
-          snapshot={snapshot}
-          openAttentionTargets={openAttentionTargets}
-          sendCommand={sendCommand}
-        />
-      ))}
-    </div>
-  )
-}
-
-function PanelView({
-  project,
-  panelId,
-  tabs,
-  activeTabId,
-  snapshot,
-  openAttentionTargets,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  panelId: PanelId
-  tabs: AgentInstanceViewModel['agentInstanceId'][]
-  activeTabId?: AgentInstanceViewModel['agentInstanceId']
-  snapshot: WorkbenchViewModel
-  openAttentionTargets: Set<string>
-  sendCommand: SendCommand
-}) {
-  const activeAgent = snapshot.agents.find(
-    (a) => a.agentInstanceId === activeTabId
-  )
-
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div
-        role="tablist"
-        aria-label="Agent 标签"
-        className="flex shrink-0 overflow-x-auto border-b border-neutral-800"
-      >
-        {tabs.map((tabId) => {
-          const agent = snapshot.agents.find(
-            (a) => a.agentInstanceId === tabId
-          )
-          if (!agent) return null
-          const selected = tabId === activeTabId
-          return (
-            <div
-              key={tabId}
-              role="tab"
-              aria-selected={selected}
-              tabIndex={0}
-              className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm ${
-                selected
-                  ? 'bg-neutral-900 text-neutral-100'
-                  : 'text-neutral-500 hover:bg-neutral-900/60'
-              }`}
-              onClick={() =>
-                void sendCommand({
-                  kind: 'change-layout',
-                  projectId: project.projectId,
-                  operation: { kind: 'activate-tab', panelId, agentInstanceId: tabId }
-                })
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  void sendCommand({
-                    kind: 'change-layout',
-                    projectId: project.projectId,
-                    operation: {
-                      kind: 'activate-tab',
-                      panelId,
-                      agentInstanceId: tabId
-                    }
-                  })
-                }
-              }}
-            >
-              <span>{agent.name}</span>
-              {openAttentionTargets.has(tabId) && (
-                <span role="img" aria-label="有待处理事项" className="text-amber-400">
-                  ●
-                </span>
-              )}
-              <span className="text-xs text-neutral-600">
-                {providerLabel(agent.providerId)} ·{' '}
-                {RUNTIME_STATE_LABEL[agent.runtimeState]}
-              </span>
-              <button
-                aria-label={`关闭标签 ${agent.name}`}
-                className="ml-1 rounded px-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  void sendCommand({
-                    kind: 'change-layout',
-                    projectId: project.projectId,
-                    operation: {
-                      kind: 'close-tab',
-                      panelId,
-                      agentInstanceId: tabId
-                    }
-                  })
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )
-        })}
-      </div>
-
-      {activeAgent ? (
-        <AgentView
-          key={activeAgent.agentInstanceId}
-          agent={activeAgent}
-          snapshot={snapshot}
-        />
-      ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-neutral-500">未选择 Agent</p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Agent View — four stable secondary entries
-// ---------------------------------------------------------------------------
-
-function AgentView({
-  agent,
-  snapshot
-}: {
-  agent: AgentInstanceViewModel
-  snapshot: WorkbenchViewModel
-}) {
-  const [subView, setSubView] = useState<AgentSubView>('chat')
-
-  const agentActivity = snapshot.activity
-    .filter((a) => a.agentInstanceId === agent.agentInstanceId)
-    .sort((a, b) => b.timestamp - a.timestamp)
-
-  return (
-    <section
-      role="region"
-      aria-label="Agent 视图"
-      className="flex min-h-0 flex-1 flex-col p-4"
-    >
-      <header className="mb-3">
-        <h3 className="text-base font-medium text-neutral-100">{agent.name}</h3>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          {providerLabel(agent.providerId)} ·{' '}
-          {RUNTIME_STATE_LABEL[agent.runtimeState]}
-        </p>
-      </header>
-
-      <div className="mb-3 flex gap-1 border-b border-neutral-800">
-        {SUB_VIEWS.map(({ view, label }) => (
-          <button
-            key={view}
-            className={`px-2 py-1 text-sm ${
-              subView === view
-                ? 'border-b-2 border-neutral-300 text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-300'
-            }`}
-            onClick={() => setSubView(view)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto text-sm text-neutral-400">
-        {subView === 'chat' && <ChatState agent={agent} />}
-        {subView === 'activity' &&
-          (agentActivity.length === 0 ? (
-            <p className="text-neutral-500">暂无活动记录</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {agentActivity.map((entry) => (
-                <li key={entry.activityId} className="text-neutral-300">
-                  {entry.summary}
-                </li>
-              ))}
-            </ul>
-          ))}
-        {subView === 'changes' && (
-          <p className="text-neutral-500">暂无改动</p>
-        )}
-        {subView === 'terminal' && (
-          <p className="text-neutral-500">
-            {TERMINAL_STATE_LABEL[agent.terminalState]}
-          </p>
-        )}
-      </div>
-    </section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Chat sub-view — state text driven only by port-judged facts (#20)
-// ---------------------------------------------------------------------------
-
-const ACTIVE_RUN_STATES: ReadonlySet<AgentRuntimeState> = new Set([
-  'starting',
-  'running',
-  'finishing',
-  'needs-input',
-  'permission-requested'
-])
-
-function ChatState({ agent }: { agent: AgentInstanceViewModel }) {
-  if (agent.runtimeState === 'unavailable') {
-    return (
-      <p className="text-neutral-500">
-        Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
-      </p>
-    )
-  }
-  if (ACTIVE_RUN_STATES.has(agent.runtimeState) || agent.activeRunId) {
-    return (
-      <p className="text-neutral-500">
-        当前有进行中的 Run；结构化对话内容将在真实执行通道接入后展示。
-      </p>
-    )
-  }
-  return (
-    <p className="text-neutral-500">
-      暂无对话记录；发送首条消息后才会启动 Run。
-    </p>
   )
 }

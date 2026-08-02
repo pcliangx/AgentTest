@@ -1,16 +1,18 @@
 import type {
-  AgentInstanceId,
   CommandId,
   CommandRejectionReason,
   CommandResult,
   PanelId,
-  ProjectViewModel,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
   WorkbenchViewModel
 } from './contract'
 import { id } from './contract'
+import {
+  applyLayoutOperation,
+  type LayoutIdGenerator
+} from './layout-reducer'
 import { createStandardScenario } from './standard-scenario'
 
 /**
@@ -26,6 +28,18 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private createdAgentCount = 0
   private createdPanelCount = 0
+  private createdSplitCount = 0
+  /**
+   * ID supply for the shared layout reducer. IDs stay opaque and
+   * deterministic per adapter instance (`panel-created-N` /
+   * `split-created-N`), never derived from visible names.
+   */
+  private readonly layoutIds: LayoutIdGenerator = {
+    newPanelId: () =>
+      id(`panel-created-${++this.createdPanelCount}`, 'PanelId'),
+    newSplitNodeId: () =>
+      id(`split-created-${++this.createdSplitCount}`, 'SplitNodeId')
+  }
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -152,13 +166,32 @@ export class MockScenarioAdapter implements WorkbenchPort {
           doctor: 'ready',
           lastActivityAt: Date.now()
         })
-        // Creation never produces a Run; opening only changes the layout.
+        // Creation never produces a Run; opening only changes the layout,
+        // through the same shared reducer as any other layout command.
         if (command.open === 'current-panel') {
-          const panelId = this.ensurePanel(project)
-          const panel = project.layout.panels[panelId]
-          panel.tabs.push(agentInstanceId)
-          panel.activeTabId = agentInstanceId
-          project.layout.focusedPanelId = panelId
+          // The reducer allocates the first panel when the workspace is
+          // empty, so the placeholder panelId is never dereferenced then.
+          const targetPanelId =
+            project.layout.focusedPanelId ??
+            (Object.keys(project.layout.panels)[0] as PanelId | undefined) ??
+            id('panel-auto', 'PanelId')
+          const result = applyLayoutOperation(
+            project.layout,
+            { kind: 'open-tab', panelId: targetPanelId, agentInstanceId },
+            this.layoutIds
+          )
+          if (result.ok) project.layout = result.layout
+        } else if (command.open === 'new-panel') {
+          const result = applyLayoutOperation(
+            project.layout,
+            {
+              kind: 'open-tab-in-new-panel',
+              agentInstanceId,
+              direction: 'horizontal'
+            },
+            this.layoutIds
+          )
+          if (result.ok) project.layout = result.layout
         }
         return null
       }
@@ -169,121 +202,33 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        return this.applyLayoutOperation(command, project)
+        // Agent references are validated up front — the reducer only sees
+        // IDs — so a rejected command stays side-effect free.
+        const { operation } = command
+        if (
+          'agentInstanceId' in operation &&
+          !this.snapshot.agents.some(
+            (a) =>
+              a.agentInstanceId === operation.agentInstanceId &&
+              a.projectId === project.projectId
+          )
+        ) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        const result = applyLayoutOperation(
+          project.layout,
+          operation,
+          this.layoutIds
+        )
+        if (!result.ok) {
+          return this.reject(command, result.reason, result.message)
+        }
+        project.layout = result.layout
+        return null
       }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
-  }
-
-  /**
-   * Handles the view-only tab commands of `change-layout`. Split-tree
-   * structure operations remain out of scope for the mock until #4.
-   * Tab commands never touch runtime, PTY, session or instance lifecycle.
-   */
-  private applyLayoutOperation(
-    command: Extract<WorkbenchCommand, { kind: 'change-layout' }>,
-    project: ProjectViewModel
-  ): CommandResult | null {
-    const { operation } = command
-    const layout = project.layout
-
-    switch (operation.kind) {
-      case 'open-tab': {
-        // Validate the target instance FIRST: a rejected command must not
-        // mutate the snapshot (no panel allocation before this point).
-        const agent = this.snapshot.agents.find(
-          (a) =>
-            a.agentInstanceId === operation.agentInstanceId &&
-            a.projectId === project.projectId
-        )
-        if (!agent) {
-          return this.reject(command, 'invalid-target', 'Agent 不存在')
-        }
-        // When the workspace is empty there is no valid panel to target;
-        // the layout owner allocates a fresh one instead of rejecting.
-        const targetPanelId =
-          Object.keys(layout.panels).length === 0
-            ? this.ensurePanel(project)
-            : operation.panelId
-        const panel = layout.panels[targetPanelId]
-        if (!panel) {
-          return this.reject(command, 'invalid-target', 'Panel 不存在')
-        }
-        // One instance has at most one tab per main window: reopening an
-        // already-open instance only focuses its existing unique tab.
-        for (const [panelId, p] of Object.entries(layout.panels)) {
-          if (p.tabs.includes(agent.agentInstanceId)) {
-            p.activeTabId = agent.agentInstanceId
-            layout.focusedPanelId = id(panelId, 'PanelId')
-            return null
-          }
-        }
-        panel.tabs.push(agent.agentInstanceId)
-        panel.activeTabId = agent.agentInstanceId
-        layout.focusedPanelId = targetPanelId
-        return null
-      }
-      case 'activate-tab': {
-        const panel = layout.panels[operation.panelId]
-        if (!panel || !panel.tabs.includes(operation.agentInstanceId)) {
-          return this.reject(command, 'invalid-target', 'Tab 不存在')
-        }
-        panel.activeTabId = operation.agentInstanceId
-        layout.focusedPanelId = operation.panelId
-        return null
-      }
-      case 'close-tab': {
-        const panel = layout.panels[operation.panelId]
-        if (!panel || !panel.tabs.includes(operation.agentInstanceId)) {
-          return this.reject(command, 'invalid-target', 'Tab 不存在')
-        }
-        panel.tabs = panel.tabs.filter(
-          (tabId) => tabId !== operation.agentInstanceId
-        )
-        if (panel.activeTabId === operation.agentInstanceId) {
-          panel.activeTabId = panel.tabs[panel.tabs.length - 1]
-        }
-        // Single-panel workspace: closing the last tab yields the empty
-        // workspace state. Pruning inside nested split trees is #4 scope.
-        if (
-          panel.tabs.length === 0 &&
-          layout.root?.kind === 'panel' &&
-          layout.root.panelId === operation.panelId
-        ) {
-          layout.root = null
-          delete layout.panels[operation.panelId]
-          layout.focusedPanelId = undefined
-        }
-        return null
-      }
-      default:
-        return this.reject(
-          command,
-          'scenario-read-only',
-          '此布局操作尚未实现'
-        )
-    }
-  }
-
-  /**
-   * Returns the focused (or first) panel of the project, creating one when
-   * the workspace is currently empty.
-   */
-  private ensurePanel(project: ProjectViewModel): PanelId {
-    const layout = project.layout
-    if (layout.focusedPanelId && layout.panels[layout.focusedPanelId]) {
-      return layout.focusedPanelId
-    }
-    const first = Object.keys(layout.panels)[0]
-    if (first) {
-      return id(first, 'PanelId')
-    }
-    this.createdPanelCount++
-    const panelId = id(`panel-created-${this.createdPanelCount}`, 'PanelId')
-    layout.panels[panelId] = { tabs: [] }
-    layout.root = { kind: 'panel', panelId }
-    return panelId
   }
 
   private reject(

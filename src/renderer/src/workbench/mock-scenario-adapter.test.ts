@@ -3,6 +3,7 @@ import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
 import type {
   CommandId,
+  CommandResult,
   ProjectId,
   ProjectSurface,
   WorkbenchCommand,
@@ -650,14 +651,13 @@ describe('MockScenarioAdapter — change-layout tab commands', () => {
     if (!result.ok) expect(result.reason).toBe('invalid-target')
   })
 
-  it('still rejects split-tree operations as scenario-read-only (out of scope)', async () => {
+  it('still rejects focus operations as scenario-read-only (#5 scope)', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const result = await adapter.dispatch(
       changeLayout(cmdId(1), snap.revision, {
-        kind: 'split-panel',
-        panelId: PANEL,
-        direction: 'horizontal'
+        kind: 'focus-panel',
+        panelId: PANEL
       })
     )
     expect(result.ok).toBe(false)
@@ -708,5 +708,200 @@ describe('MockScenarioAdapter — rejection purity', () => {
     expect(after.revision).toBe(snap.revision)
     expect(after.projects[0].layout.root).toBeNull()
     expect(Object.keys(after.projects[0].layout.panels)).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Structural layout commands through the port (#4)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — structural layout commands (#4)', () => {
+  const PANEL = id('panel-main', 'PanelId')
+  const CC_DATA = id('inst-cc-data', 'AgentInstanceId')
+  const CC_SQL = id('inst-cc-sql', 'AgentInstanceId')
+
+  async function dispatchLayout(
+    adapter: MockScenarioAdapter,
+    n: number,
+    operation: Extract<WorkbenchCommand, { kind: 'change-layout' }>['operation']
+  ): Promise<CommandResult> {
+    const snap = await adapter.getSnapshot()
+    return adapter.dispatch({
+      kind: 'change-layout',
+      commandId: cmdId(n),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      operation
+    })
+  }
+
+  it('split-panel creates an empty sibling panel through the port', async () => {
+    const adapter = new MockScenarioAdapter()
+    const result = await dispatchLayout(adapter, 1, {
+      kind: 'split-panel',
+      panelId: PANEL,
+      direction: 'horizontal'
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const layout = after.projects[0].layout
+    expect(layout.root?.kind).toBe('split')
+    expect(Object.keys(layout.panels)).toHaveLength(2)
+    // Original panel keeps its tab; the sibling is empty.
+    expect(layout.panels[PANEL].tabs).toEqual([CC_DATA])
+  })
+
+  it('move-tab relocates a tab without duplicating it', async () => {
+    const adapter = new MockScenarioAdapter()
+    await dispatchLayout(adapter, 1, {
+      kind: 'split-panel',
+      panelId: PANEL,
+      direction: 'horizontal'
+    })
+    const mid = await adapter.getSnapshot()
+    const sibling = Object.keys(mid.projects[0].layout.panels).find(
+      (p) => p !== PANEL
+    )!
+    const result = await dispatchLayout(adapter, 2, {
+      kind: 'move-tab',
+      agentInstanceId: CC_DATA,
+      targetPanelId: id(sibling, 'PanelId')
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const allTabs = Object.values(after.projects[0].layout.panels).flatMap(
+      (p) => p.tabs
+    )
+    expect(allTabs.filter((t) => t === CC_DATA)).toHaveLength(1)
+    expect(after.projects[0].layout.panels[id(sibling, 'PanelId')].tabs).toEqual(
+      [CC_DATA]
+    )
+  })
+
+  it('resize-split updates and clamps the ratio', async () => {
+    const adapter = new MockScenarioAdapter()
+    await dispatchLayout(adapter, 1, {
+      kind: 'split-panel',
+      panelId: PANEL,
+      direction: 'horizontal'
+    })
+    const mid = await adapter.getSnapshot()
+    const root = mid.projects[0].layout.root
+    if (root?.kind !== 'split') throw new Error('expected split root')
+    const result = await dispatchLayout(adapter, 2, {
+      kind: 'resize-split',
+      splitNodeId: root.splitNodeId,
+      ratio: 0.97
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].layout.root).toMatchObject({ ratio: 0.9 })
+  })
+
+  it('close-panel with tabs requires a migration target', async () => {
+    const adapter = new MockScenarioAdapter()
+    await dispatchLayout(adapter, 1, {
+      kind: 'open-tab',
+      panelId: PANEL,
+      agentInstanceId: CC_SQL
+    })
+    const rejected = await dispatchLayout(adapter, 2, {
+      kind: 'close-panel',
+      panelId: PANEL
+    })
+    expect(rejected.ok).toBe(false)
+    if (rejected.ok) return
+    expect(rejected.reason).toBe('invariant-violation')
+    // Snapshot untouched by the rejection.
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].layout.panels[PANEL].tabs).toEqual([
+      CC_DATA,
+      CC_SQL
+    ])
+  })
+
+  it('close-panel migrates tabs into the chosen panel', async () => {
+    const adapter = new MockScenarioAdapter()
+    await dispatchLayout(adapter, 1, {
+      kind: 'split-panel',
+      panelId: PANEL,
+      direction: 'horizontal'
+    })
+    const mid = await adapter.getSnapshot()
+    const sibling = Object.keys(mid.projects[0].layout.panels).find(
+      (p) => p !== PANEL
+    )!
+    const result = await dispatchLayout(adapter, 2, {
+      kind: 'close-panel',
+      panelId: PANEL,
+      migrateToPanelId: id(sibling, 'PanelId')
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].layout.panels[PANEL]).toBeUndefined()
+    expect(
+      after.projects[0].layout.panels[id(sibling, 'PanelId')].tabs
+    ).toEqual([CC_DATA])
+  })
+
+  it('open-tab-in-new-panel opens an agent in a fresh panel', async () => {
+    const adapter = new MockScenarioAdapter()
+    const result = await dispatchLayout(adapter, 1, {
+      kind: 'open-tab-in-new-panel',
+      agentInstanceId: CC_SQL,
+      direction: 'horizontal'
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const allTabs = Object.values(after.projects[0].layout.panels).flatMap(
+      (p) => p.tabs
+    )
+    expect(allTabs.filter((t) => t === CC_SQL)).toHaveLength(1)
+    expect(Object.keys(after.projects[0].layout.panels)).toHaveLength(2)
+  })
+
+  it('rejects open-tab-in-new-panel for an unknown agent without mutation', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const result = await dispatchLayout(adapter, 1, {
+      kind: 'open-tab-in-new-panel',
+      agentInstanceId: id('inst-nope', 'AgentInstanceId'),
+      direction: 'horizontal'
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('invalid-target')
+    const after = await adapter.getSnapshot()
+    expect(after.revision).toBe(before.revision)
+    expect(after.projects[0].layout).toEqual(before.projects[0].layout)
+  })
+
+  it('structural commands never touch agents, queue or attention state', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    await dispatchLayout(adapter, 1, {
+      kind: 'split-panel',
+      panelId: PANEL,
+      direction: 'horizontal'
+    })
+    await dispatchLayout(adapter, 2, {
+      kind: 'move-tab',
+      agentInstanceId: CC_DATA,
+      targetPanelId: Object.keys(
+        (await adapter.getSnapshot()).projects[0].layout.panels
+      )
+        .map((p) => id(p, 'PanelId'))
+        .find((p) => p !== PANEL)!
+    })
+    await dispatchLayout(adapter, 3, {
+      kind: 'close-tab',
+      panelId: (await adapter.getSnapshot()).projects[0].layout
+        .focusedPanelId!,
+      agentInstanceId: CC_DATA
+    })
+    const after = await adapter.getSnapshot()
+    expect(after.agents).toEqual(before.agents)
+    expect(after.queue).toEqual(before.queue)
+    expect(after.attentionItems).toEqual(before.attentionItems)
   })
 })

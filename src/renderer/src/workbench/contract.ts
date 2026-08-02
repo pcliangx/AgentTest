@@ -255,6 +255,14 @@ export type LayoutOperation =
   | { kind: 'close-tab'; panelId: PanelId; agentInstanceId: AgentInstanceId }
   | { kind: 'move-tab'; agentInstanceId: AgentInstanceId; targetPanelId: PanelId }
   | {
+      kind: 'open-tab-in-new-panel'
+      agentInstanceId: AgentInstanceId
+      direction: 'horizontal' | 'vertical'
+      position?: 'before' | 'after'
+      relativeToPanelId?: PanelId
+    }
+  | { kind: 'close-panel'; panelId: PanelId; migrateToPanelId?: PanelId }
+  | {
       kind: 'split-panel'
       panelId: PanelId
       direction: 'horizontal' | 'vertical'
@@ -263,7 +271,7 @@ export type LayoutOperation =
   | { kind: 'focus-panel'; panelId?: PanelId }
   | { kind: 'prune-empty-panels' }
 
-export type AgentOpenMode = 'current-panel' | 'background'
+export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
 
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
