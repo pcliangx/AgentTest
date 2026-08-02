@@ -1,4 +1,4 @@
-# AgentTest v0.1 规划
+# Agent Squad HQ v0.1 规划
 
 > **历史规划说明**：本文件保留最初范围与推导过程。当前产品路线以
 > [PLAN-v0.2](./PLAN-v0.2.md) 为准，当前实现和通道职责以
@@ -64,7 +64,7 @@ Renderer · AgentPane（Split 并排 / Focus 单列）
 ## 4. 代码结构
 
 ```
-agenttest/
+agent-squad-hq/
 ├─ electron.vite.config.ts
 ├─ src/
 │  ├─ main/

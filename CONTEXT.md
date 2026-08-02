@@ -1,6 +1,6 @@
-# AgentTest 指挥中心领域词汇
+# Agent Squad HQ 指挥中心领域词汇
 
-AgentTest 是一个本地优先、以 Project 为边界的多 Agent 集成工作台与指挥中心。
+Agent Squad HQ 是一个本地优先、以 Project 为边界的多 Agent 集成工作台与指挥中心。
 本词汇表区分外部系统、Provider、运行实例、执行记录和界面容器；代码类型、IPC、
 持久化与产品文案应使用相同语义。
 
@@ -26,11 +26,11 @@ Project Root 是否仍可访问的独立状态。缺少 Git、未连接飞书或
 _避免_：Agent Availability、Provider Health
 
 **Project Task（本地项目任务）**：
-只存在于 AgentTest 的有边界目标，可显式发布为外部任务。
+只存在于 Agent Squad HQ 的有边界目标，可显式发布为外部任务。
 _避免_：Run、Dispatch
 
 **External Task（外部任务）**：
-由飞书等外部系统持有业务字段真相的任务。AgentTest 只保存稳定引用、版本、派发、
+由飞书等外部系统持有业务字段真相的任务。Agent Squad HQ 只保存稳定引用、版本、派发、
 执行结果和验收状态。
 _避免_：把本地 Run 状态直接当成飞书任务状态
 

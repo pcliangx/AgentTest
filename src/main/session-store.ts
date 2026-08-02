@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { AgentId } from './adapters/contract'
+import { APP_DISPLAY_NAME } from './app-identity'
 
 const KNOWN: readonly AgentId[] = ['claude', 'codex', 'kimi']
 const MAX_TURNS = 20
@@ -18,7 +19,7 @@ interface StoredAgentState {
 
 function truncate(text: string): string {
   if (text.length <= MAX_MESSAGE_CHARS) return text
-  return `${text.slice(0, MAX_MESSAGE_CHARS)}\n\n[earlier content truncated by AgentTest]`
+  return `${text.slice(0, MAX_MESSAGE_CHARS)}\n\n[earlier content truncated by ${APP_DISPLAY_NAME}]`
 }
 
 function parseState(value: unknown): StoredAgentState {

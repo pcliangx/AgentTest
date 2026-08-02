@@ -16,10 +16,12 @@ skills 索引；如两份文件出现重复或冲突，以本文件和当前已�
 3. 执行 `git status --short` 和 `git log -5 --oneline`，确认当前 HEAD 与未提交改动。
 4. 阅读任务相关 ADR；当前领域与通道决策分别是
    [`ADR-0008`](./docs/adr/0008-project-first-agent-instances.md) 和
-   [`ADR-0007`](./docs/adr/0007-structured-chat-pty-terminal.md)。
+   [`ADR-0007`](./docs/adr/0007-structured-chat-pty-terminal.md)；产品身份见
+   [`ADR-0013`](./docs/adr/0013-agent-squad-hq-product-identity.md)。
 5. 涉及 Agent CLI 协议时，再读
    [`src/main/adapters/PROBE.md`](./src/main/adapters/PROBE.md)。
-6. 若用户给出 `.scratch/<feature>/` 中的 spec/ticket，先读取后再动代码。
+6. 若用户给出 GitHub Issue 编号或 URL，先读取完整正文、comments、labels 与原生依赖；
+   若给出 `.scratch/<feature>/spec.md`，也须完整读取后再动代码。
 
 事实优先级依次为：用户当前要求 → 当前代码与测试 → `CONTEXT.md` 与最新
 Accepted ADR → `docs/PLAN-v0.2.md` → `docs/HANDOFF.md` → 历史规划。
@@ -27,7 +29,8 @@ Accepted ADR → `docs/PLAN-v0.2.md` → `docs/HANDOFF.md` → 历史规划。
 
 UI/UX Design Gate 已于 2026-08-02 关闭，设计基线见
 [`docs/UX-v0.2.md`](./docs/UX-v0.2.md)。下一阶段是 Phase 1“生产 UI 与契约化
-Mock”，但尚未启动；必须按 `.scratch/ui-first-command-center/` 的 spec/ticket 顺序
+Mock”，但尚未启动；必须遵守 `.scratch/ui-first-command-center/spec.md`，并按
+[GitHub Issues #1–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的原生依赖 frontier
 实施。throwaway prototype 不能直接当生产代码。
 
 ## Claude Code / Codex 协作协议
@@ -37,7 +40,7 @@ Mock”，但尚未启动；必须按 `.scratch/ui-first-command-center/` 的 sp
 - 编辑前查看相关 diff；禁止用 `git reset --hard`、`git checkout --` 等方式清除
   他人改动。
 - 默认串行接力。确需并行时按文件、模块或独立 worktree 拆分，避免同时编辑同一
-  文件；任务状态记录在 `.scratch/<feature>/`。
+  文件；任务状态、认领、依赖和实施记录只写入对应 GitHub Issue。
 - 从当前工作树继续，不重复已经完成的工作。交接以 Git commit、当前 diff、
   HANDOFF/ADR 和测试结果为准，不依赖聊天记忆。
 - 发现另一 agent 的实现存在问题时，先给出代码和测试证据，再修改；不要仅因实现者
@@ -85,6 +88,8 @@ Mock”，但尚未启动；必须按 `.scratch/ui-first-command-center/` 的 sp
 - 仅成功完成的回合才能持久化 native session 与 transcript。
 - renderer 不解析 ANSI 来推断 agent 语义状态。
 - main/preload 使用 CJS；不要给 `package.json` 添加 `"type": "module"`。
+- 正式产品名必须写作 `Agent Squad HQ`；新技术标识使用 `agent-squad-hq` /
+  `AGENT_SQUAD_HQ_*`。旧名称只能出现在 ADR-0013 定义的兼容迁移中。
 - 重装依赖后必须运行 `npm run rebuild:native`，使 node-pty ABI 对齐 Electron。
 - 面向用户的文案和项目文档用中文；代码、标识符、路径与 commit subject 用英文。
 - 合并主仓库前必须二次确认、检查主仓库干净，并且只允许 `--ff-only`。
@@ -111,17 +116,19 @@ git diff --check
 真实 agent 测试必须显式开启：
 
 ```bash
-AGENTTEST_E2E=1 npx vitest run <e2e-test-file>
+AGENT_SQUAD_HQ_E2E=1 npx vitest run <e2e-test-file>
 ```
 
 真实 E2E 会使用本机鉴权、代理和模型额度。未运行时只能声明 fixture/fake CLI
 通过，不能声称三家真实 CLI 已验证。Electron 窗口交互也必须如实标记为人工验证。
 
-## 本地 issue / spec 约定
+## 产品 spec / GitHub Issue 约定
 
-- 一项功能一个目录：`.scratch/<feature-slug>/`。
-- spec：`.scratch/<feature-slug>/spec.md`。
-- ticket：`.scratch/<feature-slug>/issues/<NN>-<slug>.md`。
+- 产品 spec 可以保存在 `.scratch/<feature-slug>/spec.md`，ADR/PLAN/HANDOFF 继续在
+  仓库中维护。
+- 实现 ticket 只使用 [GitHub Issues](https://github.com/pcliangx/agent-squad-hq/issues)；
+  Issue 正文、labels、原生 Relationships、comments 与 open/closed 状态是唯一 truth。
+- 禁止创建或恢复 `.scratch/<feature-slug>/issues/` 本地 ticket 镜像。
 - 详细规则见 [`docs/agents/issue-tracker.md`](./docs/agents/issue-tracker.md) 和
   [`docs/agents/triage-labels.md`](./docs/agents/triage-labels.md)。
 - 领域文档与 ADR 读取规则见

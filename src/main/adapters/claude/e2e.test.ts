@@ -1,5 +1,5 @@
 // End-to-end check: spawns the REAL claude CLI through the adapter + run-manager and asserts the
-// decoded event stream. Skipped by default (costs tokens); run with AGENTTEST_E2E=1.
+// decoded event stream. Skipped by default (costs tokens); run with AGENT_SQUAD_HQ_E2E=1.
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,11 +8,12 @@ import { execFileSync } from 'node:child_process'
 import { claudeAdapter } from './adapter'
 import { startRun } from '../../run-manager'
 import { extractNativeSessionId, type AgentEvent } from '../contract'
+import { isRealCliE2EEnabled } from '../../app-identity'
 
-const RUN = process.env['AGENTTEST_E2E'] === '1'
+const RUN = isRealCliE2EEnabled(process.env)
 
 function tempGitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-e2e-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-e2e-'))
   execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' })
   execFileSync(
     'git',

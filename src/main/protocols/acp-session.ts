@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { BoundedJsonlDecoder } from '../adapters/shared/bounded-jsonl-decoder'
 import type { AgentEvent } from '../adapters/contract'
+import { APP_TECHNICAL_NAME } from '../app-identity'
 
 interface AcpSessionOptions {
   readonly child: ChildProcess
@@ -286,7 +287,7 @@ export function attachAcpSession(options: AcpSessionOptions): AcpSessionControll
   send(1, 'initialize', {
     protocolVersion: 1,
     clientCapabilities: { terminal: false },
-    clientInfo: { name: 'agenttest', version: '0.1.0' }
+    clientInfo: { name: APP_TECHNICAL_NAME, version: '0.1.0' }
   })
   nextId = 2
   resetStageTimer('initialize')

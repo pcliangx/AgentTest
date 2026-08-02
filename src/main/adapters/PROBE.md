@@ -115,7 +115,7 @@ SessionStore 回放最多 20 个已成功回合。
 真实 CLI E2E 必须显式开启：
 
 ```bash
-AGENTTEST_E2E=1 npx vitest run <file>
+AGENT_SQUAD_HQ_E2E=1 npx vitest run <file>
 ```
 
 它依赖本机鉴权、代理与模型额度。未运行时只能声称协议 fixture/fake CLI 通过，

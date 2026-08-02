@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentTest · 桌面端项目配置</title>
+    <title>Agent Squad HQ · 桌面端项目配置</title>
     <style>
       /* SINGLE-SCHEME DESKTOP UI PROTOTYPE —方案 A */
       :root {
@@ -207,7 +207,7 @@
       const activeAgent = (active = state.active) => active.startsWith('agent:') ? agents.find((agent) => agent.id === active.slice(6)) : null;
 
       function titlebar() {
-        return `<div class="titlebar" data-od-id="desktop-titlebar"><div class="window-controls"><span class="window-control"></span><span class="window-control"></span><span class="window-control"></span></div><div class="window-title">AgentTest — 项目设置</div><div class="title-project">销售数据分析</div></div>`;
+        return `<div class="titlebar" data-od-id="desktop-titlebar"><div class="window-controls"><span class="window-control"></span><span class="window-control"></span><span class="window-control"></span></div><div class="window-title">Agent Squad HQ — 项目设置</div><div class="title-project">销售数据分析</div></div>`;
       }
       function toolbar() {
         return `<div class="toolbar" data-od-id="desktop-toolbar"><button class="icon-button" type="button" aria-label="返回工作台" title="返回工作台" data-nav="workspace">${icon('back')}</button><button class="icon-button" type="button" aria-label="打开项目列表" title="项目列表" data-nav="projects">${icon('forward')}</button><span class="toolbar-divider"></span><span class="toolbar-title">项目设置 / 接入与资源</span><span class="toolbar-spacer"></span><span class="key">${state.dirty ? '有未保存修改' : '配置已同步'}</span><button class="button primary" type="button" data-save>${icon('save')}应用 <span class="key">⌘S</span></button></div>`;

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'" />
-    <title>AgentTest · Project Settings B 版原型</title>
+    <title>Agent Squad HQ · Project Settings B 版原型</title>
     <style>
       /*
        * THROWAWAY UI PROTOTYPE — DO NOT PROMOTE TO PRODUCTION.
@@ -293,7 +293,7 @@
 
       function primaryNav() {
         const items = [['overview', '⌂', '概览'], ['agents', '⌘', 'Agents'], ['tasks', '✓', '任务'], ['knowledge', '◇', '知识'], ['handoffs', '⇄', '交接'], ['activity', '≋', '活动']];
-        return `<nav class="primary-nav" aria-label="项目主导航"><div class="brand">AT</div><div class="nav-separator"></div>${items.map((item) => `<button class="nav-item" type="button" data-project-nav="${item[0]}"><b>${item[1]}</b><span>${item[2]}</span></button>`).join('')}<div class="nav-spacer"></div><button class="nav-item ${state.attentionOpen ? 'active' : ''}" type="button" data-action="attention"><span class="attention-count">4</span><span>关注</span></button><button class="nav-item active" type="button"><b>⚙</b><span>设置</span></button></nav>`;
+        return `<nav class="primary-nav" aria-label="项目主导航"><div class="brand" aria-label="Agent Squad HQ">HQ</div><div class="nav-separator"></div>${items.map((item) => `<button class="nav-item" type="button" data-project-nav="${item[0]}"><b>${item[1]}</b><span>${item[2]}</span></button>`).join('')}<div class="nav-spacer"></div><button class="nav-item ${state.attentionOpen ? 'active' : ''}" type="button" data-action="attention"><span class="attention-count">4</span><span>关注</span></button><button class="nav-item active" type="button"><b>⚙</b><span>设置</span></button></nav>`;
       }
 
       function settingsNav() {
@@ -341,7 +341,7 @@
 
       function generalForm() {
         const owner = 'project';
-        return `<div class="form"><section class="section">${field('Project 名称', '工作台中的可见名称。', `<input class="input" value="${escapeHtml(draftValue(owner, 'projectName'))}" data-owner="${owner}" data-field="projectName" />`)}${field('ProjectId', '稳定身份，不随路径变化。', readonly(state.projectId, '只读'))}${field('根目录', '不能像普通文本字段一样修改。', readonly('~/Projects/sales-analysis', '<button class="button" data-action="relocate">重新定位…</button>'))}${field('Git 状态', '非 Git Project 可以管理任务与知识，但不能创建可运行 Agent。', readonly('Git repository · main', '可运行'))}</section><section class="section">${field('启动落点', '新 Project 进入 Overview；已使用 Project 恢复上次 surface 与布局。', `<select class="select" data-owner="${owner}" data-field="landing"><option ${selected('恢复上次工作区', draftValue(owner, 'landing'))}>恢复上次工作区</option><option ${selected('Project Overview', draftValue(owner, 'landing'))}>Project Overview</option></select>`)}${field('归档 Project', '活动 Run 必须先完成或停止，并生成 handoff。', '<button class="button">归档…</button>')}${field('永久删除', '只删除 AgentTest 本地数据，不级联删除飞书资源或全局连接。', '<button class="button danger">永久删除…</button>')}</section></div>`;
+        return `<div class="form"><section class="section">${field('Project 名称', '工作台中的可见名称。', `<input class="input" value="${escapeHtml(draftValue(owner, 'projectName'))}" data-owner="${owner}" data-field="projectName" />`)}${field('ProjectId', '稳定身份，不随路径变化。', readonly(state.projectId, '只读'))}${field('根目录', '不能像普通文本字段一样修改。', readonly('~/Projects/sales-analysis', '<button class="button" data-action="relocate">重新定位…</button>'))}${field('Git 状态', '非 Git Project 可以管理任务与知识，但不能创建可运行 Agent。', readonly('Git repository · main', '可运行'))}</section><section class="section">${field('启动落点', '新 Project 进入 Overview；已使用 Project 恢复上次 surface 与布局。', `<select class="select" data-owner="${owner}" data-field="landing"><option ${selected('恢复上次工作区', draftValue(owner, 'landing'))}>恢复上次工作区</option><option ${selected('Project Overview', draftValue(owner, 'landing'))}>Project Overview</option></select>`)}${field('归档 Project', '活动 Run 必须先完成或停止，并生成 handoff。', '<button class="button">归档…</button>')}${field('永久删除', '只删除 Agent Squad HQ 本地数据，不级联删除飞书资源或全局连接。', '<button class="button danger">永久删除…</button>')}</section></div>`;
       }
 
       function defaultsForm() {
@@ -366,7 +366,7 @@
       }
 
       function storageForm() {
-        return `<div class="form"><section class="section">${field('数据位置', 'ProjectStore、RunStore、SessionStore、handoff 与审计仅保存在本机。', readonly('~/Library/Application Support/AgentTest', '本地优先'))}${field('滚动恢复快照', '事务写入与 schema 迁移失败时可恢复。', toggle('project', 'snapshots', draftValue('project', 'snapshots'), '启用滚动恢复快照'))}${field('自动云同步', 'v0.2 不上传项目数据或遥测。', readonly('关闭', '不可配置'))}</section><section class="section">${field('导出 Project', '先展示清单；默认排除凭据、Cookie、Token 和完整飞书缓存。', '<button class="button">预览导出内容…</button>')}${field('恢复备份', '恢复后不启动 Run，也不执行任何飞书写操作。', '<button class="button">选择备份…</button>')}</section></div>`;
+        return `<div class="form"><section class="section">${field('数据位置', 'ProjectStore、RunStore、SessionStore、handoff 与审计仅保存在本机。', readonly('~/Library/Application Support/agent-squad-hq', '本地优先'))}${field('滚动恢复快照', '事务写入与 schema 迁移失败时可恢复。', toggle('project', 'snapshots', draftValue('project', 'snapshots'), '启用滚动恢复快照'))}${field('自动云同步', 'v0.2 不上传项目数据或遥测。', readonly('关闭', '不可配置'))}</section><section class="section">${field('导出 Project', '先展示清单；默认排除凭据、Cookie、Token 和完整飞书缓存。', '<button class="button">预览导出内容…</button>')}${field('恢复备份', '恢复后不启动 Run，也不执行任何飞书写操作。', '<button class="button">选择备份…</button>')}</section></div>`;
       }
 
       function formForActive() {
@@ -413,7 +413,7 @@
 
       function render() {
         const content = state.variant === 'A' ? `${primaryNav()}${settingsNav()}${detailPane()}${changesPane()}` : state.variant === 'B' ? `${primaryNav()}${settingsNav()}${matrixPane()}` : `${primaryNav()}${reviewPane()}`;
-        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>AgentTest</strong> / Project Settings</span><span class="title-project">${escapeHtml(projectConfiguration.projectName)} · ${state.projectId}</span></header><header class="toolbar"><button class="back" data-back type="button" aria-label="返回工作台">←</button><span class="toolbar-title"><strong>Project Settings</strong><small>同一主窗口 · 不改变当前 Run</small></span><span class="toolbar-actions"><span class="save-state">${state.changes.length ? `${state.changes.length} 项待应用` : '配置已应用'}</span><button class="button" data-action="discard" ${state.changes.length ? '' : 'disabled'}>放弃</button><button class="button primary" data-apply type="button" ${state.changes.length ? '' : 'disabled'}>应用${state.changes.length ? ` (${state.changes.length})` : ''}</button></span></header><div class="settings-shell">${content}${state.attentionOpen ? renderAttentionDrawer() : ''}</div><footer class="statusbar"><span>Project scope</span><span>Local-first</span><span>Secrets → System Keychain</span><span class="push">draft → 应用 → 下一次 Run</span></footer></div>${state.variant === 'C' && state.changes.length ? `<div class="apply-dock"><span>${state.changes.length} 项修改已暂存</span><button class="button primary" data-apply>应用到下一次 Run</button></div>` : ''}${switcher()}`;
+        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>Agent Squad HQ</strong> / Project Settings</span><span class="title-project">${escapeHtml(projectConfiguration.projectName)} · ${state.projectId}</span></header><header class="toolbar"><button class="back" data-back type="button" aria-label="返回工作台">←</button><span class="toolbar-title"><strong>Project Settings</strong><small>同一主窗口 · 不改变当前 Run</small></span><span class="toolbar-actions"><span class="save-state">${state.changes.length ? `${state.changes.length} 项待应用` : '配置已应用'}</span><button class="button" data-action="discard" ${state.changes.length ? '' : 'disabled'}>放弃</button><button class="button primary" data-apply type="button" ${state.changes.length ? '' : 'disabled'}>应用${state.changes.length ? ` (${state.changes.length})` : ''}</button></span></header><div class="settings-shell">${content}${state.attentionOpen ? renderAttentionDrawer() : ''}</div><footer class="statusbar"><span>Project scope</span><span>Local-first</span><span>Secrets → System Keychain</span><span class="push">draft → 应用 → 下一次 Run</span></footer></div>${state.variant === 'C' && state.changes.length ? `<div class="apply-dock"><span>${state.changes.length} 项修改已暂存</span><button class="button primary" data-apply>应用到下一次 Run</button></div>` : ''}${switcher()}`;
       }
 
       document.addEventListener('click', (event) => {

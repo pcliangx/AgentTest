@@ -1,5 +1,5 @@
 // PTY e2e: spawns the REAL claude CLI interactively via node-pty and asserts TUI bytes stream back.
-// Skipped by default; run with AGENTTEST_E2E=1.
+// Skipped by default; run with AGENT_SQUAD_HQ_E2E=1.
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,11 +7,12 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { PtyManager } from './pty-manager'
 import { WorktreeManager } from './worktree-manager'
+import { isRealCliE2EEnabled } from './app-identity'
 
-const RUN = process.env['AGENTTEST_E2E'] === '1'
+const RUN = isRealCliE2EEnabled(process.env)
 
 function tempGitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-pty-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-pty-'))
   execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' })
   execFileSync(
     'git',

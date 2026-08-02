@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentId } from './adapters/contract'
+import { APP_TECHNICAL_NAME } from './app-identity'
 
 export interface WorktreeFile {
   readonly path: string
@@ -66,18 +67,18 @@ export class WorktreeManager {
     if (this.runGit(baseRepo, ['status', '--porcelain']).trim() !== '') return { ok: false, reason: 'dirty-base' }
     if (this.runGit(wt, ['status', '--porcelain']).trim() === '') return { ok: false, reason: 'no-changes' }
 
-    const branch = `agenttest/${agentId}-${Date.now()}`
+    const branch = `${APP_TECHNICAL_NAME}/${agentId}-${Date.now()}`
     if (!this.runGitOk(wt, ['checkout', '-B', branch])) return { ok: false, reason: 'git-error' }
     this.runGitOk(wt, ['add', '-A'])
     if (
       !this.runGitOk(wt, [
         '-c',
-        'user.email=agent@test',
+        `user.email=${APP_TECHNICAL_NAME}@local.invalid`,
         '-c',
-        'user.name=agenttest',
+        `user.name=${APP_TECHNICAL_NAME}`,
         'commit',
         '-m',
-        `agenttest: apply @@${agentId} changes`
+        `${APP_TECHNICAL_NAME}: apply @@${agentId} changes`
       ])
     ) {
       return { ok: false, reason: 'git-error' }

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本文件是 **Claude Code 的项目入口**。AgentTest 由 Claude Code 与 Codex
+本文件是 **Claude Code 的项目入口**。Agent Squad HQ 由 Claude Code 与 Codex
 对等协同开发；共享工程规则不在这里复制维护。
 
 每次任务开始前，必须完整读取并遵守：
@@ -10,7 +10,8 @@
 3. [`docs/HANDOFF.md`](./docs/HANDOFF.md) —— 当前架构、状态、代码地图和已知坑；
 4. [`docs/PLAN-v0.2.md`](./docs/PLAN-v0.2.md) —— 当前产品目标和实施路线；
 5. 与任务相关的 Accepted ADR，当前重点是
-   [`ADR-0008`](./docs/adr/0008-project-first-agent-instances.md)。
+   [`ADR-0008`](./docs/adr/0008-project-first-agent-instances.md) 和
+   [`ADR-0013`](./docs/adr/0013-agent-squad-hq-product-identity.md)。
 
 不要把 `AGENTS.md` 理解成只给 Codex 的文件，也不要在本文件建立一套与其平行的
 架构约定。若共享规则需要调整，优先修改 `AGENTS.md`；只有 Claude Code 专属的
@@ -29,7 +30,10 @@
 
 ### Issue tracker
 
-Issues and specs live as Markdown files under `.scratch/<feature-slug>/`.
+Implementation tickets live only in
+[GitHub Issues](https://github.com/pcliangx/agent-squad-hq/issues); GitHub bodies, labels,
+Relationships, comments, and state are the canonical task tracker. Product specs may remain under
+`.scratch/<feature-slug>/`, but local issue mirrors are forbidden.
 See [`docs/agents/issue-tracker.md`](./docs/agents/issue-tracker.md).
 
 ### Triage labels

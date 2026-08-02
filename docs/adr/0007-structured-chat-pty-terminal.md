@@ -60,4 +60,4 @@ PTY 保留，但职责收缩为每个 Agent Instance 在 Agent Tab 内显式选�
 - **代价**：每 turn 有 CLI 冷启动；需维护三种协议 decoder/driver；结构化 Chat
   的交互质量取决于自研 UI；Kimi 暂用 bounded transcript，长对话会被截断。
 - **验证责任**：fixture/fake CLI 覆盖协议和生命周期；真实 CLI 测试通过
-  `AGENTTEST_E2E=1` 显式运行，避免默认测试消耗额度。
+  `AGENT_SQUAD_HQ_E2E=1` 显式运行，避免默认测试消耗额度。

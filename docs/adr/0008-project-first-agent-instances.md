@@ -11,7 +11,7 @@
 
 ## 决策
 
-AgentTest 的顶层对象是 **Project**，不是 Task，也不是 Claude/Codex/Kimi 三个固定
+Agent Squad HQ 的顶层对象是 **Project**，不是 Task，也不是 Claude/Codex/Kimi 三个固定
 pane。每个 Project 可以创建任意数量的 **Agent Instance**；实例由用户命名并选择
 一个 Agent Provider，同一 Provider 可以出现多次，例如 `cc_data` 与 `cc_sql`
 都使用 Claude Code。

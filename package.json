@@ -1,9 +1,17 @@
 {
-  "name": "agenttest",
+  "name": "@pcliangx/agent-squad-hq",
+  "productName": "Agent Squad HQ",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron shell embedding Claude Code / Codex / Kimi Code with @@ routing",
+  "description": "Local-first multi-agent workbench and command center for Claude Code, Codex, and Kimi Code",
   "author": "pcliangx",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pcliangx/agent-squad-hq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pcliangx/agent-squad-hq/issues"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

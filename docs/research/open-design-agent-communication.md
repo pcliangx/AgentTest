@@ -32,7 +32,7 @@ React/Next Web
 
 Open Design 确实依赖 `node-pty`，但它被放在**独立的交互式终端子系统**中：PTY 启动用户 shell，输出走 SSE，键盘输入与 resize 走 HTTP POST。它不是 Claude/Codex/Kimi 对话 runtime 的传输层（`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/terminals.ts:10-17`、`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/routes/terminal.ts:10-18`）。
 
-这对 AgentTest 的启示不是“PTY 错了”，而是应按职责分层：
+这对 Agent Squad HQ 的启示不是“PTY 错了”，而是应按职责分层：
 
 - 要完整保留原生 TUI、终端快捷键、交互式命令，PTY 是合适且几乎不可替代的。
 - 要稳定做 `@@` 路由、结构化 tool call、token/usage、错误分类、会话恢复和可测试 UI，厂商提供的 headless/structured protocol 更合适。
@@ -183,9 +183,11 @@ Open Design 的 PTY 是另一套 subsystem：
 原生交互终端：     node-pty + raw terminal bytes -> xterm
 ```
 
-## 8. 对 AgentTest ADR-0006 三个前提的判断
+## 8. 对 Agent Squad HQ ADR-0006 三个前提的判断
 
-ADR-0006 把改用 PTY 的背景归纳为“不流式、每条冷启动、UI 像日志”（`/Users/pc2026/Documents/DevTools/AgentTest/docs/adr/0006-v0.1-pty-primary.md:7-13`）。对照 Open Design 当前实现，这三个前提需要拆开看。
+ADR-0006 把改用 PTY 的背景归纳为“不流式、每条冷启动、UI 像日志”
+（[`ADR-0006`](../adr/0006-v0.1-pty-primary.md)）。对照 Open Design 当前实现，这三个
+前提需要拆开看。
 
 ### 前提一：“结构化模式不流式”
 
@@ -193,7 +195,7 @@ ADR-0006 把改用 PTY 的背景归纳为“不流式、每条冷启动、UI 像
 
 Open Design 会探测 Claude Code 是否支持 `--include-partial-messages`；支持时将它加入 stream-json 参数（`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/runtimes/defs/claude.ts:35-38`、`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/runtimes/defs/claude.ts:52-65`）。parser 已处理 text、thinking 与 tool-input 的 partial delta（`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/runtimes/claude-stream.ts:559-615`）。Kimi ACP 也把分段 message/thought update 转为持续事件（`/Users/pc2026/Documents/GitHubResearch/open-design/apps/daemon/src/agent-protocol/acp/session.ts:625-714`）。
 
-因此，AgentTest 实测的“整轮结束才出完整 assistant event”是真问题，但更准确的结论是“当时 adapter 缺少 partial flag/decoder”，而不是“pipes/structured protocol 无法流式”。Codex、Kimi 的具体粒度仍应按当前已安装 CLI 做 E2E probe，不能由 Claude 的结果外推。
+因此，Agent Squad HQ 实测的“整轮结束才出完整 assistant event”是真问题，但更准确的结论是“当时 adapter 缺少 partial flag/decoder”，而不是“pipes/structured protocol 无法流式”。Codex、Kimi 的具体粒度仍应按当前已安装 CLI 做 E2E probe，不能由 Claude 的结果外推。
 
 ### 前提二：“每条冷启动”
 
@@ -213,11 +215,14 @@ Open Design 把厂商输出归一化为 text/thinking/tool/usage/error/session �
 
 ### 综合判断
 
-ADR-0006 对 v0.1 快速得到三家原生 TUI 是合理的阶段性决策，也如实记录了 PTY 的负面后果：回合边界、usage、session id 只能从 bytes 推断，且 `@@` 注入无法证明已被消费（`/Users/pc2026/Documents/DevTools/AgentTest/docs/adr/0006-v0.1-pty-primary.md:24-28`）。但 Open Design 的实现证据削弱了把它升级为长期默认编排架构的三个前提：第一、第三并非协议固有限制，第二需要性能数据。
+ADR-0006 对 v0.1 快速得到三家原生 TUI 是合理的阶段性决策，也如实记录了 PTY 的
+负面后果：回合边界、usage、session id 只能从 bytes 推断，且 `@@` 注入无法证明已被
+消费（[`ADR-0006`](../adr/0006-v0.1-pty-primary.md)）。但 Open Design 的实现证据削弱了
+把它升级为长期默认编排架构的三个前提：第一、第三并非协议固有限制，第二需要性能数据。
 
-## 9. 对 AgentTest 的建议
+## 9. 对 Agent Squad HQ 的建议
 
-AgentTest 当前强调“每 agent 一个常驻原生 TUI PTY”。如果这项体验是核心承诺，继续用 PTY 是合理的：Claude Code、Codex、Kimi 的全屏 TUI 都依赖伪终端能力，普通 pipe 无法等价复刻终端尺寸、控制序列、交互输入和 TUI 状态。
+Agent Squad HQ 当前强调“每 agent 一个常驻原生 TUI PTY”。如果这项体验是核心承诺，继续用 PTY 是合理的：Claude Code、Codex、Kimi 的全屏 TUI 都依赖伪终端能力，普通 pipe 无法等价复刻终端尺寸、控制序列、交互输入和 TUI 状态。
 
 但 PTY 不应同时承担结构化控制面的全部职责。建议把目标架构明确为：**结构化通道负责默认编排，PTY 负责 Terminal / takeover。**
 
@@ -233,7 +238,7 @@ AgentTest 当前强调“每 agent 一个常驻原生 TUI PTY”。如果这项�
 
 ## 10. 本机 CLI 能力核验
 
-2026-07-31 在 AgentTest 当前机器只执行 `--version/--help`，未发起模型请求，结果如下：
+2026-07-31 在 Agent Squad HQ 当前机器只执行 `--version/--help`，未发起模型请求，结果如下：
 
 | CLI | 本机版本 | help 实际暴露的能力 | 与 Open Design adapter 的对应 |
 |---|---:|---|---|

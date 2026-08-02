@@ -18,7 +18,7 @@ ADR-0008 已确定 Project-first、N 个命名 Agent Instance 以及 Tab/Panel �
 
 ### 指挥中心信息架构
 
-AgentTest 使用单一主窗口。Project 内固定一级导航为：
+Agent Squad HQ 使用单一主窗口。Project 内固定一级导航为：
 
 1. Project Overview；
 2. Agents；
@@ -79,14 +79,14 @@ Project 的明确实例列表并确认。assistant 输出中的 `@@` 永不触�
   待处理状态。用户可以显式停止当前 Project 的全部 Run。
 - 关闭主窗口不停止 Run；应用继续驻留并发送系统通知。v0.2 不引入独立 daemon，
   Electron main 退出时不能遗留未管理子进程。
-- 显式“退出 AgentTest”时，活动 Run 先由用户选择等待或停止，然后对所有
+- 显式“退出 Agent Squad HQ”时，活动 Run 先由用户选择等待或停止，然后对所有
   handoff-dirty Agent 请求最终结构化 handoff。超时或失败时，应用根据最后成功回合、
   当前任务、文件改动、验证结果和失败原因生成确定性快照并标记“不完整”；保留强制
   退出入口。
 - Handoff 的规范记录位于 ProjectStore，以
   `(projectId, agentInstanceId, handoffId)` 标识；Markdown 只是查看、复制、导出或
   可选 repo 同步格式。默认保存在 Git 之外；用户显式开启后可同步到
-  `.agenttest/handoffs/<agent-name>/`，但引用仍使用稳定 handoffId。
+  `.agent-squad-hq/handoffs/<agent-name>/`，但引用仍使用稳定 handoffId。
 - 只有发生成功回合、脏 worktree、运行/失败/中断/待确认、未同步任务或人工标记的
   Agent 才是 handoff-dirty；其他实例复用上一次 handoff。
 
@@ -100,7 +100,7 @@ Agent 和 Project 都采用先归档、后永久删除：
 - 归档前处理活动 Run 并生成 handoff，之后禁止新 Run 和外部写入；
 - 归档保留 session、Run、handoff、task binding、worktree 和历史，可恢复；
 - 永久删除必须展示影响并二次确认；脏 worktree 必须选择保留、导出 patch 或丢弃；
-- Project 永久删除只处理 AgentTest 本地数据，不级联删除飞书资源或全局连接；
+- Project 永久删除只处理 Agent Squad HQ 本地数据，不级联删除飞书资源或全局连接；
 - 默认不设置自动过期清理。
 
 Provider 在实例创建后不可变。更换 Provider 必须创建新实例并 handoff。Provider

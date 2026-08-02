@@ -19,7 +19,7 @@ function tempGitRepoWithFile(): string {
 // Worktree root MUST live outside the base repo, else the base sees it as untracked (just like
 // production, where the root is under userData, not inside the user's repo).
 function setup(): { base: string; mgr: WorktreeManager } {
-  return { base: tempGitRepoWithFile(), mgr: new WorktreeManager(mkdtempSync(join(tmpdir(), 'agenttest-wtroot-'))) }
+  return { base: tempGitRepoWithFile(), mgr: new WorktreeManager(mkdtempSync(join(tmpdir(), 'agent-squad-hq-wtroot-'))) }
 }
 
 function porcelain(dir: string): string {
@@ -53,8 +53,13 @@ describe('WorktreeManager.applyToBase', () => {
     const r = mgr.applyToBase('claude', base)
 
     expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.branch).toMatch(/^agent-squad-hq\/claude-\d+$/)
     expect(existsSync(join(base, 'new.txt'))).toBe(true) // landed
     expect(porcelain(base)).toBe('') // base clean afterwards
+    expect(execFileSync('git', ['-C', base, 'log', '-1', '--format=%s%n%an%n%ae'], { encoding: 'utf8' }).trim()).toBe(
+      'agent-squad-hq: apply @@claude changes\nagent-squad-hq\nagent-squad-hq@local.invalid'
+    )
   })
 
   it('refuses when the base repo is dirty', () => {

@@ -1,10 +1,10 @@
-# AgentTest UI 原型
+# Agent Squad HQ UI 原型
 
 > **THROWAWAY PROTOTYPE**：本目录只用于验证界面结构与交互，不是生产代码，不能直接复制进 renderer。
 
 ## 本轮问题
 
-在已确认的 Project-first、显式执行、自由分屏与飞书信任边界下，AgentTest 作为
+在已确认的 Project-first、显式执行、自由分屏与飞书信任边界下，Agent Squad HQ 作为
 “集成工作台 / 指挥中心”应该如何组织导航、运行态势、Agent 工作区和 Project
 设置？
 

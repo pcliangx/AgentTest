@@ -33,7 +33,7 @@ PermissionBroker：
 
 ### 飞书能力代执行
 
-Agent 不直接持有 AgentTest 管理的飞书长期凭据、profile、Cookie 或已认证
+Agent 不直接持有 Agent Squad HQ 管理的飞书长期凭据、profile、Cookie 或已认证
 原始 CLI 上下文。Agent 只能向 main 侧 FeishuConnector 发出类型化的窄化
 请求；Connector 使用官方 CLI/OpenAPI 代为执行，并在执行前校验：
 
@@ -46,7 +46,7 @@ ConnectionId + Project Resource Binding + Run instruction
 - 每个 ConnectionId 使用独立的凭据及 CLI 配置上下文；
 - Agent 执行环境不得读取 Connector profile 或 App 凭据；仅从 `PATH` 移除命令
   不算隔离；
-- 若 Provider/host 无法阻止 Agent 使用 AgentTest 管理的身份绕过 Connector，
+- 若 Provider/host 无法阻止 Agent 使用 Agent Squad HQ 管理的身份绕过 Connector，
   该 Run 不能获得飞书 Connector 能力；
 - 删除、批量、成员、权限和凭据操作的 confirmation token 只能由 App 确认流
   生成，Agent 或 CLI 不能自行构造。

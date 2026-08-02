@@ -9,7 +9,7 @@ import { kimiAdapter } from './adapters/kimi/adapter'
 import type { AgentAdapter, AgentEvent } from './adapters/contract'
 
 function fakeClaudeCli(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-claude-runtime-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-claude-runtime-'))
   const script = join(dir, 'fake-claude.mjs')
   writeFileSync(
     script,
@@ -67,7 +67,7 @@ process.stdin.on('end', () => {
 }
 
 function fakeCodexCli(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-codex-runtime-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-codex-runtime-'))
   const script = join(dir, 'fake-codex.mjs')
   writeFileSync(
     script,
@@ -95,7 +95,7 @@ process.stdin.on('end', () => {
 }
 
 function fakeKimiAcpCli(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-kimi-runtime-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-kimi-runtime-'))
   const script = join(dir, 'fake-kimi-acp.mjs')
   writeFileSync(
     script,
@@ -271,7 +271,7 @@ describe('startRun structured transport', () => {
   })
 
   it('reports a protocol error when a CLI exits cleanly before completing a turn', async () => {
-    const script = scriptWithBody('agenttest-early-exit-', 'process.exit(0)\n')
+    const script = scriptWithBody('agent-squad-hq-early-exit-', 'process.exit(0)\n')
     const adapter: AgentAdapter = {
       ...codexAdapter,
       executable: process.execPath,
@@ -294,7 +294,7 @@ describe('startRun structured transport', () => {
 
   it('marks user cancellation without inventing a protocol failure', async () => {
     const script = scriptWithBody(
-      'agenttest-cancel-',
+      'agent-squad-hq-cancel-',
       "process.stdin.resume()\nsetInterval(() => {}, 1000)\n"
     )
     const adapter: AgentAdapter = {
@@ -323,7 +323,7 @@ describe('startRun structured transport', () => {
 
   it('fails an ACP handshake that stops making protocol progress', async () => {
     const script = scriptWithBody(
-      'agenttest-acp-timeout-',
+      'agent-squad-hq-acp-timeout-',
       "process.stdin.resume()\nsetInterval(() => {}, 1000)\n"
     )
     const adapter: AgentAdapter = {

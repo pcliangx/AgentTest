@@ -1,4 +1,4 @@
-# AgentTest v0.2 UI/UX 设计说明
+# Agent Squad HQ v0.2 UI/UX 设计说明
 
 > 状态：设计基线已冻结，Design Gate 已关闭；生产 UI 尚未启动
 >
@@ -10,18 +10,19 @@
 > [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md) ·
 > [ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md) ·
 > [ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md) ·
+> [ADR-0013](./adr/0013-agent-squad-hq-product-identity.md) ·
 > [领域词汇表](../CONTEXT.md)
 
 ## 1. 产品体验目标
 
-AgentTest 不是三个固定 Provider pane，也不是无人值守的 Agent swarm。它是一个
+Agent Squad HQ 不是三个固定 Provider pane，也不是无人值守的 Agent swarm。它是一个
 **以 Project 为顶层的集成工作台与指挥中心**：用户在一个主窗口中创建、命名、配置、
 观察和指挥多个 Agent，同时查看飞书任务、知识、权限请求、文件改动与 handoff。
 
 正确心智模型：
 
 ```text
-AgentTest
+Agent Squad HQ
 ├─ Global Attention Center
 ├─ Global Connections / Provider Health
 └─ Project
@@ -57,7 +58,7 @@ AgentTest
    Connector 代执行的官方 CLI CRUD 能力。
 9. 浏览器身份、CLI 身份、Project 资源范围和 Run 授权严格分离。
 10. 无法真正强制执行的权限不能显示为已启用；所选限制不可执行时默认阻止 Run。
-11. 飞书是任务业务字段和知识内容的 truth；AgentTest 是派发、执行、结果、验证、
+11. 飞书是任务业务字段和知识内容的 truth；Agent Squad HQ 是派发、执行、结果、验证、
     handoff 与审计的 truth。
 12. 危险操作必须明确、可预览、可审计；不可逆和高风险动作的二次确认不可绕过。
 
@@ -252,7 +253,7 @@ Overview 不是每次进入 Project 的强制落点，也不替代具体工作�
 
 ### 8.2 Tasks
 
-飞书任务业务字段以飞书为 truth。AgentTest 显示 external ID、版本、同步状态、
+飞书任务业务字段以飞书为 truth。Agent Squad HQ 显示 external ID、版本、同步状态、
 Dispatch、独立执行结果和最终验收状态。
 
 ```text
@@ -270,7 +271,7 @@ Dispatch、独立执行结果和最终验收状态。
 同一任务可以并行派给多个 Agent。某个 Run 成功只表示该 Dispatch 完成；飞书任务
 最终完成必须由用户验收。v0.2 使用“执行结果”视图，不要求完整 Candidate 比较器。
 
-外部任务更新只刷新投影或创建 Attention Item，绝不自动启动 Agent。AgentTest 本地
+外部任务更新只刷新投影或创建 Attention Item，绝不自动启动 Agent。Agent Squad HQ 本地
 Task 可存在，发布到飞书必须显式操作并预览目标连接与清单。
 
 ### 8.3 Knowledge
@@ -307,7 +308,7 @@ base commit、文件改动摘要、选定 diff/patch/产物和验证结果。
 
 Handoff 的 canonical record 位于 ProjectStore，并以 `HandoffId` 引用。Markdown 可
 查看、复制和导出；默认存于 Git 之外，用户显式开启后才同步到
-`.agenttest/handoffs/<agent-name>/`。
+`.agent-squad-hq/handoffs/<agent-name>/`。
 
 ## 10. Attention Center 与权限中心
 

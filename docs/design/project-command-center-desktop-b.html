@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'" />
-    <title>AgentTest · 指挥中心 B 版原型</title>
+    <title>Agent Squad HQ · 指挥中心 B 版原型</title>
     <style>
       /*
        * THROWAWAY UI PROTOTYPE — DO NOT PROMOTE TO PRODUCTION.
@@ -347,7 +347,7 @@
 
       function renderPrimaryNav() {
         return `<nav class="primary-nav" aria-label="项目主导航">
-          <div class="brand">AT</div><div class="nav-separator"></div>
+          <div class="brand" aria-label="Agent Squad HQ">HQ</div><div class="nav-separator"></div>
           ${navItem('overview', '⌂', '概览')}
           ${navItem('agents', '⌘', 'Agents')}
           ${navItem('tasks', '✓', '任务')}
@@ -504,13 +504,13 @@
           ['待处理', '补充销售预测解释', '季度计划', ['cx_forecast'], '尚未派发', 'tk_95ce20'],
           ['已完成', '生成区域趋势图', '可视化', ['kimi_Visual'], '用户已验收', 'tk_581f73'],
         ];
-        return `<header class="commandbar"><div class="surface-title"><strong>Tasks</strong><small>飞书是业务字段真相；AgentTest 记录派发、Run 与结果</small></div><div class="command-actions"><button class="button">同步</button><button class="button primary" data-action="dispatch" type="button">派发给 Agent</button></div></header>
+        return `<header class="commandbar"><div class="surface-title"><strong>Tasks</strong><small>飞书是业务字段真相；Agent Squad HQ 记录派发、Run 与结果</small></div><div class="command-actions"><button class="button">同步</button><button class="button primary" data-action="dispatch" type="button">派发给 Agent</button></div></header>
           <div class="surface"><div class="page"><div class="page-head"><div><h1>飞书任务</h1><p>外部任务变化不会自动启动 Agent。同一任务可以显式派发给多个实例，最终完成仍需用户验收。</p></div><span class="chip">销售分析任务清单 · 已同步</span></div><div class="task-table"><div class="task-row header"><span>状态</span><span>任务</span><span>清单</span><span>派发目标</span><span>结果</span></div>${tasks.map((task) => `<div class="task-row"><span><span class="chip">${task[0]}</span></span><span><strong>${task[1]}</strong><small>外部 ID · ${task[5]}</small></span><span>${task[2]}</span><span>${task[3].map((name) => `<span class="chip brand">${name}</span>`).join(' ')}</span><span><button class="mini-button" data-action="dispatch">${task[4]}</button></span></div>`).join('')}</div></div></div>`;
       }
 
       function renderKnowledge() {
         return `<header class="commandbar"><div class="surface-title"><strong>Knowledge</strong><small>受信任飞书域名 · 人工浏览与 Agent CLI 授权严格分离</small></div><div class="command-actions"><button class="button">在系统浏览器打开</button><button class="button">管理范围</button></div></header>
-          <div class="surface"><div class="page"><div class="web-shell"><div class="web-chrome"><button class="icon-button">‹</button><button class="icon-button">›</button><button class="icon-button">↻</button><div class="address"><span>🔒</span><strong>feishu.cn/wiki/销售分析方法库</strong></div><span class="chip">人工身份 · 可编辑</span></div><div class="web-body"><aside class="web-tree"><strong>飞书知识库</strong><button class="active">销售分析方法库</button><button>数据口径</button><button>复盘记录</button></aside><article class="web-document"><span class="chip brand">Feishu authoritative</span><h1>销售数据分析方法与口径</h1><p>此处模拟隔离浏览器分区中的飞书页面。用户遵循飞书账号原有权限正常编辑；Agent 不读取 Cookie，只能请求受控 Connector 在当前 Run 的显式授权范围内代执行官方 CLI。</p><p>Connector 写入成功后刷新投影和索引；失败的拟议修改保留在 AgentTest 中等待处理。</p></article></div></div></div></div>`;
+          <div class="surface"><div class="page"><div class="web-shell"><div class="web-chrome"><button class="icon-button">‹</button><button class="icon-button">›</button><button class="icon-button">↻</button><div class="address"><span>🔒</span><strong>feishu.cn/wiki/销售分析方法库</strong></div><span class="chip">人工身份 · 可编辑</span></div><div class="web-body"><aside class="web-tree"><strong>飞书知识库</strong><button class="active">销售分析方法库</button><button>数据口径</button><button>复盘记录</button></aside><article class="web-document"><span class="chip brand">Feishu authoritative</span><h1>销售数据分析方法与口径</h1><p>此处模拟隔离浏览器分区中的飞书页面。用户遵循飞书账号原有权限正常编辑；Agent 不读取 Cookie，只能请求受控 Connector 在当前 Run 的显式授权范围内代执行官方 CLI。</p><p>Connector 写入成功后刷新投影和索引；失败的拟议修改保留在 Agent Squad HQ 中等待处理。</p></article></div></div></div></div>`;
       }
 
       function renderHandoffs() {
@@ -572,7 +572,7 @@
       }
 
       function render() {
-        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>AgentTest</strong> / ${project.name}</span><span class="title-status"><span class="live-dot"></span>后台 2 个 Run <span>⌘K 命令</span></span></header>${renderVariantShell()}<footer class="statusbar"><span>${project.root}</span><span>${project.branch}</span><span>布局自动保存</span><span class="push">Project 2 / 3 · Global 4 / 6</span></footer></div>${renderSwitcher()}`;
+        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>Agent Squad HQ</strong> / ${project.name}</span><span class="title-status"><span class="live-dot"></span>后台 2 个 Run <span>⌘K 命令</span></span></header>${renderVariantShell()}<footer class="statusbar"><span>${project.root}</span><span>${project.branch}</span><span>布局自动保存</span><span class="push">Project 2 / 3 · Global 4 / 6</span></footer></div>${renderSwitcher()}`;
       }
 
       function findNode(node, nodeId) {

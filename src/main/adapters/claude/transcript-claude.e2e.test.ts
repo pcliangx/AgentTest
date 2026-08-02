@@ -1,6 +1,6 @@
 // Real-claude transcript e2e: runs claude (one-shot) which writes a transcript, and verifies the
 // TranscriptWatcher tails it from the REAL projects dir (realpath-encoded). Deterministic (one-shot
-// completes); avoids flaky interactive-PTY input. Skipped by default; run with AGENTTEST_E2E=1.
+// completes); avoids flaky interactive-PTY input. Skipped by default; run with AGENT_SQUAD_HQ_E2E=1.
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -11,11 +11,12 @@ import { claudeAdapter } from './adapter'
 import { TranscriptWatcher } from '../../transcript-watcher'
 import { claudeProjectDir, mapClaudeTranscript } from './transcribe'
 import type { AgentEvent } from '../contract'
+import { isRealCliE2EEnabled } from '../../app-identity'
 
-const RUN = process.env['AGENTTEST_E2E'] === '1'
+const RUN = isRealCliE2EEnabled(process.env)
 
 function tempGitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-trcl-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-trcl-'))
   execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' })
   execFileSync(
     'git',

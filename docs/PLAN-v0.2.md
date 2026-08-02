@@ -1,4 +1,4 @@
-# AgentTest v0.2 产品与工程计划
+# Agent Squad HQ v0.2 产品与工程计划
 
 > 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 生产 UI 尚未启动
 >
@@ -10,6 +10,7 @@
 > [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md) ·
 > [ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md) ·
 > [ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md) ·
+> [ADR-0013](./adr/0013-agent-squad-hq-product-identity.md) ·
 > [领域词汇表](../CONTEXT.md)
 >
 > 本文件取代 [`PLAN-v0.1.md`](./PLAN-v0.1.md) 和 2026-07-31 版 v0.2 路线，历史
@@ -27,7 +28,7 @@ Provider 当作 Agent：
 - 飞书任务、知识、外部写入和 Attention 尚未进入正式领域模型；
 - 窗口关闭、Project 切换、退出 handoff、归档和失败审计没有统一生命周期。
 
-产品方向经过设计访谈后进一步明确：AgentTest 不是单纯的多 Agent 编码器，而是
+产品方向经过设计访谈后进一步明确：Agent Squad HQ 不是单纯的多 Agent 编码器，而是
 **集成工作台与指挥中心**。Tasks、Knowledge、Handoffs、Activity、权限和外部连接是
 Project 一级能力；外部事件仍不能在本阶段自动启动 Agent。
 
@@ -36,7 +37,7 @@ Project 一级能力；外部事件仍不能在本阶段自动启动 Agent。
 
 ## 2. 产品定位
 
-> AgentTest 是一个本地优先、Project-first 的多 Agent 集成工作台。用户在 Project
+> Agent Squad HQ 是一个本地优先、Project-first 的多 Agent 集成工作台。用户在 Project
 > 中创建任意数量的命名 Agent Instance，以自由 Panel/Tab 工作区组织屏幕，通过
 > Overview、Tasks、Knowledge、Handoffs、Activity 和 Attention Center 显式指挥、
 > 观察、授权、验收和交接工作。
@@ -104,10 +105,10 @@ Project 一级能力；外部事件仍不能在本阶段自动启动 Agent。
    - 只展示 adapter、protocol、sandbox、host 或 connector 能真正强制的限制。
    - 期望策略不可执行时默认阻止 Run，不能静默放宽。
    - 原生 auto-approve/bypass 不等于有效权限；最小 PermissionBroker 必须早于真实 Run。
-   - Agent 只获得受控外部能力，不获得 AgentTest 管理的原始连接身份。
+   - Agent 只获得受控外部能力，不获得 Agent Squad HQ 管理的原始连接身份。
 
 9. **外部系统有明确 truth**
-   - 飞书持有任务业务字段和知识内容；AgentTest 持有 Dispatch、Run、Result、
+   - 飞书持有任务业务字段和知识内容；Agent Squad HQ 持有 Dispatch、Run、Result、
      worktree、validation、handoff 和 audit。
    - 冲突不能静默覆盖，最终任务完成由用户验收。
 
@@ -317,7 +318,7 @@ Changes → diff + validation + base drift
 - 关闭 Tab：只关闭视图；
 - 关闭窗口：后台继续，系统通知；
 - 切换 Project：后台继续，保存/恢复各自布局；
-- 退出 AgentTest：处理 active Run，为 dirty Agent 生成 handoff，失败则生成不完整快照；
+- 退出 Agent Squad HQ：处理 active Run，为 dirty Agent 生成 handoff，失败则生成不完整快照；
 - 归档 Agent/Project：先处理 Run 和 handoff，之后禁止新执行与外部写入；
 - 永久删除：影响预览、不可绕过确认和脏 worktree 处置。
 
@@ -430,7 +431,7 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
 
 ### 9.11 TaskProjection 与 KnowledgeIndex
 
-保存外部 ID、版本、只读缓存、同步/冲突状态和 AgentTest 自有 Dispatch/Result 引用；
+保存外部 ID、版本、只读缓存、同步/冲突状态和 Agent Squad HQ 自有 Dispatch/Result 引用；
 不把投影当成飞书业务 truth，不直接启动 Agent。
 
 ## 10. v0.2 范围
@@ -493,8 +494,8 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
 - 记录选择或组合理由；
 - 冻结导航、布局、状态、文案、确认层级与 1280×800 密度；
 - 把 `ProjectId`、`AgentInstanceId`、Run、Dispatch、Handoff、Permission、
-  Attention、Layout 的最小 TypeScript contract 写入 spec/ticket；
-- 为生产 UI 建立 `.scratch/<feature>/spec.md` 与文件互斥的 tickets。
+  Attention、Layout 的最小 TypeScript contract 写入 spec 与 GitHub Issues；
+- 为生产 UI 建立 `.scratch/<feature>/spec.md` 与采用原生依赖的纵向 GitHub Issues。
 
 验收：
 
@@ -623,7 +624,7 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
 验收：
 
 - Agent 只能访问当前 Project/Run 授权资源，不能拿长期 secret；
-- Agent 不能绕过 Connector 使用 AgentTest 管理的已认证原始 CLI/profile；
+- Agent 不能绕过 Connector 使用 Agent Squad HQ 管理的已认证原始 CLI/profile；
 - 失败写入保留拟议内容且不更新成功状态；
 - 多 Agent 完成不会自动把飞书任务标为完成；
 - 高风险操作不能被 Agent permission approval 或项目配置绕过；
@@ -723,19 +724,30 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
   和契约化 mock，再接 Project-first 内核。
 - [ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)：最小权限门禁早于
   真实 Run，飞书由受控 Connector 代执行官方 CLI 能力。
+- [ADR-0013](./adr/0013-agent-squad-hq-product-identity.md)：正式产品名、稳定技术 slug、
+  Electron 数据目录兼容与 GitHub 仓库身份。
 
 ## 16. 立即下一步
 
 Phase 0 已完成，本轮不自动启动生产实现。收到明确开工指令后，按
-[`ui-first-command-center`](../.scratch/ui-first-command-center/spec.md) 顺序执行 Phase 1：
+[`ui-first-command-center`](../.scratch/ui-first-command-center/spec.md) 和
+[GitHub Issues #1–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的 16 个纵向 tracer
+bullets 执行 Phase 1。工作顺序只由 GitHub Relationships 的原生 `blocked by` 决定，
+不按编号机械串行。[产品身份迁移 #17](https://github.com/pcliangx/agent-squad-hq/issues/17)
+已完成；Phase 1 不会自动启动，收到用户明确指令后按以下 7 批 DAG 执行：
 
-1. `01-contract-and-mock-scenarios`：冻结版本化 ViewModel/Command/Event ports；
-2. `02-shell-navigation-attention`：实现 A 主骨架、导航与全局 Attention；
-3. `03-workspace-layout-tabs-panels`：实现 split tree、Tab/Panel、键盘与溢出；
-4. `04-agent-view-picker-dispatch`：实现 Agent View、Picker、预览与显式 Dispatch；
-5. `05-project-surfaces` 与 `06-settings-draft-applied-readiness`：在文件互斥前提下串行
-   或安全并行；
-6. `07-a11y-visual-regression`：完成可访问性与视觉回归门禁。
+1. `01`：建立 Project Shell、版本化 WorkbenchPort 与第一条 mock 纵向路径；
+2. `02, 03`：并行交付全局操作/确认宿主与 Agent Directory/唯一 Tab；
+3. `04, 06, 08, 13`：并行交付基础布局、显式 Dispatch、Changes 与 Settings A；
+4. `05, 07`：并行补齐高级布局与队列/Terminal 执行槽；
+5. `09, 15`：并行交付 Permission/Global Attention 与 Electron 冒烟骨架；
+6. `10, 11, 12, 14`：并行交付 Tasks、Knowledge、Handoff/退出和 Readiness；
+7. `16`：统一完成可访问性、视觉与发布门禁。
+
+前 14 票完成时功能 UI 完整，第 16 票通过后才正式认定 Phase 1 UI 完成。理论最大
+并行度为 4；共享工作树默认串行接力，只有分配独立 worktree 并明确文件/模块边界后
+才执行并行批次。Issue 范围、验收、labels、comments、状态和依赖只以 GitHub 为 truth，
+不在 `.scratch/` 维护 ticket 副本。
 
 Phase 1 不接入真实 ProjectStore、Agent、PTY、Git mutation、PermissionBroker、飞书
 登录/CRUD 或其他外部副作用。UI 验收后再按 Phase 2 → 7 逐切片替换 mock adapter。

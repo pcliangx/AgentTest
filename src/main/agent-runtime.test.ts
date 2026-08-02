@@ -9,7 +9,7 @@ import { createCodexEventDecoder } from './adapters/codex/decode'
 import type { AgentAdapter, AgentEvent } from './adapters/contract'
 
 function transcriptAwareCli(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-runtime-history-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-runtime-history-'))
   const script = join(dir, 'history-cli.mjs')
   writeFileSync(
     script,
@@ -32,7 +32,7 @@ process.stdin.on('end', () => {
 }
 
 function nativeResumeCli(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agenttest-runtime-resume-'))
+  const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-runtime-resume-'))
   const script = join(dir, 'resume-cli.mjs')
   writeFileSync(
     script,
@@ -68,7 +68,7 @@ describe('AgentRuntime', () => {
       },
       buildArgv: () => [script]
     }
-    const store = new SessionStore(join(mkdtempSync(join(tmpdir(), 'agenttest-session-')), 'sessions.json'))
+    const store = new SessionStore(join(mkdtempSync(join(tmpdir(), 'agent-squad-hq-session-')), 'sessions.json'))
     const assistantTexts: string[] = []
     let exitWaiter: (() => void) | null = null
     const runtime = new AgentRuntime({
@@ -115,7 +115,7 @@ describe('AgentRuntime', () => {
       ]
     }
     const store = new SessionStore(
-      join(mkdtempSync(join(tmpdir(), 'agenttest-native-session-')), 'sessions.json')
+      join(mkdtempSync(join(tmpdir(), 'agent-squad-hq-native-session-')), 'sessions.json')
     )
     const assistantTexts: string[] = []
     let exitWaiter: (() => void) | null = null
@@ -147,7 +147,7 @@ describe('AgentRuntime', () => {
   })
 
   it('waits for active structured processes to exit when disposing', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agenttest-runtime-dispose-'))
+    const dir = mkdtempSync(join(tmpdir(), 'agent-squad-hq-runtime-dispose-'))
     const script = join(dir, 'hanging-cli.mjs')
     writeFileSync(
       script,
@@ -169,7 +169,7 @@ describe('AgentRuntime', () => {
       adapters: [adapter],
       resolveCwd: () => tmpdir(),
       sessionStore: new SessionStore(
-        join(mkdtempSync(join(tmpdir(), 'agenttest-dispose-session-')), 'sessions.json')
+        join(mkdtempSync(join(tmpdir(), 'agent-squad-hq-dispose-session-')), 'sessions.json')
       ),
       onEvent: (_target, event) => {
         if (event.kind === 'process-exited') exited = true

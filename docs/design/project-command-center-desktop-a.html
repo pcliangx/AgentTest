@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentTest · 桌面项目中心方案 A</title>
+    <title>Agent Squad HQ · 桌面项目中心方案 A</title>
     <style>
       /* THROWAWAY UI PROTOTYPE — 方案 A：项目侧栏、Agent 工作台与内嵌知识库网页。 */
       :root {
@@ -491,16 +491,18 @@
         activeWikiSpace: null
       };
       const $ = (selector) => document.querySelector(selector);
+      const prototypeStorageKey = 'agent-squad-hq-projects-prototype';
+      const legacyPrototypeStorageKey = 'agenttest-projects-prototype';
       const currentProject = () => projects.find((project) => project.id === state.currentProjectId) || projects[0];
       const runningCount = (project) => project.agents.filter((agent) => agent.status === 'running').length;
       const resourceCount = (project) => project.resources.taskLists.length + (project.resources.wikiCliConfigured ? project.resources.wikiSpaces.length : 0);
       const sectionLabel = () => ({ agents: 'Agent 工作区', tasks: '飞书任务清单', wiki: '飞书知识库' })[state.section];
 
       function loadStoredState() {
-        try { return JSON.parse(localStorage.getItem('agenttest-projects-prototype')); } catch (_) { return null; }
+        try { return JSON.parse(localStorage.getItem(prototypeStorageKey) || localStorage.getItem(legacyPrototypeStorageKey)); } catch (_) { return null; }
       }
       function persistState() {
-        localStorage.setItem('agenttest-projects-prototype', JSON.stringify({ projects, currentProjectId: state.currentProjectId }));
+        localStorage.setItem(prototypeStorageKey, JSON.stringify({ projects, currentProjectId: state.currentProjectId }));
       }
       function updateUrl() {
         const url = new URL(location.href);
@@ -528,13 +530,13 @@
       }
 
       function renderTitlebar(project) {
-        return `<div class="titlebar" data-od-id="desktop-titlebar"><div class="window-controls" aria-hidden="true"><span class="window-control"></span><span class="window-control"></span><span class="window-control"></span></div><div class="window-title">AgentTest — 项目</div><div class="window-context">${escapeHtml(project.name)}</div></div>`;
+        return `<div class="titlebar" data-od-id="desktop-titlebar"><div class="window-controls" aria-hidden="true"><span class="window-control"></span><span class="window-control"></span><span class="window-control"></span></div><div class="window-title">Agent Squad HQ — 项目</div><div class="window-context">${escapeHtml(project.name)}</div></div>`;
       }
       function renderStatusbar(project) {
         return `<footer class="desktop-statusbar" data-od-id="desktop-statusbar"><span>${projects.length} 个项目</span><span>${project.agents.length} 个 Agent</span><span>${runningCount(project)} 个运行中</span><span>任务：${project.resources.connected ? '已连接' : '未连接'}</span><span>知识库 CLI：${project.resources.wikiCliConfigured ? '已配置' : '待配置'}</span><span class="statusbar-spacer"></span><span>当前：${sectionLabel()} · ⌘1/2/3 切换</span></footer>`;
       }
       function renderTopbar(project, commandPrimary = false) {
-        return `<header class="topbar" data-od-id="top-navigation"><div class="brand-mark" aria-label="AgentTest">AT</div><nav class="breadcrumb" aria-label="当前位置"><span>项目</span><span aria-hidden="true">/</span><strong>${escapeHtml(project.name)}</strong><span aria-hidden="true">/</span><span>${sectionLabel()}</span></nav><div class="top-actions"><button class="button secondary" type="button" data-open-workspace>${icon('arrow')}<span>Agent 工作台</span></button><button class="button ${commandPrimary ? 'primary' : 'secondary'}" type="button" data-toggle-projects aria-expanded="${state.projectSurfaceOpen}">${icon('command')}<span>切换项目</span><span class="key-hint">⌘ K</span></button></div></header>`;
+        return `<header class="topbar" data-od-id="top-navigation"><div class="brand-mark" aria-label="Agent Squad HQ">HQ</div><nav class="breadcrumb" aria-label="当前位置"><span>项目</span><span aria-hidden="true">/</span><strong>${escapeHtml(project.name)}</strong><span aria-hidden="true">/</span><span>${sectionLabel()}</span></nav><div class="top-actions"><button class="button secondary" type="button" data-open-workspace>${icon('arrow')}<span>Agent 工作台</span></button><button class="button ${commandPrimary ? 'primary' : 'secondary'}" type="button" data-toggle-projects aria-expanded="${state.projectSurfaceOpen}">${icon('command')}<span>切换项目</span><span class="key-hint">⌘ K</span></button></div></header>`;
       }
       function renderWorkspaceNavigation(project) {
         const items = [
@@ -576,7 +578,7 @@
         const view = state.viewByAgent[agent.name] || 'chat';
         if (view === 'activity') return `<div class="session-body"><ul class="session-list">${agent.activity.map((item, index) => `<li><span class="dot ${index === agent.activity.length - 1 ? agent.status : 'completed'}"></span><span>${escapeHtml(item)}</span><small>${index === agent.activity.length - 1 ? '当前' : '已完成'}</small></li>`).join('')}</ul></div>`;
         if (view === 'changes') return `<div class="session-body">${agent.changes.length ? `<ul class="session-list">${agent.changes.map((file) => `<li><span>文件</span><strong>${escapeHtml(file)}</strong><small>本地变更</small></li>`).join('')}</ul>` : '<div class="no-results">当前没有文件变更。</div>'}</div>`;
-        if (view === 'terminal') return `<div class="session-body"><pre class="terminal-output">$ agenttest status ${escapeHtml(agent.name)}\n状态：${escapeHtml(agent.label)}\n任务：${escapeHtml(agent.work)}\n\n此处为原型输出，不会运行真实命令。</pre></div>`;
+        if (view === 'terminal') return `<div class="session-body"><pre class="terminal-output">$ agent-squad-hq status ${escapeHtml(agent.name)}\n状态：${escapeHtml(agent.label)}\n任务：${escapeHtml(agent.work)}\n\n此处为原型输出，不会运行真实命令。</pre></div>`;
         return `<div class="session-body">${agent.messages.map((message) => `<div class="message-block"><div class="speaker">${escapeHtml(message.role)}</div><div>${escapeHtml(message.text)}</div></div>`).join('')}</div>`;
       }
       function renderAgentSession(agent) {

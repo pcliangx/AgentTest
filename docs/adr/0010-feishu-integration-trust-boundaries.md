@@ -8,7 +8,7 @@
 
 ## 背景（Context）
 
-AgentTest 的产品定位已从纯多 Agent 编码器扩展为集成工作台与指挥中心。飞书任务和
+Agent Squad HQ 的产品定位已从纯多 Agent 编码器扩展为集成工作台与指挥中心。飞书任务和
 知识库因此进入 v0.2 核心范围。用户需要在内嵌浏览器中按自己原有权限正常编辑，也
 需要指令 Agent 使用官方飞书 CLI 做 CRUD；两条路径如果共享 Cookie、凭据或隐式
 授权，会造成身份混淆、越权和不可审计写入。
@@ -62,7 +62,7 @@ Attention Item，不能自动启动 Agent。
 ### 数据主权与冲突
 
 飞书是任务业务字段（标题、描述、负责人、截止时间、状态、评论）和知识内容的权威
-来源。AgentTest 是 Dispatch、Run、Session、worktree、执行结果、validation、
+来源。Agent Squad HQ 是 Dispatch、Run、Session、worktree、执行结果、validation、
 handoff 和审计的权威来源。
 
 - 外部记录以稳定 external ID 和版本关联；同步冲突不能静默覆盖；
@@ -70,7 +70,7 @@ handoff 和审计的权威来源。
 - 知识缓存离线时只读且带版本，不把缓存冒充飞书 truth；
 - 同一飞书任务可显式派发给多个 Agent，每个目标形成独立 Dispatch、Run、worktree
   和执行结果；单个 Run 完成只表示该 Dispatch 完成，任务最终完成仍需用户验收；
-- AgentTest 可以创建本地 Project Task，之后由用户显式发布到飞书。
+- Agent Squad HQ 可以创建本地 Project Task，之后由用户显式发布到飞书。
 
 ## 后果（Consequences）
 

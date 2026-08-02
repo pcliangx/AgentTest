@@ -159,7 +159,7 @@ export default function App() {
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
         <div className="flex items-center gap-2 text-neutral-400">
-          <span className="font-medium text-neutral-100">AgentTest</span>
+          <span className="font-medium text-neutral-100">Agent Squad HQ</span>
           <span className="text-neutral-700">·</span>
           <span className={repo ? 'text-neutral-300' : 'text-amber-400'}>
             {repo ? repo.name : '演示模式（空临时仓库）'}

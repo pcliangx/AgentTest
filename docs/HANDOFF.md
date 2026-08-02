@@ -1,4 +1,4 @@
-# AgentTest — Claude Code / Codex 续开发文档
+# Agent Squad HQ — Claude Code / Codex 续开发文档
 
 > 更新日期：2026-08-02 · 结构化通道基线：`ba49614` · 分支：`main`
 >
@@ -7,7 +7,7 @@
 
 ## 1. 这是什么
 
-AgentTest 是一个本地多 Agent 编码工作台，以 Electron 统一编排 Claude Code、
+Agent Squad HQ 是一个本地多 Agent 编码工作台，以 Electron 统一编排 Claude Code、
 Codex CLI 和 Kimi Code：
 
 - 当前基线用 `@@claude` / `@@codex` / `@@kimi` / `@@all` 显式路由；
@@ -30,7 +30,8 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 [ADR-0009](./adr/0009-command-center-workspace-lifecycle.md)、
 [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md) 和
 [ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md)、
-[ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)。ADR-0006 已被取代。
+[ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)。产品身份与旧数据
+兼容迁移见 [ADR-0013](./adr/0013-agent-squad-hq-product-identity.md)。ADR-0006 已被取代。
 
 ## 2. 当前状态
 
@@ -50,7 +51,8 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | A 版原始 HTML 原型 | ✅ 保留为历史基线 |
 | B 版指挥中心与 Settings A/B/C 结构原型 | ✅ 专家评审完成；冻结 A 主结构 + B/C 辅助视图 |
 | Design Gate | ✅ 2026-08-02 已关闭 |
-| Phase 1 spec 与 7 个本地 tickets | ✅ 已建立；生产实现尚未启动 |
+| Agent Squad HQ 产品身份、技术 slug 与旧数据兼容 | ✅ [#17](https://github.com/pcliangx/agent-squad-hq/issues/17) 已完成并发布 |
+| Phase 1 spec 与 GitHub Issues #1–#16 | ✅ 已迁移；GitHub 是 ticket 唯一 truth；生产实现尚未启动 |
 | 生产 UI-first + contract mock 交付顺序 | ✅ 用户已确认；尚未启动 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
@@ -58,6 +60,11 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 
 旧 `TranscriptWatcher` 与 Claude transcript mapper 仍保留，但不再属于默认主链路；
 不要用它们从 PTY 输出推断结构化状态。
+
+身份迁移启动时复制 session、设置和 Chromium 数据，但不复制 linked Git worktrees；
+旧 worktrees 原地保留。2026-08-02 只读检查显示当前 `claude`、`codex`、`kimi` 三个旧
+worktree 均为 clean。新身份下应从 base repository 重新创建，不能把复制目录作为有效
+linked worktree 使用。
 
 ## 3. 先读这些
 
@@ -70,12 +77,14 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 7. [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md)。
 8. [ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md)。
 9. [ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)。
-10. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
-11. [B 版原型说明](./design/README.md)。
-12. [Phase 1 spec](../.scratch/ui-first-command-center/spec.md)。
-13. [open-design 通信调研](./research/open-design-agent-communication.md)。
-14. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
-15. 根目录 `agent-adapter-architecture.md`。
+10. [ADR-0013](./adr/0013-agent-squad-hq-product-identity.md)。
+11. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
+12. [B 版原型说明](./design/README.md)。
+13. [Phase 1 spec](../.scratch/ui-first-command-center/spec.md)。
+14. [Phase 1 GitHub Issues #1–#16](https://github.com/pcliangx/agent-squad-hq/issues)。
+15. [open-design 通信调研](./research/open-design-agent-communication.md)。
+16. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
+17. 根目录 `agent-adapter-architecture.md`。
 
 `docs/PLAN-v0.1.md` 和 ADR-0001 至 ADR-0006 是历史背景；发生冲突时以当前代码、
 最新 Accepted ADR 和 PLAN-v0.2 为准。
@@ -101,7 +110,7 @@ npm run typecheck
 npm test
 npm run build
 
-AGENTTEST_E2E=1 npx vitest run <e2e-test-file>
+AGENT_SQUAD_HQ_E2E=1 npx vitest run <e2e-test-file>
 ```
 
 重装 `node_modules` 后必须重新运行 `npm run rebuild:native`，使 node-pty ABI
@@ -223,6 +232,7 @@ preload 只通过 `contextBridge` 暴露上述受控 API；完整仓库路径不
 ```text
 src/main/
   index.ts                     Electron 生命周期
+  app-identity.ts              Agent Squad HQ 身份、环境兼容与启动前数据迁移
   ipc.ts                       IPC 与服务总编排
   agent-runtime.ts             run 独占、会话恢复、成功持久化
   run-manager.ts               每 turn 子进程、stdio、取消、退出边界
@@ -260,8 +270,13 @@ CONTEXT.md                      Project、Agent、Tab、Panel 领域词汇
 Design Gate 已关闭，冻结结果是“指挥中心 A 主骨架 + B 态势抽屉 + C Focus/窄窗口
 palette”和“Settings A 完整编辑器 + B 比较视图 + C readiness 摘要”。生产 UI 尚未
 启动；收到明确开工指令后，从
-[`01-contract-and-mock-scenarios`](../.scratch/ui-first-command-center/issues/01-contract-and-mock-scenarios.md)
-开始，依次执行该 feature 的 7 个 tickets。
+[GitHub Issue #1](https://github.com/pcliangx/agent-squad-hq/issues/1) 开始，再按 GitHub
+Relationships 的原生 `blocked by` 处理 frontier。#1–#16 的理论关键路径为 7 批、最大
+并行度为 4；Issue 正文、labels、comments、状态和依赖只以 GitHub 为 truth。共享工作树
+默认仍按本仓库协作协议串行接力，只有分配独立 worktree 与清晰边界后才并行。
+
+[产品身份迁移 #17](https://github.com/pcliangx/agent-squad-hq/issues/17) 已完成并关闭；
+#1 已恢复为 Phase 1 起点，但仍需用户显式开工，不会自动启动。
 
 第一生产阶段只做契约驱动 UI 与 MockScenarioAdapter，不能先实现真实 ProjectStore、
 Agent/PTY、Git mutation、PermissionBroker 或飞书副作用。当前代码的 `AgentId` 实际是
