@@ -318,15 +318,24 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
     // Confirm once → must still ask for explicit confirmation of the broadcast.
     await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
-    expect(
-      await screen.findByRole('dialog', { name: /确认广播/ })
-    ).toBeInTheDocument()
+    const broadcastDialog = await screen.findByRole('dialog', {
+      name: /确认广播/
+    })
 
-    // Awaiting the explicit broadcast confirmation is what actually dispatches.
-    const beforeCount = port.commands.filter(
-      (c) => c.kind === 'confirm-dispatch'
-    ).length
-    expect(beforeCount).toBe(0)
+    // Before the explicit broadcast confirmation, no dispatch command exists.
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch').length
+    ).toBe(0)
+
+    // Complete the second confirmation — the broadcast must actually succeed
+    // (one dispatch per dispatchable target), proving @@all no longer
+    // dead-ends on the excluded Terminal-active instance (#6 P1-1).
+    await user.click(
+      within(broadcastDialog).getByRole('button', { name: '确认广播' })
+    )
+    const confirms = port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    expect(confirms).toHaveLength(1)
+    expect(confirms[0].targets).toHaveLength(6)
   })
 
   it('excludes unavailable agents from the selectable list', async () => {
@@ -357,6 +366,26 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(
       port.commands.filter((c) => c.kind === 'send-agent-instruction')
     ).toHaveLength(1)
+  })
+
+  it('renders @@ inside assistant/activity text as plain text with no dispatch', async () => {
+    // The standard scenario ships an activity summary containing `@@cc_etl`
+    // (an assistant-style reference). Rendering it on the Overview surface
+    // must never produce a dispatch command — assistant text is not a
+    // dispatch trigger (#6 AC2, P3-4).
+    const user = userEvent.setup()
+    const port = new RecordingPort()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    // Overview is the default landing surface; it lists recent activity.
+    const overview = await screen.findByRole('region', { name: '项目概览' })
+    expect(overview).toHaveTextContent('@@cc_etl')
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
+    expect(
+      port.commands.filter((c) => c.kind === 'send-agent-instruction')
+    ).toHaveLength(0)
   })
 })
 
@@ -629,6 +658,35 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       (a) => a.agentInstanceId === idle.agentInstanceId
     )!.queueDepth
     expect(after).toBe(0)
+  })
+
+  it('enqueues again for an already-queued agent (#6 P1-2)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    // cx_forecast starts queued with queueDepth 1.
+    const forecast = snap.agents.find((a) => a.name === 'cx_forecast')!
+    const beforeDepth = forecast.queueDepth
+    const beforeGlobal = snap.global.concurrency.queuedGlobal
+    await adapter.dispatch({
+      commandId: id('cmd-requeue', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [forecast.agentInstanceId],
+      instruction: 'more work'
+    })
+    const after = await adapter.getSnapshot()
+    const afterForecast = after.agents.find(
+      (a) => a.agentInstanceId === forecast.agentInstanceId
+    )!
+    // An already-queued agent receiving more work must grow the queue, not
+    // silently keep the same depth (#6 P1-2).
+    expect(afterForecast.queueDepth).toBe(beforeDepth + 1)
+    expect(after.global.concurrency.queuedGlobal).toBe(beforeGlobal + 1)
+    expect(
+      after.queue.filter((q) => q.agentInstanceId === forecast.agentInstanceId)
+    ).toHaveLength(2)
   })
 })
 

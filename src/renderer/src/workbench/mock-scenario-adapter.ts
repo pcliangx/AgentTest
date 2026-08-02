@@ -14,6 +14,7 @@ import type {
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
+import { isAgentBusy } from './dispatchability'
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -261,7 +262,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // start-or-queue to a busy agent must enter the same observable queue
         // as a dispatch — otherwise the composer would silently drop work
         // (#6 P1-2).
-        if (command.mode === 'start-or-queue' && this.isAgentBusy(agent)) {
+        if (command.mode === 'start-or-queue' && isAgentBusy(agent)) {
           this.enqueue(agent)
         }
         return null
@@ -362,7 +363,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           // agent enqueues through one shared transition that keeps the
           // per-instance depth, the QueueItem list and the Project/global
           // summaries consistent. Idle agents start immediately (no queue).
-          if (this.isAgentBusy(a)) this.enqueue(a)
+          if (isAgentBusy(a)) this.enqueue(a)
         }
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
@@ -500,22 +501,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ? globalThis.crypto.randomUUID()
         : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
     return id(uuid, name)
-  }
-
-  /**
-   * True when an instance already holds an active structured Run (or is about
-   * to / finishing one, or awaiting input/permission), so a further dispatch
-   * must queue rather than start immediately.
-   */
-  private isAgentBusy(agent: { runtimeState: string; activeRunId?: unknown }): boolean {
-    return (
-      agent.activeRunId !== undefined ||
-      agent.runtimeState === 'running' ||
-      agent.runtimeState === 'starting' ||
-      agent.runtimeState === 'finishing' ||
-      agent.runtimeState === 'needs-input' ||
-      agent.runtimeState === 'permission-requested'
-    )
   }
 
   /**

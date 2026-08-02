@@ -190,7 +190,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         agentInstanceId: ccSql,
         timestamp: now - 300_000,
         kind: 'run-completed',
-        summary: 'cc_sql 完成了 SQL schema 更新'
+        summary: 'cc_sql 完成了 SQL schema 更新，已通知 @@cc_etl 同步'
       },
       {
         activityId: id('act-003', 'ActivityId'),

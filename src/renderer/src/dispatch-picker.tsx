@@ -7,6 +7,7 @@ import type {
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agents-surface'
+import { isDispatchable } from './workbench/dispatchability'
 
 /**
  * Unified Dispatch Picker (#6).
@@ -27,34 +28,20 @@ import { RUNTIME_STATE_LABEL } from './agents-surface'
 // ---------------------------------------------------------------------------
 
 /**
- * `@@all` matches only when followed by end-of-string or whitespace, so that
- * `@@all-review` (a valid agent name) is NOT misread as a broadcast.
- * Non-global flag → no lastIndex leakage across calls.
+ * `@@<name>` routing must work for any name the create-agent contract allows —
+ * including names with spaces (e.g. `data review`) or the reserved-looking
+ * prefix `all` (e.g. an agent named `all review`). A naive `@@(\S+)` capture
+ * stops at the first space, and a naive `@@all` check shadows longer names.
+ *
+ * The resolver therefore matches against the project's KNOWN agent names by
+ * longest-first: for each known name it scans the text for `@@<name>` and
+ * consumes those character ranges. `@@all` is treated as a broadcast only for
+ * any `@@` occurrence NOT already claimed by a longer known name. Remaining
+ * unclaimed `@@token` runs are reported as unresolved. This keeps creation and
+ * routing consistent without tightening name syntax (#6 P1-1).
  */
-const AT_AT_ALL = /(?:^|\s)@@all(?=\s|$)/
-/**
- * `@@<name>` captures the run of non-whitespace characters after `@@`. Names
- * are then resolved by exact, case-insensitive match against the project's
- * known agent names (see resolveAtAt). This keeps routing open to whatever
- * names the contract allows — including spaces-free CJK or punctuated names —
- * without duplicating or tightening the create-agent syntax.
- */
-const AT_AT_NAME = /(?:^|\s)@@(\S+)/g
-
-/**
- * A single dispatchability predicate shared by manual selection, `@@all`
- * expansion and the adapter's acceptance check (#6 P1-1). An instance is
- * dispatchable when it is not Provider-down, not archived, and not holding a
- * Terminal takeover (ADR-0007 structured/PTY mutex). The UI and the port MUST
- * agree, otherwise `@@all` could select a target the adapter then rejects.
- */
-function isDispatchable(a: AgentInstanceViewModel): boolean {
-  return (
-    a.runtimeState !== 'unavailable' &&
-    a.runtimeState !== 'archived' &&
-    a.terminalState !== 'active'
-  )
-}
+const AT_AT_TOKEN = /(?:^|\s)@@(\S+)/g
+const ALL_TOKEN = 'all'
 
 const RESOURCE_TYPE_LABEL: Record<
   'task-list' | 'knowledge-space' | 'document' | 'other',
@@ -86,23 +73,48 @@ function resolveAtAt(
   const byName = new Map<string, AgentInstanceViewModel>()
   for (const a of agents) byName.set(a.name.toLowerCase(), a)
 
-  const hasAll = AT_AT_ALL.test(text)
+  // Ranges [start, end) in `text` already consumed by a known-name match, so a
+  // shorter name (or `all`) cannot re-claim part of a longer name's mention.
+  const consumed: Array<[number, number]> = []
+  const overlaps = (start: number, end: number) =>
+    consumed.some(([cs, ce]) => start < ce && end > cs)
+
+  // Longest names first so `all review` is matched before `all`.
+  const knownNames = [...byName.keys()].sort((a, b) => b.length - a.length)
+  for (const name of knownNames) {
+    // Match `@@<name>` case-insensitively, preceded by start or whitespace.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`(^|\\s)(@@${escaped})`, 'gi')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      // The `@@` begins right after the captured leading separator.
+      const atStart = m.index + m[1].length
+      const atEnd = atStart + m[2].length
+      if (overlaps(atStart, atEnd)) continue
+      consumed.push([atStart, atEnd])
+      ids.add(byName.get(name)!.agentInstanceId)
+    }
+  }
+
+  // Now scan for any remaining `@@token` occurrences not claimed above.
+  let hasAll = false
+  AT_AT_TOKEN.lastIndex = 0
+  let t: RegExpExecArray | null
+  while ((t = AT_AT_TOKEN.exec(text)) !== null) {
+    const leadLen = t[0].length - t[1].length - 2 // chars before @@
+    const atStart = t.index + Math.max(0, leadLen)
+    const atEnd = atStart + 2 + t[1].length
+    if (overlaps(atStart, atEnd)) continue
+    const token = t[1]
+    if (token.toLowerCase() === ALL_TOKEN) {
+      hasAll = true
+    } else {
+      unresolved.push(token)
+    }
+  }
+
   if (hasAll) {
     for (const a of agents) ids.add(a.agentInstanceId)
-  } else {
-    const names = new Set<string>()
-    let m: RegExpExecArray | null
-    AT_AT_NAME.lastIndex = 0
-    while ((m = AT_AT_NAME.exec(text)) !== null) {
-      // Skip the reserved word — it only means broadcast, never an agent name.
-      if (m[1].toLowerCase() === 'all') continue
-      names.add(m[1])
-    }
-    for (const n of names) {
-      const a = byName.get(n.toLowerCase())
-      if (a) ids.add(a.agentInstanceId)
-      else unresolved.push(n)
-    }
   }
   return { ids, unresolved, hasAll }
 }
