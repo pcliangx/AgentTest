@@ -195,16 +195,19 @@ describe('MockScenarioAdapter — subscribe', () => {
 // ---------------------------------------------------------------------------
 
 describe('MockScenarioAdapter — unimplemented commands', () => {
-  it('rejects non-navigate commands with scenario-read-only', async () => {
+  it('rejects not-yet-implemented commands with scenario-read-only', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
+    const agent = snap.agents[0]
+    // manage-queue is still out of scope in Phase 1 #6; it must remain a
+    // scenario-read-only rejection rather than silently no-op'ing.
     const result = await adapter.dispatch({
-      kind: 'confirm-dispatch',
+      kind: 'manage-queue',
       commandId: cmdId(1),
       expectedRevision: snap.revision,
-      projectId: snap.projects[0].projectId,
-      targets: [snap.agents[0].agentInstanceId],
-      instruction: 'test'
+      projectId: agent.projectId,
+      queueItemId: id('queue-x', 'QueueItemId'),
+      operation: 'cancel'
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {

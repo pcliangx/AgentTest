@@ -26,6 +26,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private createdAgentCount = 0
   private createdPanelCount = 0
+  /**
+   * Follow-up events (without revision) queued by tryApply to be emitted after
+   * the success revision bump. Cleared on rejection and after each dispatch.
+   */
+  private pendingPostEvents: Array<
+    Omit<Extract<WorkbenchEvent, { kind: 'dispatch-created' }>, 'revision'>
+  > = []
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -46,8 +53,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
     }
 
     // 3. Command-specific handling — returns a rejection or null (success).
+    //    On success, tryApply may push follow-up events (e.g. dispatch-created)
+    //    onto pendingPostEvents to be emitted after the revision bump.
+    this.pendingPostEvents = []
     const rejection = this.tryApply(command)
-    if (rejection) return rejection
+    if (rejection) {
+      this.pendingPostEvents = []
+      return rejection
+    }
 
     // 4. Success — bump revision, emit, cache.
     this.snapshot.revision++
@@ -63,6 +76,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
       correlationId: command.commandId,
       snapshot: structuredClone(this.snapshot)
     })
+    // Emit any command-specific follow-up events (e.g. dispatch-created) at
+    // the same authoritative revision. They are skipped on duplicate dispatch
+    // because the cached result short-circuits before reaching here.
+    for (const partial of this.pendingPostEvents) {
+      this.emit({ ...partial, revision: this.snapshot.revision })
+    }
+    this.pendingPostEvents = []
     return result
   }
 
@@ -170,6 +190,79 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
         return this.applyLayoutOperation(command, project)
+      }
+      case 'send-agent-instruction': {
+        // Composer addresses exactly one instance — no multi-target fan-out.
+        const agent = this.snapshot.agents.find(
+          (a) =>
+            a.agentInstanceId === command.agentInstanceId &&
+            a.projectId === command.projectId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        // Phase 1 has no real runtime: recording the instruction as activity
+        // is the only side effect. No process, PTY, Git or Run is created.
+        this.snapshot.activity = [
+          {
+            activityId: id(`act-send-${Date.now()}`, 'ActivityId'),
+            projectId: agent.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            timestamp: Date.now(),
+            kind: 'run-started',
+            summary: `${agent.name} 收到指令：${command.instruction}`
+          },
+          ...this.snapshot.activity
+        ]
+        agent.lastActivityAt = Date.now()
+        return null
+      }
+      case 'confirm-dispatch': {
+        const project = this.snapshot.projects.find(
+          (p) => p.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        const targets = command.targets.filter((tid) =>
+          this.snapshot.agents.some(
+            (a) =>
+              a.agentInstanceId === tid && a.projectId === project.projectId
+          )
+        )
+        if (targets.length === 0) {
+          return this.reject(command, 'invalid-target', '目标 Agent 不存在')
+        }
+        // One stable DispatchId per target — Phase 1 records activity only.
+        const now = Date.now()
+        const dispatchIds = targets.map((tid, idx) =>
+          id(`dispatch-${now}-${idx}`, 'DispatchId')
+        )
+        const newActivity = targets.map((tid, idx) => {
+          const a = this.snapshot.agents.find((x) => x.agentInstanceId === tid)!
+          return {
+            activityId: id(`act-dispatch-${now}-${idx}`, 'ActivityId'),
+            projectId: project.projectId,
+            agentInstanceId: tid,
+            timestamp: now,
+            kind: 'run-started',
+            summary: `${a.name} 收到派发：${command.instruction}`
+          }
+        })
+        this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
+        for (const tid of targets) {
+          const a = this.snapshot.agents.find((x) => x.agentInstanceId === tid)!
+          a.lastActivityAt = now
+        }
+        // Queue a dispatch-created event to be emitted at the authoritative
+        // revision after the success bump. Duplicate dispatch of the same
+        // CommandId never reaches here (cached result short-circuits).
+        this.pendingPostEvents.push({
+          kind: 'dispatch-created',
+          correlationId: command.commandId,
+          dispatchIds
+        })
+        return null
       }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
