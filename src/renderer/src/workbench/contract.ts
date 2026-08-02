@@ -130,6 +130,8 @@ export interface AgentInstanceViewModel {
   activeRunId?: RunId
   queueDepth: number
   doctor: 'ready' | 'blocked'
+  /** Epoch ms of the instance's latest known activity, for recency ordering. */
+  lastActivityAt?: number
 }
 
 export type ConfigurationOwner =
@@ -261,79 +263,88 @@ export type LayoutOperation =
   | { kind: 'focus-panel'; panelId?: PanelId }
   | { kind: 'prune-empty-panels' }
 
-export type WorkbenchCommand = CommandMeta &
-  (
-    | { kind: 'navigate-global'; surface: GlobalSurface }
-    | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
-    | { kind: 'change-layout'; projectId: ProjectId; operation: LayoutOperation }
-    | {
-        kind: 'send-agent-instruction'
-        projectId: ProjectId
-        agentInstanceId: AgentInstanceId
-        instruction: string
-        mode: 'start-or-queue' | 'reply-current-run'
-      }
-    | {
-        kind: 'set-terminal-takeover'
-        projectId: ProjectId
-        agentInstanceId: AgentInstanceId
-        operation: 'open' | 'close'
-      }
-    | {
-        kind: 'confirm-dispatch'
-        projectId: ProjectId
-        targets: AgentInstanceId[]
-        instruction: string
-      }
-    | {
-        kind: 'manage-queue'
-        projectId: ProjectId
-        queueItemId: QueueItemId
-        operation:
-          | 'cancel'
-          | 'move-earlier'
-          | 'move-later'
-          | 'raise-priority'
-          | 'lower-priority'
-      }
-    | {
-        kind: 'answer-permission'
-        projectId: ProjectId
-        agentInstanceId: AgentInstanceId
-        runId: RunId
-        requestId: PermissionRequestId
-        decision: PermissionDecision
-      }
-    | { kind: 'resolve-attention'; attentionItemId: AttentionItemId }
-    | {
-        kind: 'stage-configuration'
-        owner: ConfigurationOwner
-        fieldPath: string
-        value: unknown
-      }
-    | { kind: 'discard-configuration'; owners: ConfigurationOwner[] }
-    | {
-        kind: 'apply-configuration'
-        owners: Array<{ owner: ConfigurationOwner; expectedAppliedVersion: number }>
-      }
-    | {
-        kind: 'import-handoff'
-        projectId: ProjectId
-        handoffId: HandoffId
-        targetAgentInstanceId: AgentInstanceId
-        mode: 'inspect-only'
-      }
-    | {
-        kind: 'import-handoff'
-        projectId: ProjectId
-        handoffId: HandoffId
-        targetAgentInstanceId: AgentInstanceId
-        mode: 'execute-confirmed'
-        confirmationId: ConfirmationId
-      }
-    | { kind: 'request-quit-preview' }
-    | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
-  )
+export type AgentOpenMode = 'current-panel' | 'background'
+
+export type WorkbenchCommandBody =
+  | { kind: 'navigate-global'; surface: GlobalSurface }
+  | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
+  | { kind: 'change-layout'; projectId: ProjectId; operation: LayoutOperation }
+  | {
+      kind: 'create-agent'
+      projectId: ProjectId
+      name: string
+      providerId: AgentProviderId
+      open: AgentOpenMode
+    }
+  | {
+      kind: 'send-agent-instruction'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+      instruction: string
+      mode: 'start-or-queue' | 'reply-current-run'
+    }
+  | {
+      kind: 'set-terminal-takeover'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+      operation: 'open' | 'close'
+    }
+  | {
+      kind: 'confirm-dispatch'
+      projectId: ProjectId
+      targets: AgentInstanceId[]
+      instruction: string
+    }
+  | {
+      kind: 'manage-queue'
+      projectId: ProjectId
+      queueItemId: QueueItemId
+      operation:
+        | 'cancel'
+        | 'move-earlier'
+        | 'move-later'
+        | 'raise-priority'
+        | 'lower-priority'
+    }
+  | {
+      kind: 'answer-permission'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+      runId: RunId
+      requestId: PermissionRequestId
+      decision: PermissionDecision
+    }
+  | { kind: 'resolve-attention'; attentionItemId: AttentionItemId }
+  | {
+      kind: 'stage-configuration'
+      owner: ConfigurationOwner
+      fieldPath: string
+      value: unknown
+    }
+  | { kind: 'discard-configuration'; owners: ConfigurationOwner[] }
+  | {
+      kind: 'apply-configuration'
+      owners: Array<{ owner: ConfigurationOwner; expectedAppliedVersion: number }>
+    }
+  | {
+      kind: 'import-handoff'
+      projectId: ProjectId
+      handoffId: HandoffId
+      targetAgentInstanceId: AgentInstanceId
+      mode: 'inspect-only'
+    }
+  | {
+      kind: 'import-handoff'
+      projectId: ProjectId
+      handoffId: HandoffId
+      targetAgentInstanceId: AgentInstanceId
+      mode: 'execute-confirmed'
+      confirmationId: ConfirmationId
+    }
+  | { kind: 'request-quit-preview' }
+  | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
+
+export type WorkbenchCommand = CommandMeta & WorkbenchCommandBody
 
 // ---------------------------------------------------------------------------
 // Results & events

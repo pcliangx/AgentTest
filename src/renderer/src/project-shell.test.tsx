@@ -46,7 +46,7 @@ describe('ProjectShell — snapshot rendering', () => {
   it('shows agent, run and attention counts', async () => {
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     const region = await screen.findByRole('region', { name: '项目概览' })
-    expect(region).toHaveTextContent('4')
+    expect(region).toHaveTextContent('8')
     expect(region).toHaveTextContent('Agent')
   })
 
@@ -76,12 +76,14 @@ describe('ProjectShell — navigation', () => {
     }
   })
 
-  it('navigates to the Agents surface on click and shows placeholder', async () => {
+  it('navigates to the Agents surface and shows the Agent Directory', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
     await user.click(screen.getByRole('button', { name: 'Agent' }))
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: 'Agent 目录' })
+    ).toBeVisible()
   })
 
   it('navigates to the Activity surface and shows entries with Chinese kind labels', async () => {
@@ -218,7 +220,7 @@ describe('ProjectShell — stale snapshot safety', () => {
     // the initial getSnapshot() promise resolves.
     const newerSnap = createStandardScenario()
     newerSnap.revision = 1
-    newerSnap.projects[0].currentSurface = 'agents'
+    newerSnap.projects[0].currentSurface = 'tasks'
     port.emit({
       kind: 'view-model-updated',
       revision: 1,
@@ -230,7 +232,7 @@ describe('ProjectShell — stale snapshot safety', () => {
     staleSnap.revision = 0
     port.resolveInitial(staleSnap)
 
-    // The renderer must keep revision 1's state (agents surface), not
+    // The renderer must keep revision 1's state (tasks surface), not
     // overwrite it with the stale revision 0 (overview surface).
     expect(await screen.findByText(/尚未实现/)).toBeVisible()
   })

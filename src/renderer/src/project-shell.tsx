@@ -6,10 +6,12 @@ import type {
   ProjectSurface,
   ProjectViewModel,
   WorkbenchCommand,
+  WorkbenchCommandBody,
   WorkbenchPort,
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { AgentsSurface } from './agents-surface'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -45,15 +47,13 @@ function useWorkbench(port: WorkbenchPort) {
     }
   }, [port, applySnapshot])
 
-  const navigate = useCallback(
-    (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> => {
-      const command: WorkbenchCommand = {
-        kind: 'navigate',
+  const sendCommand = useCallback(
+    (body: WorkbenchCommandBody): Promise<CommandResult> => {
+      const command = {
+        ...body,
         commandId: id(crypto.randomUUID(), 'CommandId'),
-        expectedRevision: revisionRef.current,
-        projectId,
-        surface
-      }
+        expectedRevision: revisionRef.current
+      } as WorkbenchCommand
       const result = port.dispatch(command)
       void result.then((r) => {
         if (!r.ok && r.reason === 'stale-revision') {
@@ -65,7 +65,13 @@ function useWorkbench(port: WorkbenchPort) {
     [port, applySnapshot]
   )
 
-  return { snapshot, navigate }
+  const navigate = useCallback(
+    (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> =>
+      sendCommand({ kind: 'navigate', projectId, surface }),
+    [sendCommand]
+  )
+
+  return { snapshot, navigate, sendCommand }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +110,7 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export function ProjectShell({ port }: { port: WorkbenchPort }) {
-  const { snapshot, navigate } = useWorkbench(port)
+  const { snapshot, navigate, sendCommand } = useWorkbench(port)
 
   if (!snapshot) {
     return (
@@ -205,8 +211,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {project.currentSurface === 'activity' && (
             <ActivitySurface activity={projectActivity} />
           )}
+          {project.currentSurface === 'agents' && (
+            <AgentsSurface
+              project={project}
+              snapshot={snapshot}
+              sendCommand={sendCommand}
+            />
+          )}
           {project.currentSurface !== 'overview' &&
-            project.currentSurface !== 'activity' && (
+            project.currentSurface !== 'activity' &&
+            project.currentSurface !== 'agents' && (
               <PlaceholderSurface surface={project.currentSurface} />
             )}
         </main>
