@@ -1,6 +1,6 @@
 # Agent Squad HQ v0.2 产品与工程计划
 
-> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 #1 已完成，#2–#16 待推进
+> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 #1–#2 已完成，#3–#16 待推进
 >
 > 更新日期：2026-08-02
 >
@@ -730,15 +730,17 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
 ## 16. 立即下一步
 
 Phase 0 已完成。Phase 1 #1 已由 [PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)
-实现（Project Shell + 版本化 WorkbenchPort + MockScenarioAdapter）。后续按
+实现（Project Shell + 版本化 WorkbenchPort + MockScenarioAdapter）。Phase 1 #2 已由
+[PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19) 实现（全局 Connections、Provider Health、
+确认宿主）。后续按
 [`ui-first-command-center`](../.scratch/ui-first-command-center/spec.md) 和
-[GitHub Issues #2–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的剩余纵向 tracer
+[GitHub Issues #3–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的剩余纵向 tracer
 bullets 推进。工作顺序只由 GitHub Relationships 的原生 `blocked by` 决定，
 不按编号机械串行。[产品身份迁移 #17](https://github.com/pcliangx/agent-squad-hq/issues/17)
 已完成；收到用户明确指令后按以下 7 批 DAG 执行：
 
 1. `01`：✅ 已完成（[PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)）；
-2. `02, 03`：并行交付全局操作/确认宿主与 Agent Directory/唯一 Tab；
+2. `02`：✅ 已完成（[PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19)）；`03`：并行交付 Agent Directory/唯一 Tab；
 3. `04, 06, 08, 13`：并行交付基础布局、显式 Dispatch、Changes 与 Settings A；
 4. `05, 07`：并行补齐高级布局与队列/Terminal 执行槽；
 5. `09, 15`：并行交付 Permission/Global Attention 与 Electron 冒烟骨架；

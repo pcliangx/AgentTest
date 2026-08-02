@@ -5,6 +5,7 @@ import type {
   CommandResult,
   PanelId,
   ProjectViewModel,
+  ConnectionId,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -26,6 +27,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private createdAgentCount = 0
   private createdPanelCount = 0
+  private pendingConnectionId: ConnectionId | null = null
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -160,6 +162,79 @@ export class MockScenarioAdapter implements WorkbenchPort {
           panel.activeTabId = agentInstanceId
           project.layout.focusedPanelId = panelId
         }
+        return null
+      }
+      case 'request-connection-deletion': {
+        const conn = this.snapshot.global.connections.find(
+          (c) => c.connectionId === command.connectionId
+        )
+        if (!conn) {
+          return this.reject(command, 'invalid-target', '连接不存在')
+        }
+        this.pendingConnectionId = command.connectionId
+        const affectedProjects = this.snapshot.projects
+          .filter((p) => p.primaryConnectionId === command.connectionId)
+          .map((p) => p.name)
+        let impact = `此操作将永久删除「${conn.label}」，且不可恢复。`
+        if (affectedProjects.length > 0) {
+          impact += `以下 Project 的主连接将被解除绑定：${affectedProjects.join('、')}。`
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: '删除连接',
+          target: conn.label,
+          impact,
+          nonBypassableReason: '高风险操作需要二次确认，无法跳过'
+        }
+        return null
+      }
+      case 'request-provider-recovery': {
+        const provider = this.snapshot.global.providers.find(
+          (p) => p.providerId === command.providerId
+        )
+        if (!provider) {
+          return this.reject(command, 'invalid-target', 'Provider 不存在')
+        }
+        provider.status = 'ready'
+        return null
+      }
+      case 'confirm-dangerous-action': {
+        const pending = this.snapshot.pendingConfirmation
+        if (!pending || pending.confirmationId !== command.confirmationId) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '无效或过期的确认 ID'
+          )
+        }
+        const { action, target } = pending
+        this.snapshot.pendingConfirmation = undefined
+        // Mock result: remove the connection if one was pending deletion.
+        if (this.pendingConnectionId) {
+          this.snapshot.global.connections =
+            this.snapshot.global.connections.filter(
+              (c) => c.connectionId !== this.pendingConnectionId
+            )
+          // Clear dangling primaryConnectionId references on affected projects.
+          for (const proj of this.snapshot.projects) {
+            if (proj.primaryConnectionId === this.pendingConnectionId) {
+              proj.primaryConnectionId = undefined
+            }
+          }
+          this.pendingConnectionId = null
+        }
+        // Record as a global activity — no projectId attribution.
+        this.snapshot.activity.unshift({
+          activityId: id(crypto.randomUUID(), 'ActivityId'),
+          timestamp: Date.now(),
+          kind: 'dangerous-action-confirmed',
+          summary: `已确认: ${action}（${target}）`
+        })
+        return null
+      }
+      case 'dismiss-confirmation': {
+        this.snapshot.pendingConfirmation = undefined
+        this.pendingConnectionId = null
         return null
       }
       case 'change-layout': {
