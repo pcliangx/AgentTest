@@ -21,7 +21,10 @@ import { WorkspaceArea } from './workspace-layout'
  * by provider id, array index or panel id — only AgentInstanceId.
  */
 
-export type SendCommand = (body: WorkbenchCommandBody) => Promise<CommandResult>
+export type SendCommand = (
+  body: WorkbenchCommandBody,
+  expectedRevision?: number
+) => Promise<CommandResult>
 
 // ---------------------------------------------------------------------------
 // Agents surface
@@ -57,13 +60,17 @@ export function AgentsSurface({
    * recoverable notice (Issue #4 AC4) instead of being dropped silently.
    */
   const sendLayout = async (
-    operation: LayoutOperation
+    operation: LayoutOperation,
+    expectedRevision?: number
   ): Promise<CommandResult> => {
-    const result = await sendCommand({
-      kind: 'change-layout',
-      projectId: project.projectId,
-      operation
-    })
+    const result = await sendCommand(
+      {
+        kind: 'change-layout',
+        projectId: project.projectId,
+        operation
+      },
+      expectedRevision
+    )
     if (!result.ok) {
       setLayoutNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
     }

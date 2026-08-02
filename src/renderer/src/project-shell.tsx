@@ -49,11 +49,18 @@ function useWorkbench(port: WorkbenchPort) {
   }, [port, applySnapshot])
 
   const sendCommand = useCallback(
-    (body: WorkbenchCommandBody): Promise<CommandResult> => {
+    (
+      body: WorkbenchCommandBody,
+      expectedRevision?: number
+    ): Promise<CommandResult> => {
       const command = {
         ...body,
         commandId: id(crypto.randomUUID(), 'CommandId'),
-        expectedRevision: revisionRef.current
+        // Discrete actions default to the latest known revision; gestures
+        // based on an older render pass their baseline explicitly, so the
+        // port can reject them as stale instead of letting them overwrite
+        // state that arrived after the gesture started.
+        expectedRevision: expectedRevision ?? revisionRef.current
       } as WorkbenchCommand
       const result = port.dispatch(command)
       void result.then((r) => {

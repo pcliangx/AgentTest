@@ -4,8 +4,10 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { id } from './workbench/contract'
 import type {
   CommandResult,
+  SplitNodeId,
   WorkbenchCommand,
   WorkbenchPort
 } from './workbench/contract'
@@ -73,6 +75,46 @@ function firePointer(
   })
   Object.assign(event, { pointerId })
   fireEvent(el, event)
+}
+
+/**
+ * Raw dispatch WITHOUT act(): React must not flush the queued snapshot
+ * update between the authoritative port event and the gesture end — that
+ * gap is exactly the same-batch race these tests reproduce.
+ */
+function dispatchPointerRaw(
+  el: Element,
+  type: 'pointermove' | 'pointerup',
+  clientX: number,
+  pointerId = 1
+) {
+  const event = new window.MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX
+  })
+  Object.assign(event, { pointerId })
+  el.dispatchEvent(event)
+}
+
+/**
+ * Applies an authoritative resize straight through the port, bypassing the
+ * UI. The mock adapter dispatches synchronously, so the subscribed shell
+ * updates its revision ref immediately while React stays on the old render.
+ */
+async function directResize(
+  port: WorkbenchPort,
+  splitNodeId: SplitNodeId,
+  ratio: number
+): Promise<CommandResult> {
+  const snap = await port.getSnapshot()
+  return port.dispatch({
+    kind: 'change-layout',
+    commandId: id(`cmd-direct-resize-${ratio}`, 'CommandId'),
+    expectedRevision: snap.revision,
+    projectId: id('proj-sales', 'ProjectId'),
+    operation: { kind: 'resize-split', splitNodeId, ratio }
+  })
 }
 
 /** Drags a tab and drops it onto the named drop zone of a panel. */
@@ -266,6 +308,60 @@ describe('Workspace layout — divider', () => {
       restore()
     }
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('rejects a pointer commit whose baseline revision went stale in the same batch', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    const separator = screen.getByRole('separator', { name: '调整分割比例' })
+    const root = (await port.getSnapshot()).projects[0].layout.root
+    if (root?.kind !== 'split') throw new Error('expected split root')
+
+    const restore = stubLayoutRects()
+    try {
+      firePointer(separator, 'pointerdown', 500)
+      // The authoritative event updates the shell's revision ref
+      // synchronously, but React has not re-rendered yet — the gesture
+      // ends on the stale render, inside the same batch.
+      await directResize(port, root.splitNodeId, 0.8)
+      dispatchPointerRaw(separator, 'pointermove', 600)
+      dispatchPointerRaw(separator, 'pointerup', 600)
+
+      // The 0.5→0.6 commit based on the stale render must be rejected as
+      // stale — never overwrite the authoritative 0.8.
+      expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+      expect(firstChildBasis()).toBe('80%')
+    } finally {
+      restore()
+    }
+  })
+
+  it('rejects a keyboard commit from a stale render in the same batch', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    const separator = screen.getByRole('separator', { name: '调整分割比例' })
+    const root = (await port.getSnapshot()).projects[0].layout.root
+    if (root?.kind !== 'split') throw new Error('expected split root')
+
+    await directResize(port, root.splitNodeId, 0.8)
+    // Raw dispatch: the keydown handler still sees the pre-event render.
+    separator.dispatchEvent(
+      new window.KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+        cancelable: true
+      })
+    )
+
+    // The 0.5→0.55 commit must be rejected as stale, with a notice.
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+    expect(firstChildBasis()).toBe('80%')
   })
 })
 

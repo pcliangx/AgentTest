@@ -47,9 +47,16 @@ interface LayoutRenderContext {
   draggingTab: AgentInstanceId | null
   panelCount: number
   layoutRevision: number
-  sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
+  sendLayout: (
+    operation: LayoutOperation,
+    expectedRevision?: number
+  ) => Promise<CommandResult>
   onPreviewRatio: (splitNodeId: SplitNodeId, ratio: number) => void
-  onCommitRatio: (splitNodeId: SplitNodeId, ratio: number) => void
+  onCommitRatio: (
+    splitNodeId: SplitNodeId,
+    ratio: number,
+    expectedRevision: number
+  ) => void
   onCancelRatio: (splitNodeId: SplitNodeId) => void
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
@@ -69,7 +76,10 @@ export function WorkspaceArea({
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
-  sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
+  sendLayout: (
+    operation: LayoutOperation,
+    expectedRevision?: number
+  ) => Promise<CommandResult>
 }) {
   const layout = project.layout
   const [draggingTab, setDraggingTab] = useState<AgentInstanceId | null>(null)
@@ -86,9 +96,10 @@ export function WorkspaceArea({
    * the tree keeps showing the authoritative layout.
    */
   const sendLayout = async (
-    operation: LayoutOperation
+    operation: LayoutOperation,
+    expectedRevision?: number
   ): Promise<CommandResult> => {
-    const result = await sendLayoutCommand(operation)
+    const result = await sendLayoutCommand(operation, expectedRevision)
     if (!result.ok) {
       setPreviewRatios({})
     }
@@ -131,13 +142,16 @@ export function WorkspaceArea({
     sendLayout,
     onPreviewRatio: (splitNodeId, ratio) =>
       setPreviewRatios((prev) => ({ ...prev, [splitNodeId]: ratio })),
-    onCommitRatio: (splitNodeId, ratio) => {
+    onCommitRatio: (splitNodeId, ratio, expectedRevision) => {
       setPreviewRatios((prev) => {
         const next = { ...prev }
         delete next[splitNodeId]
         return next
       })
-      void sendLayout({ kind: 'resize-split', splitNodeId, ratio })
+      // The commit carries the gesture's baseline revision: if the
+      // authoritative layout moved on meanwhile, the port rejects it as
+      // stale and the surface shows the recoverable notice.
+      void sendLayout({ kind: 'resize-split', splitNodeId, ratio }, expectedRevision)
     },
     onCancelRatio: (splitNodeId) =>
       setPreviewRatios((prev) => {
@@ -251,7 +265,11 @@ function Divider({
   ratio: number
   layoutRevision: number
   onPreview: (splitNodeId: SplitNodeId, ratio: number) => void
-  onCommit: (splitNodeId: SplitNodeId, ratio: number) => void
+  onCommit: (
+    splitNodeId: SplitNodeId,
+    ratio: number,
+    expectedRevision: number
+  ) => void
   onCancel: (splitNodeId: SplitNodeId) => void
 }) {
   const dragRef = useRef<{
@@ -276,12 +294,23 @@ function Divider({
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const grow = direction === 'horizontal' ? 'ArrowRight' : 'ArrowDown'
     const shrink = direction === 'horizontal' ? 'ArrowLeft' : 'ArrowUp'
+    // Keyboard commits bind to the revision of the render the user saw;
+    // a same-batch authoritative event makes them stale-reject instead of
+    // overwriting the newer ratio.
     if (e.key === grow) {
       e.preventDefault()
-      onCommit(splitNodeId, clampRatio(ratio + KEYBOARD_RATIO_STEP))
+      onCommit(
+        splitNodeId,
+        clampRatio(ratio + KEYBOARD_RATIO_STEP),
+        layoutRevision
+      )
     } else if (e.key === shrink) {
       e.preventDefault()
-      onCommit(splitNodeId, clampRatio(ratio - KEYBOARD_RATIO_STEP))
+      onCommit(
+        splitNodeId,
+        clampRatio(ratio - KEYBOARD_RATIO_STEP),
+        layoutRevision
+      )
     }
   }
 
@@ -328,7 +357,9 @@ function Divider({
     dragRef.current = null
     e.currentTarget.releasePointerCapture?.(e.pointerId)
     if (drag.lastRatio !== drag.startRatio) {
-      onCommit(splitNodeId, drag.lastRatio)
+      // Commit against the revision captured at pointer down — the only
+      // baseline this ratio math is valid for.
+      onCommit(splitNodeId, drag.lastRatio, drag.startRevision)
     }
   }
 
