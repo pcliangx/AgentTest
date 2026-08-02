@@ -302,16 +302,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         )
         let missing = false
         let nonDispatchable = false
-        let terminalBusy = false
         for (const tid of command.targets) {
           const a = byId.get(tid)
           if (!a) {
             missing = true
-          } else {
-            const blockReason = getDispatchBlockReason(a)
-            if (blockReason === 'terminal-active') terminalBusy = true
-            else if (blockReason) nonDispatchable = true
-          }
+          } else if (getDispatchBlockReason(a)) nonDispatchable = true
         }
         if (missing) {
           return this.reject(
@@ -325,13 +320,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
             command,
             'unavailable',
             '部分目标 Agent 不可派发，已拒绝整单派发'
-          )
-        }
-        if (terminalBusy) {
-          return this.reject(
-            command,
-            'busy',
-            '部分目标处于 Terminal 接管，已拒绝整单派发'
           )
         }
         const targets = command.targets.map((tid) => byId.get(tid)!)
@@ -354,7 +342,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         for (const a of targets) {
           a.lastActivityAt = now
           // Authoritative queue projection (#6 P1-2): a dispatch to a busy
-          // agent enqueues through one shared transition that keeps the
+          // agent (including one holding a Terminal takeover) enqueues through
+          // one shared transition that keeps the
           // per-instance depth, the QueueItem list and the Project/global
           // summaries consistent. Idle agents start immediately (no queue).
           if (isAgentBusy(a)) this.enqueue(a)

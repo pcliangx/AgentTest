@@ -8,7 +8,7 @@
  */
 import type { AgentInstanceViewModel } from './contract'
 
-export type DispatchBlockReason = 'agent-unavailable' | 'terminal-active'
+export type DispatchBlockReason = 'agent-unavailable'
 
 /** Returns the authoritative reason an instance cannot receive a dispatch. */
 export function getDispatchBlockReason(
@@ -17,31 +17,32 @@ export function getDispatchBlockReason(
   if (a.runtimeState === 'unavailable' || a.runtimeState === 'archived') {
     return 'agent-unavailable'
   }
-  if (a.terminalState === 'active') return 'terminal-active'
   return undefined
 }
 
 /**
- * An instance is dispatchable when it is not Provider-down, not archived, and
- * not holding a Terminal takeover (ADR-0007 structured/PTY mutex).
+ * An instance can accept a Dispatch when it is not Provider-down or archived.
+ * Terminal takeover occupies the execution slot, but does not prevent new work
+ * from being accepted into the visible queue (ADR-0009 §显式执行与并发).
  */
 export function isDispatchable(a: AgentInstanceViewModel): boolean {
   return getDispatchBlockReason(a) === undefined
 }
 
 /**
- * True when an instance already holds an active structured Run — or already has
- * queued work — so a further dispatch/composer instruction must enqueue rather
- * than start immediately. Includes the `queued` state and any non-zero
- * queueDepth, otherwise already-queued work would silently fail to grow the
- * queue (#6 P1-2).
+ * True when an instance's execution slot is occupied — by a structured Run or
+ * Terminal takeover — or when it already has queued work. A further Dispatch
+ * must enqueue rather than start immediately. The Agent Tab composer applies
+ * its stricter Terminal mutex before consulting this helper.
  */
 export function isAgentBusy(a: {
   runtimeState: string
+  terminalState?: string
   activeRunId?: unknown
   queueDepth?: number
 }): boolean {
   return (
+    a.terminalState === 'active' ||
     a.activeRunId !== undefined ||
     (a.queueDepth ?? 0) > 0 ||
     a.runtimeState === 'running' ||

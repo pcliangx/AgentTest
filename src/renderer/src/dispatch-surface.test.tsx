@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
@@ -14,7 +14,41 @@ import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { createStandardScenario } from './workbench/standard-scenario'
 import { ProjectShell } from './project-shell'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  Reflect.deleteProperty(window, 'api')
+})
+
+/** Installs recorders for every renderer-to-main capability boundary. */
+function installApiSpies(): Window['api'] {
+  const api: Window['api'] = {
+    run: vi.fn(async () => ({ ok: true as const })),
+    cancel: vi.fn(async () => true),
+    terminalOpen: vi.fn(async () => ({ ok: true as const })),
+    terminalClose: vi.fn(async () => true),
+    ptyInput: vi.fn(),
+    ptyResize: vi.fn(),
+    onPtyData: vi.fn(() => () => {}),
+    onAgentEvent: vi.fn(() => () => {}),
+    pickRepo: vi.fn(async () => ({ ok: false as const, reason: 'not used' })),
+    getCurrentRepo: vi.fn(async () => null),
+    worktreeStatus: vi.fn(async () => ({
+      exists: false,
+      files: [],
+      summary: null
+    })),
+    worktreeOpen: vi.fn(async () => false),
+    worktreeApply: vi.fn(async () => ({
+      ok: false as const,
+      reason: 'not used'
+    }))
+  }
+  Object.defineProperty(window, 'api', {
+    value: api,
+    configurable: true
+  })
+  return api
+}
 
 /**
  * Wraps a MockScenarioAdapter and records every dispatched command, so tests
@@ -44,17 +78,19 @@ class RecordingPort implements WorkbenchPort {
 }
 
 /**
- * Keeps confirm-dispatch responses pending after the real adapter has accepted
- * them. This models the WorkbenchPort contract's allowed event-before-response
- * ordering and makes duplicate user confirmation deterministic.
+ * Keeps one configured command kind pending after the real adapter accepts it.
+ * This models the WorkbenchPort contract's allowed event-before-response
+ * ordering and makes duplicate user activation deterministic.
  */
-class DeferredConfirmPort implements WorkbenchPort {
+class DeferredCommandPort implements WorkbenchPort {
   private readonly inner = new MockScenarioAdapter()
   private readonly pending: Array<{
     result: Promise<CommandResult>
     resolve: (result: CommandResult) => void
   }> = []
   readonly commands: WorkbenchCommand[] = []
+
+  constructor(private readonly deferredKind: WorkbenchCommand['kind']) {}
 
   getSnapshot(): Promise<WorkbenchViewModel> {
     return this.inner.getSnapshot()
@@ -63,7 +99,7 @@ class DeferredConfirmPort implements WorkbenchPort {
   dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
     const result = this.inner.dispatch(command)
-    if (command.kind !== 'confirm-dispatch') return result
+    if (command.kind !== this.deferredKind) return result
     return new Promise((resolve) => {
       this.pending.push({ result, resolve })
     })
@@ -73,41 +109,7 @@ class DeferredConfirmPort implements WorkbenchPort {
     return this.inner.subscribe(listener)
   }
 
-  async resolveConfirmations(): Promise<void> {
-    const pending = this.pending.splice(0)
-    const results = await Promise.all(pending.map((item) => item.result))
-    pending.forEach((item, index) => item.resolve(results[index]))
-    await Promise.resolve()
-  }
-}
-
-/** Keeps composer responses pending after the adapter has accepted them. */
-class DeferredInstructionPort implements WorkbenchPort {
-  private readonly inner = new MockScenarioAdapter()
-  private readonly pending: Array<{
-    result: Promise<CommandResult>
-    resolve: (result: CommandResult) => void
-  }> = []
-  readonly commands: WorkbenchCommand[] = []
-
-  getSnapshot(): Promise<WorkbenchViewModel> {
-    return this.inner.getSnapshot()
-  }
-
-  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
-    this.commands.push(command)
-    const result = this.inner.dispatch(command)
-    if (command.kind !== 'send-agent-instruction') return result
-    return new Promise((resolve) => {
-      this.pending.push({ result, resolve })
-    })
-  }
-
-  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
-    return this.inner.subscribe(listener)
-  }
-
-  async resolveInstructions(): Promise<void> {
+  async resolvePending(): Promise<void> {
     const pending = this.pending.splice(0)
     const results = await Promise.all(pending.map((item) => item.result))
     pending.forEach((item, index) => item.resolve(results[index]))
@@ -276,7 +278,7 @@ describe('Dispatch — Agent Tab composer', () => {
 
   it('submits only once while an instruction response is pending', async () => {
     const user = userEvent.setup()
-    const port = new DeferredInstructionPort()
+    const port = new DeferredCommandPort('send-agent-instruction')
     render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     await user.click(screen.getByRole('button', { name: 'Agent' }))
@@ -300,7 +302,7 @@ describe('Dispatch — Agent Tab composer', () => {
         )
       ).toHaveLength(1)
     } finally {
-      await act(() => port.resolveInstructions())
+      await act(() => port.resolvePending())
     }
   })
 
@@ -437,13 +439,13 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     ).toHaveLength(0)
   })
 
-  it('parses @@<agent-name> in the instruction into visible chips before confirming', async () => {
+  it('parses @@<agent-name> into visible chips and removes routing markers from the dispatched instruction', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)
 
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
-      'cc_sql please review @@cx_review and @@kimi_visual'
+      '@@cx_review @@kimi_visual summarize the anomaly'
     )
 
     // @@ references resolve to chips for the named instances.
@@ -452,6 +454,51 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     })
     expect(parsed.some((c) => c.textContent?.includes('cx_review'))).toBe(true)
     expect(parsed.some((c) => c.textContent?.includes('kimi_visual'))).toBe(true)
+
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    expect(preview).toHaveTextContent('指令：summarize the anomaly')
+    expect(preview).not.toHaveTextContent('@@cx_review')
+    expect(preview).not.toHaveTextContent('@@kimi_visual')
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    expect(port.commands.find((c) => c.kind === 'confirm-dispatch')).toMatchObject({
+      instruction: 'summarize the anomaly'
+    })
+  })
+
+  it('does not allow a routing marker to be the entire instruction', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@cx_review'
+    )
+
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
+  })
+
+  it('blocks the whole dispatch while any explicit @@ target is unresolved', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@cx_review @@typo investigate the failure'
+    )
+
+    expect(dialog).toHaveTextContent('未识别的名称：typo')
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
   })
 
   it('does not misread @@all-review (a valid agent name) as an @@all broadcast', async () => {
@@ -483,18 +530,13 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
       '@@all'
     )
 
-    expect(dialog).toHaveTextContent('已展开为全部可派发实例')
+    expect(dialog).toHaveTextContent('已展开为当前 Project 全部实例')
     expect(
       within(dialog).getAllByRole('listitem', { name: /已选目标/ })
-    ).toHaveLength(7)
-
-    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
-    expect(
-      await screen.findByRole('dialog', { name: /确认广播/ })
-    ).toBeInTheDocument()
+    ).toHaveLength(9)
   })
 
-  it('expands @@all into the current Project dispatchable instances and requires a second confirmation', async () => {
+  it('expands @@all into every current Project instance and exposes blocked targets instead of silently narrowing it', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)
 
@@ -505,43 +547,71 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
     // @@all surfaces the explicit instance list for the active project before
     // any dispatch happens.
-    expect(dialog).toHaveTextContent('已展开为全部可派发实例')
+    expect(dialog).toHaveTextContent('已展开为当前 Project 全部实例')
 
-    // The standard sales project has 8 instances; kimi_docs is unavailable
-    // and cx_anti holds a Terminal takeover, so only 6 are dispatchable.
-    // Terminal-active targets must be excluded so the broadcast can actually
-    // succeed instead of being rejected by the adapter (#6 P1-1).
+    // The standard sales project has 8 instances. @@all must name all eight,
+    // including the unavailable target and the Terminal-active target, rather
+    // than silently changing the meaning of "all".
     const expansion = within(dialog).getAllByRole('listitem', {
       name: /已选目标/
     })
-    expect(expansion.length).toBe(6)
+    expect(expansion.length).toBe(8)
     expect(
       expansion.some((c) => c.textContent?.includes('kimi_docs'))
-    ).toBe(false)
+    ).toBe(true)
     expect(
       expansion.some((c) => c.textContent?.includes('cx_anti'))
-    ).toBe(false)
+    ).toBe(true)
+    expect(dialog).toHaveTextContent('kimi_docs（不可派发）')
+    expect(dialog).toHaveTextContent('cx_anti: 第 1 位')
 
-    // Confirm once → must still ask for explicit confirmation of the broadcast.
+    // Atomic broadcast cannot proceed while one of the explicit targets is
+    // unavailable; the user must fix availability or choose a narrower set.
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch').length
+    ).toBe(0)
+  })
+
+  it('requires a second confirmation when every @@all target can accept a dispatch', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
+      'ready'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@all stand up'
+    )
+    expect(
+      within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    ).toHaveLength(8)
+
     await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
     const broadcastDialog = await screen.findByRole('dialog', {
       name: /确认广播/
     })
-
-    // Before the explicit broadcast confirmation, no dispatch command exists.
     expect(
-      port.commands.filter((c) => c.kind === 'confirm-dispatch').length
-    ).toBe(0)
+      port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
 
-    // Complete the second confirmation — the broadcast must actually succeed
-    // (one dispatch per dispatchable target), proving @@all no longer
-    // dead-ends on the excluded Terminal-active instance (#6 P1-1).
     await user.click(
       within(broadcastDialog).getByRole('button', { name: '确认广播' })
     )
     const confirms = port.commands.filter((c) => c.kind === 'confirm-dispatch')
     expect(confirms).toHaveLength(1)
-    expect(confirms[0].targets).toHaveLength(6)
+    expect(confirms[0]).toMatchObject({
+      projectId: project.projectId,
+      instruction: 'stand up'
+    })
+    expect(confirms[0].targets).toHaveLength(8)
   })
 
   it('excludes unavailable agents from the selectable list', async () => {
@@ -632,7 +702,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 describe('Dispatch — idempotency', () => {
   it('submits only once while a confirmation response is pending', async () => {
     const user = userEvent.setup()
-    const port = new DeferredConfirmPort()
+    const port = new DeferredCommandPort('confirm-dispatch')
     render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     const dialog = await openPicker(user)
@@ -652,7 +722,7 @@ describe('Dispatch — idempotency', () => {
         port.commands.filter((command) => command.kind === 'confirm-dispatch')
       ).toHaveLength(1)
     } finally {
-      await act(() => port.resolveConfirmations())
+      await act(() => port.resolvePending())
     }
   })
 
@@ -689,6 +759,7 @@ describe('Dispatch — idempotency', () => {
 
 describe('Dispatch — mock safety', () => {
   it('confirm-dispatch records dispatch-created events without spawning processes, PTY, Git or Feishu work', async () => {
+    const api = installApiSpies()
     const adapter = new MockScenarioAdapter()
     const snapshot = await adapter.getSnapshot()
     const project = snapshot.projects[0]
@@ -722,6 +793,9 @@ describe('Dispatch — mock safety', () => {
 
     // No runtime/permission/terminal events leak out of a pure dispatch.
     expect(events.some((e) => e.kind === 'permission-requested')).toBe(false)
+    for (const capability of Object.values(api)) {
+      expect(capability).not.toHaveBeenCalled()
+    }
   })
 
   it('rejects a mixed target set atomically instead of partially dispatching', async () => {
@@ -950,15 +1024,45 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       after.queue.filter((q) => q.agentInstanceId === forecast.agentInstanceId)
     ).toHaveLength(2)
   })
+
+  it('accepts a dispatch during Terminal takeover and queues it behind the occupied execution slot', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snapshot = await adapter.getSnapshot()
+    const project = snapshot.projects[0]
+    const terminalAgent = snapshot.agents.find(
+      (agent) => agent.name === 'cx_anti'
+    )!
+
+    const result = await adapter.dispatch({
+      commandId: id('cmd-terminal-queue', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [terminalAgent.agentInstanceId],
+      instruction: 'run after Terminal closes'
+    })
+
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const queuedAgent = after.agents.find(
+      (agent) => agent.agentInstanceId === terminalAgent.agentInstanceId
+    )!
+    expect(queuedAgent.queueDepth).toBe(terminalAgent.queueDepth + 1)
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === terminalAgent.agentInstanceId
+      )
+    ).toBe(true)
+  })
 })
 
 describe('Dispatch — Agent Name syntax contracts (#6 review round 2)', () => {
-  it('create-agent accepts names with spaces or punctuation (only "all" is reserved)', async () => {
+  it('create-agent accepts names with spaces, punctuation, and the routing token text "all"', async () => {
     const { user, port } = await gotoAgentsSurface()
     // CONTEXT.md mandates only project-unique, case-insensitive names — no
     // ASCII-only restriction. Names like "data review" or "name!" must be
     // accepted so the create-agent contract is not narrowed (#6 P2-3).
-    const accepted = ['data review', 'name!']
+    const accepted = ['data review', 'name!', 'all']
     for (const name of accepted) {
       await user.click(screen.getByRole('button', { name: '新建 Agent' }))
       await user.type(
@@ -974,7 +1078,7 @@ describe('Dispatch — Agent Name syntax contracts (#6 review round 2)', () => {
     ).toBeGreaterThanOrEqual(accepted.length)
   })
 
-  it('create-agent rejects only the reserved broadcast word "all"', async () => {
+  it('keeps @@all as broadcast syntax even when an Agent is named "all"', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(screen.getByRole('button', { name: '新建 Agent' }))
     await user.type(
@@ -982,6 +1086,16 @@ describe('Dispatch — Agent Name syntax contracts (#6 review round 2)', () => {
       'all'
     )
     await user.click(screen.getByRole('button', { name: '创建 Agent' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/保留词/)
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    const dialog = await openPicker(user)
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@all review the project'
+    )
+    expect(dialog).toHaveTextContent('@@all 已展开')
+    expect(
+      within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    ).toHaveLength(9)
   })
 })

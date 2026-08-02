@@ -18,9 +18,10 @@ import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
  * well-formed `confirm-dispatch` command; preview/cancel never produce one.
  *
  * @@<agent-name> resolves to visible chips by exact Agent Name match within
- * the active project; `@@all` expands to all dispatchable instances of the
- * project and requires an explicit second confirmation before broadcasting.
- * Unavailable / archived instances are excluded from dispatch entirely.
+ * the active project; `@@all` expands to every instance in the project and
+ * requires an explicit second confirmation before broadcasting. Unavailable /
+ * archived instances remain visible and block atomic confirmation instead of
+ * being silently omitted.
  */
 
 // ---------------------------------------------------------------------------
@@ -29,16 +30,14 @@ import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
 
 /**
  * `@@<name>` routing must work for any name the create-agent contract allows —
- * including names with spaces (e.g. `data review`) or the reserved-looking
- * prefix `all` (e.g. an agent named `all review`). A naive `@@(\S+)` capture
- * stops at the first space, and a naive `@@all` check shadows longer names.
+ * including names with spaces (e.g. `data review`). A naive `@@(\S+)`
+ * capture stops at the first space.
  *
- * The resolver therefore matches against the project's KNOWN agent names by
- * longest-first: for each known name it scans the text for `@@<name>` and
- * consumes those character ranges. `@@all` is treated as a broadcast only for
- * any `@@` occurrence NOT already claimed by a longer known name. Remaining
- * unclaimed `@@token` runs are reported as unresolved. This keeps creation and
- * routing consistent without tightening name syntax (#6 P1-1).
+ * The resolver gives the exact `@@all` control token syntax priority, then
+ * matches the project's known Agent Names longest-first and consumes their
+ * character ranges. Remaining unclaimed `@@token` runs are unresolved. This
+ * keeps the accepted Agent Name contract unchanged while making the broadcast
+ * token deterministic (#6).
  */
 const AT_AT_TOKEN = /(?:^|\s)@@(\S+)/g
 const ALL_TOKEN = 'all'
@@ -75,19 +74,36 @@ function resolveAtAt(
   ids: Set<AgentInstanceViewModel['agentInstanceId']>
   unresolved: string[]
   hasAll: boolean
+  instruction: string
 } {
   const ids = new Set<AgentInstanceViewModel['agentInstanceId']>()
   const unresolved: string[] = []
   const byName = new Map<string, AgentInstanceViewModel>()
   for (const a of agents) byName.set(a.name.toLowerCase(), a)
 
-  // Ranges [start, end) in `text` already consumed by a known-name match, so a
-  // shorter name (or `all`) cannot re-claim part of a longer name's mention.
+  // Ranges [start, end) in `text` already consumed by routing syntax, so a
+  // shorter name cannot re-claim part of a longer name's mention.
   const consumed: Array<[number, number]> = []
   const overlaps = (start: number, end: number) =>
     consumed.some(([cs, ce]) => start < ce && end > cs)
 
-  // Longest names first so `all review` is matched before `all`.
+  // `@@all` is routing syntax and therefore has priority even when the domain
+  // contains an Agent literally named `all` (which remains manually
+  // selectable). Claim these exact token ranges before matching names.
+  let hasAll = false
+  AT_AT_TOKEN.lastIndex = 0
+  let broadcastMatch: RegExpExecArray | null
+  while ((broadcastMatch = AT_AT_TOKEN.exec(text)) !== null) {
+    if (broadcastMatch[1].toLowerCase() !== ALL_TOKEN) continue
+    const leadLen =
+      broadcastMatch[0].length - broadcastMatch[1].length - 2
+    const atStart = broadcastMatch.index + Math.max(0, leadLen)
+    const atEnd = atStart + 2 + broadcastMatch[1].length
+    consumed.push([atStart, atEnd])
+    hasAll = true
+  }
+
+  // Longest names first so `data review` is matched before `data`.
   const knownNames = [...byName.keys()].sort((a, b) => b.length - a.length)
   for (const name of knownNames) {
     // Match `@@<name>` case-insensitively as a complete mention. The trailing
@@ -107,7 +123,6 @@ function resolveAtAt(
   }
 
   // Now scan for any remaining `@@token` occurrences not claimed above.
-  let hasAll = false
   AT_AT_TOKEN.lastIndex = 0
   let t: RegExpExecArray | null
   while ((t = AT_AT_TOKEN.exec(text)) !== null) {
@@ -116,14 +131,22 @@ function resolveAtAt(
     const atEnd = atStart + 2 + t[1].length
     if (overlaps(atStart, atEnd)) continue
     const token = t[1]
-    if (token.toLowerCase() === ALL_TOKEN) {
-      hasAll = true
-    } else {
-      unresolved.push(token)
-    }
+    unresolved.push(token)
   }
 
-  return { ids, unresolved, hasAll }
+  // Routing mentions are control syntax, not part of the instruction sent to
+  // an Agent. Remove every successfully consumed mention while preserving the
+  // user's remaining text verbatim apart from outer whitespace.
+  const orderedRanges = [...consumed].sort((a, b) => a[0] - b[0])
+  let cursor = 0
+  let instruction = ''
+  for (const [start, end] of orderedRanges) {
+    instruction += text.slice(cursor, start)
+    cursor = end
+  }
+  instruction += text.slice(cursor)
+
+  return { ids, unresolved, hasAll, instruction: instruction.trim() }
 }
 
 // ---------------------------------------------------------------------------
@@ -144,10 +167,9 @@ export function DispatchPicker({
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
   )
-  // Only dispatchable instances are manually selectable or included by
-  // @@all. Explicit names are still resolved against every project Agent so a
-  // blocked longer name can never fall through to a ready shorter name.
-  const dispatchable = projectAgents.filter(isDispatchable)
+  // Explicit names resolve against every project Agent so a blocked longer
+  // name can never fall through to a ready shorter name. Manual selection is
+  // limited to targets that can currently accept a Dispatch.
 
   const [instruction, setInstruction] = useState('')
   const [manual, setManual] = useState<
@@ -187,7 +209,7 @@ export function DispatchPicker({
   const resolved = resolveAtAt(instruction, projectAgents)
   const targetIds = new Set([...manual, ...resolved.ids])
   if (resolved.hasAll) {
-    for (const agent of dispatchable) targetIds.add(agent.agentInstanceId)
+    for (const agent of projectAgents) targetIds.add(agent.agentInstanceId)
   }
   const selectedTargets = projectAgents.filter((a) =>
     targetIds.has(a.agentInstanceId)
@@ -234,7 +256,8 @@ export function DispatchPicker({
       submittingRef.current ||
       targets.length === 0 ||
       blockedTargets.length > 0 ||
-      instruction.trim().length === 0
+      resolved.unresolved.length > 0 ||
+      resolved.instruction.length === 0
     ) {
       return
     }
@@ -253,7 +276,7 @@ export function DispatchPicker({
         kind: 'confirm-dispatch',
         projectId: project.projectId,
         targets: targets.map((a) => a.agentInstanceId),
-        instruction: instruction.trim()
+        instruction: resolved.instruction
       })
       if (result.ok) {
         onClose()
@@ -384,7 +407,8 @@ export function DispatchPicker({
 
         {resolved.hasAll && (
           <p className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300">
-            @@all 已展开为全部可派发实例（{targets.length} 个），确认派发前需再次确认广播。
+            @@all 已展开为当前 Project 全部实例（{selectedTargets.length}{' '}
+            个），确认派发前需再次确认广播。
           </p>
         )}
 
@@ -402,7 +426,7 @@ export function DispatchPicker({
           />
         </label>
 
-        {selectedTargets.length > 0 && instruction.trim().length > 0 && (
+        {selectedTargets.length > 0 && resolved.instruction.length > 0 && (
           <section
             role="region"
             aria-label="派发预览"
@@ -414,7 +438,7 @@ export function DispatchPicker({
             </div>
             <div>
               <span className="text-neutral-500">指令：</span>
-              {instruction.trim()}
+              {resolved.instruction}
             </div>
             <div>
               <span className="text-neutral-500">资源范围：</span>
@@ -453,7 +477,8 @@ export function DispatchPicker({
               submitting ||
               targets.length === 0 ||
               blockedTargets.length > 0 ||
-              instruction.trim().length === 0
+              resolved.unresolved.length > 0 ||
+              resolved.instruction.length === 0
             }
             onClick={() => void confirm()}
           >
