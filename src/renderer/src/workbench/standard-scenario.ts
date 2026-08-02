@@ -156,6 +156,59 @@ export function createStandardScenario(): WorkbenchViewModel {
       }
     ],
     configurationDrafts: [],
+    changes: [
+      {
+        agentInstanceId: ccData,
+        baseCommit: 'a1b2c3d',
+        drift: 'none',
+        files: [
+          {
+            path: 'src/clean.ts',
+            status: 'modified',
+            additions: 24,
+            deletions: 8
+          },
+          {
+            path: 'src/types.ts',
+            status: 'added',
+            additions: 15,
+            deletions: 0
+          }
+        ],
+        validation: { status: 'pass' }
+      },
+      {
+        agentInstanceId: ccSql,
+        baseCommit: 'e4f5g6h',
+        drift: 'behind',
+        files: [
+          {
+            path: 'schema/migration.sql',
+            status: 'modified',
+            additions: 3,
+            deletions: 1
+          }
+        ],
+        validation: { status: 'pass' }
+      },
+      {
+        agentInstanceId: cxAnti,
+        baseCommit: 'i7j8k9l',
+        drift: 'none',
+        files: [
+          {
+            path: 'detect.py',
+            status: 'modified',
+            additions: 10,
+            deletions: 5
+          }
+        ],
+        validation: {
+          status: 'fail',
+          message: '类型检查失败：第 42 行有未定义变量'
+        }
+      }
+    ],
     activity: [
       {
         activityId: id('act-001', 'ActivityId'),
