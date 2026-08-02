@@ -142,6 +142,18 @@ function AgentDirectory({
   const [sortMode, setSortMode] = useState<SortMode>('recent-activity')
   const [showNewAgent, setShowNewAgent] = useState(false)
 
+  // View state derived from the project layout by AgentInstanceId:
+  // which instances are open as tabs, and which one is currently visible.
+  const { openTabs, visibleTabs } = useMemo(() => {
+    const open = new Set<string>()
+    const visible = new Set<string>()
+    for (const panel of Object.values(project.layout.panels)) {
+      for (const tab of panel.tabs) open.add(tab)
+      if (panel.activeTabId) visible.add(panel.activeTabId)
+    }
+    return { openTabs: open, visibleTabs: visible }
+  }, [project.layout])
+
   const providerOptions = useMemo(() => {
     const seen = new Map<string, string>()
     for (const agent of agents) {
@@ -272,33 +284,40 @@ function AgentDirectory({
         {visibleAgents.length === 0 && (
           <li className="px-1 py-2 text-xs text-neutral-600">没有匹配的 Agent</li>
         )}
-        {visibleAgents.map((agent) => (
-          <li key={agent.agentInstanceId}>
-            <button
-              className="block w-full rounded px-2 py-1.5 text-left hover:bg-neutral-900"
-              onClick={() => openAgent(agent.agentInstanceId)}
-            >
-              <span className="flex items-center gap-1.5">
-                <span className="text-sm font-medium text-neutral-100">
-                  {agent.name}
-                </span>
-                {openAttentionTargets.has(agent.agentInstanceId) && (
-                  <span
-                    role="img"
-                    aria-label="有待处理事项"
-                    className="text-amber-400"
-                  >
-                    ●
+        {visibleAgents.map((agent) => {
+          const viewBadges: string[] = []
+          if (visibleTabs.has(agent.agentInstanceId)) viewBadges.push('当前可见')
+          else if (openTabs.has(agent.agentInstanceId)) viewBadges.push('已打开')
+          if (agent.terminalState === 'active') viewBadges.push('Terminal 接管')
+          return (
+            <li key={agent.agentInstanceId}>
+              <button
+                className="block w-full rounded px-2 py-1.5 text-left hover:bg-neutral-900"
+                onClick={() => openAgent(agent.agentInstanceId)}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium text-neutral-100">
+                    {agent.name}
                   </span>
-                )}
-              </span>
-              <span className="mt-0.5 block text-xs text-neutral-500">
-                {providerLabel(agent.providerId)} ·{' '}
-                {RUNTIME_STATE_LABEL[agent.runtimeState]}
-              </span>
-            </button>
-          </li>
-        ))}
+                  {openAttentionTargets.has(agent.agentInstanceId) && (
+                    <span
+                      role="img"
+                      aria-label="有待处理事项"
+                      className="text-amber-400"
+                    >
+                      ●
+                    </span>
+                  )}
+                </span>
+                <span className="mt-0.5 block text-xs text-neutral-500">
+                  {providerLabel(agent.providerId)} ·{' '}
+                  {RUNTIME_STATE_LABEL[agent.runtimeState]}
+                  {viewBadges.length > 0 && ` · ${viewBadges.join(' · ')}`}
+                </span>
+              </button>
+            </li>
+          )
+        })}
       </ul>
 
       {showNewAgent && (
@@ -550,6 +569,7 @@ function PanelView({
                 </span>
               )}
               <span className="text-xs text-neutral-600">
+                {providerLabel(agent.providerId)} ·{' '}
                 {RUNTIME_STATE_LABEL[agent.runtimeState]}
               </span>
               <button
@@ -638,11 +658,7 @@ function AgentView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto text-sm text-neutral-400">
-        {subView === 'chat' && (
-          <p className="text-neutral-500">
-            暂无对话记录；发送首条消息后才会启动 Run。
-          </p>
-        )}
+        {subView === 'chat' && <ChatState agent={agent} />}
         {subView === 'activity' &&
           (agentActivity.length === 0 ? (
             <p className="text-neutral-500">暂无活动记录</p>
@@ -665,5 +681,39 @@ function AgentView({
         )}
       </div>
     </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Chat sub-view — state text driven only by port-judged facts (#20)
+// ---------------------------------------------------------------------------
+
+const ACTIVE_RUN_STATES: ReadonlySet<AgentRuntimeState> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
+
+function ChatState({ agent }: { agent: AgentInstanceViewModel }) {
+  if (agent.runtimeState === 'unavailable') {
+    return (
+      <p className="text-neutral-500">
+        Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
+      </p>
+    )
+  }
+  if (ACTIVE_RUN_STATES.has(agent.runtimeState) || agent.activeRunId) {
+    return (
+      <p className="text-neutral-500">
+        当前有进行中的 Run；结构化对话内容将在真实执行通道接入后展示。
+      </p>
+    )
+  }
+  return (
+    <p className="text-neutral-500">
+      暂无对话记录；发送首条消息后才会启动 Run。
+    </p>
   )
 }

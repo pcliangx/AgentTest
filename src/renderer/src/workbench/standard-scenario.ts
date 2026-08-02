@@ -113,7 +113,9 @@ export function createStandardScenario(): WorkbenchViewModel {
       }),
       agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000),
       agent(ccEtl, 'cc_etl', claudeCode, 'failed', now - 1_800_000),
-      agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000),
+      agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000, {
+        terminalState: 'active'
+      }),
       agent(cxForecast, 'cx_forecast', codex, 'queued', now - 600_000, {
         queueDepth: 1
       }),

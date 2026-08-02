@@ -21,7 +21,7 @@ async function gotoAgentsSurface() {
 function directoryNames(directory: HTMLElement): string[] {
   const list = within(directory).getByRole('list', { name: 'Agent 列表' })
   return within(list)
-    .getAllByRole('button')
+    .queryAllByRole('button')
     .map((b) => b.textContent ?? '')
 }
 
@@ -238,8 +238,10 @@ describe('Agents surface — Agent View', () => {
       ).toBeVisible()
     }
 
-    // Chat empty state by default.
-    expect(view).toHaveTextContent('暂无对话')
+    // Chat state is driven by the port-judged runtime state: cc_data is
+    // running, so it must NOT show the "send your first message" empty state.
+    expect(view).toHaveTextContent('进行中的 Run')
+    expect(view).not.toHaveTextContent('发送首条消息')
 
     // Activity sub-view is driven by the port snapshot.
     await user.click(within(view).getByRole('button', { name: '活动' }))
@@ -261,5 +263,87 @@ describe('Agents surface — Agent View', () => {
     expect(
       within(tab).getByRole('img', { name: '有待处理事项' })
     ).toBeInTheDocument()
+  })
+})
+
+describe('Agents surface — port-driven chat state (#20)', () => {
+  it('shows the neutral empty chat state for a ready agent', async () => {
+    const { user, directory } = await gotoAgentsSurface()
+    await user.click(
+      within(directory).getByRole('button', { name: /cx_review/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('发送首条消息')
+  })
+
+  it('shows an unavailable notice instead of the empty prompt for unavailable agents', async () => {
+    const { user, directory } = await gotoAgentsSurface()
+    await user.click(
+      within(directory).getByRole('button', { name: /kimi_docs/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Provider 不可用')
+    expect(view).not.toHaveTextContent('发送首条消息')
+  })
+})
+
+describe('Agents surface — identity and view state (#20)', () => {
+  it('distinguishes visible/open/terminal-takeover in the directory and shows provider on tabs', async () => {
+    const { user, directory } = await gotoAgentsSurface()
+
+    // cc_data is the only open tab and active in its panel → 当前可见.
+    expect(within(directory).getByRole('button', { name: /cc_data/ })).toHaveTextContent(
+      '当前可见'
+    )
+    // cx_anti holds a Terminal takeover in the mock scenario.
+    expect(
+      within(directory).getByRole('button', { name: /cx_anti/ })
+    ).toHaveTextContent('Terminal 接管')
+    // cx_review is not open anywhere → no view-state badge.
+    expect(
+      within(directory).getByRole('button', { name: /cx_review/ })
+    ).not.toHaveTextContent('已打开')
+
+    // Opening cc_sql makes it the visible tab; cc_data stays open in background.
+    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await screen.findAllByRole('tab', { name: /cc_sql/ })
+    expect(within(directory).getByRole('button', { name: /cc_sql/ })).toHaveTextContent(
+      '当前可见'
+    )
+    expect(
+      within(directory).getByRole('button', { name: /cc_data/ })
+    ).toHaveTextContent('已打开')
+
+    // Tabs carry the provider as secondary identity.
+    expect(screen.getByRole('tab', { name: /cc_data/ })).toHaveTextContent(
+      'Claude Code'
+    )
+  })
+})
+
+describe('Agents surface — per-project filter isolation (#20)', () => {
+  it('does not leak directory filters into another project', async () => {
+    const { user, directory } = await gotoAgentsSurface()
+    await user.type(
+      within(directory).getByRole('textbox', { name: '搜索 Agent' }),
+      'zzzz'
+    )
+    expect(directoryNames(directory)).toHaveLength(0)
+
+    // Switch to the other project and open its Agents surface.
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '切换项目' }),
+      '用户研究'
+    )
+    await screen.findByRole('heading', { name: '用户研究', level: 2 })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+
+    const researchDirectory = await screen.findByRole('region', {
+      name: 'Agent 目录'
+    })
+    expect(
+      within(researchDirectory).getByRole('textbox', { name: '搜索 Agent' })
+    ).toHaveValue('')
+    expect(directoryNames(researchDirectory)).toHaveLength(2)
   })
 })

@@ -213,6 +213,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           )}
           {project.currentSurface === 'agents' && (
             <AgentsSurface
+              key={project.projectId}
               project={project}
               snapshot={snapshot}
               sendCommand={sendCommand}

@@ -664,3 +664,49 @@ describe('MockScenarioAdapter — change-layout tab commands', () => {
     if (!result.ok) expect(result.reason).toBe('scenario-read-only')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Rejection purity — a rejected command must never mutate the snapshot (#20)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — rejection purity', () => {
+  it('a rejected open-tab on an empty workspace leaves the layout untouched', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Empty the single-panel workspace first (revision bumps to 1).
+    await adapter.dispatch({
+      kind: 'change-layout',
+      commandId: cmdId(90),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      operation: {
+        kind: 'close-tab',
+        panelId: id('panel-main', 'PanelId'),
+        agentInstanceId: id('inst-cc-data', 'AgentInstanceId')
+      }
+    })
+    snap = await adapter.getSnapshot()
+    expect(snap.projects[0].layout.root).toBeNull()
+
+    // open-tab for an unknown instance must be rejected WITHOUT allocating
+    // a panel or otherwise mutating the snapshot.
+    const result = await adapter.dispatch({
+      kind: 'change-layout',
+      commandId: cmdId(91),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      operation: {
+        kind: 'open-tab',
+        panelId: id('panel-fallback', 'PanelId'),
+        agentInstanceId: id('inst-nope', 'AgentInstanceId')
+      }
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+
+    const after = await adapter.getSnapshot()
+    expect(after.revision).toBe(snap.revision)
+    expect(after.projects[0].layout.root).toBeNull()
+    expect(Object.keys(after.projects[0].layout.panels)).toHaveLength(0)
+  })
+})

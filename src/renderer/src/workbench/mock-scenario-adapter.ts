@@ -190,6 +190,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
     switch (operation.kind) {
       case 'open-tab': {
+        // Validate the target instance FIRST: a rejected command must not
+        // mutate the snapshot (no panel allocation before this point).
+        const agent = this.snapshot.agents.find(
+          (a) =>
+            a.agentInstanceId === operation.agentInstanceId &&
+            a.projectId === project.projectId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
         // When the workspace is empty there is no valid panel to target;
         // the layout owner allocates a fresh one instead of rejecting.
         const targetPanelId =
@@ -199,14 +209,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
         const panel = layout.panels[targetPanelId]
         if (!panel) {
           return this.reject(command, 'invalid-target', 'Panel 不存在')
-        }
-        const agent = this.snapshot.agents.find(
-          (a) =>
-            a.agentInstanceId === operation.agentInstanceId &&
-            a.projectId === project.projectId
-        )
-        if (!agent) {
-          return this.reject(command, 'invalid-target', 'Agent 不存在')
         }
         // One instance has at most one tab per main window: reopening an
         // already-open instance only focuses its existing unique tab.
