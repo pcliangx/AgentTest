@@ -25,8 +25,10 @@ skills 索引；如两份文件出现重复或冲突，以本文件和当前已�
 Accepted ADR → `docs/PLAN-v0.2.md` → `docs/HANDOFF.md` → 历史规划。
 `docs/PLAN-v0.1.md` 和被取代的 ADR 只作背景。
 
-当前处于 UI/UX Design Gate（UI/UX 设计在外部进行）。设计选型完成前，不继续生
-产功能开发；设计规范见 [`docs/UX-v0.2.md`](./docs/UX-v0.2.md)。
+UI/UX Design Gate 已于 2026-08-02 关闭，设计基线见
+[`docs/UX-v0.2.md`](./docs/UX-v0.2.md)。下一阶段是 Phase 1“生产 UI 与契约化
+Mock”，但尚未启动；必须按 `.scratch/ui-first-command-center/` 的 spec/ticket 顺序
+实施。throwaway prototype 不能直接当生产代码。
 
 ## Claude Code / Codex 协作协议
 

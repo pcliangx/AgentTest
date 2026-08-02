@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'" />
+    <title>AgentTest · 指挥中心 B 版原型</title>
+    <style>
+      /*
+       * THROWAWAY UI PROTOTYPE — DO NOT PROMOTE TO PRODUCTION.
+       * Three command-center variants, switchable with ?variant=A|B|C.
+       * State is intentionally in memory; all mutations are simulated.
+       */
+      :root {
+        --ink: #172033;
+        --muted: #677187;
+        --line: #d9deea;
+        --paper: #ffffff;
+        --wash: #f4f6fa;
+        --nav: #151c2b;
+        --nav-soft: #222c40;
+        --brand: #3d68f5;
+        --brand-soft: #e8edff;
+        --teal: #0f8a83;
+        --amber: #ad6a00;
+        --danger: #b42318;
+        --shadow: 0 18px 50px rgb(23 32 51 / 14%);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #b8c0d1 transparent; }
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      body { overflow: hidden; color: var(--ink); background: var(--wash); font: 13px/1.45 var(--sans); }
+      button, input, textarea { color: inherit; font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+      [hidden] { display: none !important; }
+
+      .app { display: flex; width: 100%; height: 100%; min-width: 1024px; min-height: 680px; flex-direction: column; overflow: hidden; background: var(--paper); }
+      .titlebar { display: flex; height: 38px; flex: 0 0 38px; align-items: center; border-bottom: 1px solid var(--line); background: #f8f9fc; padding: 0 13px; user-select: none; }
+      .traffic { display: flex; gap: 7px; }
+      .traffic i { width: 11px; height: 11px; border: 1px solid #858da0; border-radius: 50%; background: var(--paper); }
+      .window-title { margin-left: 18px; color: var(--muted); font-size: 11px; }
+      .window-title strong { color: var(--ink); font-weight: 650; }
+      .title-status { display: flex; align-items: center; gap: 12px; margin-left: auto; color: var(--muted); font-size: 11px; }
+      .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px rgb(15 138 131 / 12%); }
+
+      .app-shell { position: relative; display: grid; min-height: 0; flex: 1; }
+      .variant-a .app-shell { grid-template-columns: 82px 244px minmax(0, 1fr); }
+      .variant-b .app-shell { grid-template-columns: 68px minmax(0, 1fr) 292px; }
+      .variant-c .app-shell { grid-template-columns: 68px minmax(0, 1fr); }
+
+      .primary-nav { display: flex; min-height: 0; flex-direction: column; align-items: center; gap: 5px; overflow: hidden; background: var(--nav); padding: 12px 8px 10px; color: #dfe5f1; }
+      .brand { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 11px; background: var(--brand); color: white; font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+      .nav-separator { width: 30px; height: 1px; flex: 0 0 auto; background: #334057; margin: 7px 0 4px; }
+      .nav-item { display: grid; width: 100%; min-height: 50px; place-items: center; gap: 2px; border: 0; border-radius: 10px; background: transparent; color: #97a3b8; padding: 5px 2px; font-size: 9px; }
+      .nav-item:hover { background: var(--nav-soft); color: white; }
+      .nav-item.active { background: #eef2ff; color: var(--nav); }
+      .nav-glyph { display: grid; width: 22px; height: 22px; place-items: center; font-size: 15px; font-weight: 700; }
+      .nav-spacer { flex: 1; }
+      .attention-count { display: grid; min-width: 17px; height: 17px; place-items: center; border-radius: 999px; background: #f04438; color: white; font-size: 9px; font-weight: 700; }
+
+      .context-pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; border-right: 1px solid var(--line); background: #f8f9fc; }
+      .project-switch { display: grid; min-height: 70px; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 10px 12px; text-align: left; }
+      .project-switch:hover { background: white; }
+      .project-mark { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 10px; background: var(--brand-soft); color: var(--brand); font-weight: 800; }
+      .project-switch strong, .context-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .project-switch small, .context-row small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .context-head { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; }
+      .context-head span { color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+      .mini-button { display: inline-flex; min-height: 29px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: white; padding: 0 8px; font-size: 10px; font-weight: 650; }
+      .mini-button:hover { border-color: #aeb7ca; background: var(--wash); }
+      .search { margin: 0 10px 8px; }
+      .search input { width: 100%; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 0 10px; }
+      .context-list { min-height: 0; overflow: auto; padding: 0 8px 12px; }
+      .context-group { margin-bottom: 13px; }
+      .context-label { display: flex; justify-content: space-between; padding: 7px 7px 5px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+      .context-row { display: grid; width: 100%; min-height: 48px; grid-template-columns: 31px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: 6px 7px; text-align: left; }
+      .context-row:hover { background: white; }
+      .context-row.selected { border-color: #aebbf2; background: white; box-shadow: 0 2px 10px rgb(23 32 51 / 6%); }
+      .agent-avatar { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 8px; background: #e9edf5; font: 700 9px var(--mono); }
+      .context-row.selected .agent-avatar { background: var(--brand); color: white; }
+      .state-dot { width: 8px; height: 8px; border: 1px solid #7e8799; border-radius: 50%; }
+      .state-dot.running { border-color: var(--teal); border-top-color: transparent; animation: spin 1s linear infinite; }
+      .state-dot.queued { border-color: var(--brand); background: var(--brand-soft); }
+      .state-dot.attention { border: 0; border-radius: 2px; background: var(--amber); }
+      .state-dot.ready { border-color: var(--teal); background: var(--teal); }
+      .state-dot.unavailable { border-color: var(--danger); background: transparent; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .context-footer { margin-top: auto; border-top: 1px solid var(--line); padding: 10px 12px; color: var(--muted); font-size: 10px; }
+
+      .main { position: relative; display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: var(--wash); }
+      .commandbar { display: flex; min-height: 56px; flex: 0 0 56px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); background: white; padding: 0 12px; }
+      .surface-title { min-width: 0; }
+      .surface-title strong { display: block; overflow: hidden; font-size: 14px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+      .surface-title small { display: block; color: var(--muted); font-size: 10px; }
+      .command-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+      .button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 0 10px; font-size: 11px; font-weight: 650; }
+      .button:hover { border-color: #aeb7ca; background: var(--wash); }
+      .button.primary { border-color: var(--brand); background: var(--brand); color: white; }
+      .button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+      .button.danger { color: var(--danger); }
+      .segmented { display: flex; border: 1px solid var(--line); border-radius: 9px; background: var(--wash); padding: 2px; }
+      .segmented button { min-height: 27px; border: 0; border-radius: 6px; background: transparent; padding: 0 8px; color: var(--muted); font-size: 10px; }
+      .segmented button.active { background: white; color: var(--ink); box-shadow: 0 1px 5px rgb(23 32 51 / 10%); }
+
+      .surface { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
+      .workspace-surface { overflow: auto; overscroll-behavior: contain; }
+      .layout-canvas { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 9px; }
+      .layout-canvas.focus-mode { padding: 0; }
+      .split { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+      .split.horizontal { flex-direction: row; }
+      .split.vertical { flex-direction: column; }
+      .split > .node:first-child { flex: 0 0 var(--ratio); }
+      .split > .node:last-child { flex: 1 1 auto; }
+      .node { min-width: 0; min-height: 0; }
+      .divider { position: relative; z-index: 8; flex: 0 0 8px; background: transparent; }
+      .horizontal > .divider { cursor: col-resize; }
+      .vertical > .divider { cursor: row-resize; }
+      .divider::after { position: absolute; border-radius: 999px; background: #c8cfdd; content: ""; }
+      .horizontal > .divider::after { inset: 9px 3px; width: 2px; }
+      .vertical > .divider::after { inset: 3px 9px; height: 2px; }
+      .divider:hover::after { background: var(--brand); }
+      .panel { position: relative; display: flex; width: 100%; height: 100%; min-width: 280px; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #cfd6e4; border-radius: 11px; background: white; box-shadow: 0 4px 16px rgb(23 32 51 / 7%); }
+      .panel.focused { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand), 0 8px 24px rgb(61 104 245 / 12%); }
+      .panel-tabs { display: flex; min-height: 40px; flex: 0 0 40px; align-items: stretch; overflow-x: auto; border-bottom: 1px solid var(--line); background: #f8f9fc; }
+      .panel-label { display: grid; min-width: 34px; place-items: center; border-right: 1px solid var(--line); color: #8a93a6; font: 700 9px var(--mono); }
+      .tab { display: flex; min-width: 120px; max-width: 190px; align-items: center; gap: 6px; border: 0; border-right: 1px solid var(--line); border-bottom: 2px solid transparent; background: transparent; padding: 0 8px; color: var(--muted); cursor: pointer; text-align: left; user-select: none; }
+      .tab.active { border-bottom-color: var(--brand); background: white; color: var(--ink); }
+      .tab strong { flex: 1; overflow: hidden; font: 650 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+      .tab-close { border: 0; background: transparent; color: #8a93a6; padding: 0; }
+      .panel-actions { display: flex; align-items: center; gap: 1px; margin-left: auto; padding: 0 4px; }
+      .icon-button { display: grid; width: 29px; height: 29px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; }
+      .icon-button:hover { background: white; color: var(--ink); }
+      .panel-body { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+      .agent-head { display: flex; min-height: 48px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); padding: 0 11px; }
+      .agent-head strong { display: block; font: 700 11px var(--mono); }
+      .agent-head small { display: block; color: var(--muted); font-size: 9px; }
+      .status-pill { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; border-radius: 999px; background: var(--wash); padding: 4px 7px; color: var(--muted); font-size: 9px; }
+      .session-nav { display: flex; min-height: 34px; gap: 15px; border-bottom: 1px solid var(--line); padding: 0 11px; }
+      .session-nav span { display: flex; align-items: center; border-bottom: 2px solid transparent; color: var(--muted); font-size: 9px; }
+      .session-nav span.active { border-bottom-color: var(--ink); color: var(--ink); font-weight: 700; }
+      .messages { min-height: 0; flex: 1; overflow: auto; padding: 12px; }
+      .message { max-width: 68ch; margin-bottom: 13px; }
+      .message + .message { border-top: 1px solid #edf0f5; padding-top: 11px; }
+      .speaker { margin-bottom: 4px; color: var(--muted); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+      .message p { margin: 0; font-size: 11px; line-height: 1.55; }
+      .tool-line { display: flex; align-items: center; gap: 7px; margin-top: 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--wash); padding: 7px 8px; color: var(--muted); font: 9px var(--mono); }
+      .composer { display: flex; align-items: flex-end; gap: 7px; border-top: 1px solid var(--line); padding: 8px; }
+      .composer textarea { min-height: 36px; max-height: 74px; flex: 1; resize: none; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 8px 9px; font-size: 10px; }
+      .composer button { width: 36px; height: 36px; border: 0; border-radius: 9px; background: var(--brand); color: white; }
+      .empty-panel { display: grid; min-height: 0; flex: 1; place-items: center; padding: 20px; color: var(--muted); text-align: center; }
+      .empty-panel strong { display: block; color: var(--ink); }
+      .drop-edge { position: absolute; z-index: 6; opacity: 0; }
+      .drop-edge:hover, .drop-edge.drag-over { background: rgb(61 104 245 / 19%); opacity: 1; }
+      .tab-dragging .drop-edge { background: rgb(61 104 245 / 8%); opacity: .35; }
+      .drop-edge.left { inset: 40px auto 0 0; width: 24px; }
+      .drop-edge.right { inset: 40px 0 0 auto; width: 24px; }
+      .drop-edge.top { inset: 40px 24px auto; height: 22px; }
+      .drop-edge.bottom { inset: auto 24px 0; height: 22px; }
+
+      .page { min-height: 100%; padding: 20px; }
+      .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+      .page-head h1 { margin: 0; font-size: 24px; letter-spacing: -.025em; }
+      .page-head p { max-width: 64ch; margin: 5px 0 0; color: var(--muted); }
+      .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .metric { border: 1px solid var(--line); border-radius: 12px; background: white; padding: 14px; }
+      .metric span { color: var(--muted); font-size: 10px; }
+      .metric strong { display: block; margin-top: 6px; font-size: 25px; }
+      .content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr); gap: 12px; margin-top: 12px; }
+      .card { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; }
+      .card-head { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 0 13px; }
+      .card-head strong { font-size: 12px; }
+      .event, .task-row, .handoff-row { display: grid; min-height: 54px; align-items: center; gap: 10px; border-bottom: 1px solid #edf0f5; padding: 8px 13px; }
+      .event:last-child, .task-row:last-child, .handoff-row:last-child { border-bottom: 0; }
+      .event { grid-template-columns: 9px minmax(0, 1fr) auto; }
+      .event strong, .task-row strong, .handoff-row strong { display: block; font-size: 11px; }
+      .event small, .task-row small, .handoff-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+      .task-table { min-width: 820px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; }
+      .task-row { grid-template-columns: 92px minmax(260px, 1fr) 130px 150px auto; }
+      .task-row.header { min-height: 36px; background: #f8f9fc; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+      .chip { display: inline-flex; min-height: 23px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: white; padding: 0 7px; color: var(--muted); font-size: 9px; }
+      .chip.brand { width: auto; height: auto; place-items: initial; border-color: #bdc8fa; background: var(--brand-soft); color: #274bc9; font-size: 9px; font-weight: inherit; letter-spacing: normal; }
+      .web-shell { display: flex; height: calc(100% - 40px); min-height: 520px; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; }
+      .web-chrome { display: flex; min-height: 43px; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); background: #f8f9fc; padding: 0 9px; }
+      .address { display: flex; min-width: 0; flex: 1; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; background: white; padding: 6px 9px; color: var(--muted); font-size: 9px; }
+      .address strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+      .web-body { display: grid; min-height: 0; flex: 1; grid-template-columns: 210px minmax(0, 1fr); }
+      .web-tree { border-right: 1px solid var(--line); background: #f8f9fc; padding: 13px; }
+      .web-tree button { display: block; width: 100%; border: 0; border-radius: 7px; background: transparent; padding: 7px; text-align: left; font-size: 10px; }
+      .web-tree button.active { background: white; box-shadow: 0 1px 5px rgb(23 32 51 / 8%); }
+      .web-document { overflow: auto; padding: 34px clamp(30px, 6vw, 76px); }
+      .web-document h1 { max-width: 24ch; margin: 10px 0; font-size: 28px; letter-spacing: -.03em; }
+      .web-document p { max-width: 68ch; color: var(--muted); line-height: 1.7; }
+
+      .radar-roster { min-height: 0; overflow: auto; border-left: 1px solid var(--line); background: white; }
+      .radar-head { border-bottom: 1px solid var(--line); padding: 14px; }
+      .radar-head strong { display: block; }
+      .radar-head small { color: var(--muted); }
+      .radar-section { border-bottom: 1px solid var(--line); padding: 12px; }
+      .radar-section h3 { margin: 0 0 8px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+      .radar-agent { display: grid; width: 100%; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 0; background: transparent; padding: 7px 0; text-align: left; }
+      .radar-agent:hover { color: var(--brand); }
+      .radar-agent strong { display: block; font: 650 10px var(--mono); }
+      .radar-agent small { display: block; color: var(--muted); font-size: 9px; }
+      .variant-b .main { border-right: 0; }
+      .variant-b .commandbar { padding-left: 18px; }
+
+      .canvas-palette { position: absolute; z-index: 20; top: 68px; left: 12px; width: 232px; max-height: calc(100% - 100px); overflow: auto; border: 1px solid var(--line); border-radius: 13px; background: rgb(255 255 255 / 96%); box-shadow: var(--shadow); padding: 8px; backdrop-filter: blur(12px); }
+      .canvas-palette .context-head { min-height: 38px; padding: 0 5px; }
+      .variant-c .layout-canvas { padding-left: 12px; }
+      .attention-drawer { position: absolute; z-index: 30; top: 8px; right: 8px; bottom: 8px; width: min(360px, calc(100% - 32px)); overflow: auto; border: 1px solid var(--line); border-radius: 13px; background: white; box-shadow: var(--shadow); }
+      .drawer-head { display: flex; min-height: 52px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 13px; }
+      .drawer-body { padding: 6px; }
+      .attention-item { border-bottom: 1px solid #edf0f5; padding: 10px 8px; }
+      .attention-item strong { display: block; font-size: 11px; }
+      .attention-item small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+
+      .modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; background: rgb(17 24 39 / 36%); padding: 24px; backdrop-filter: blur(2px); }
+      .dispatch-dialog { width: min(680px, 100%); max-height: min(720px, calc(100% - 24px)); overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: white; box-shadow: 0 24px 80px rgb(17 24 39 / 28%); }
+      .dialog-head, .dialog-foot { display: flex; align-items: center; gap: 10px; padding: 13px 16px; }
+      .dialog-head { border-bottom: 1px solid var(--line); }
+      .dialog-head span { min-width: 0; flex: 1; }
+      .dialog-head strong, .dialog-head small { display: block; }
+      .dialog-head small { color: var(--muted); font-size: 10px; }
+      .dialog-body { display: grid; gap: 14px; padding: 16px; }
+      .dialog-section > strong { display: block; margin-bottom: 7px; font-size: 11px; }
+      .picker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .picker-agent { display: grid; min-height: 54px; grid-template-columns: 31px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; background: white; padding: 7px; text-align: left; }
+      .picker-agent.selected { border-color: #9badfb; background: var(--brand-soft); }
+      .picker-agent strong, .picker-agent small { display: block; }
+      .picker-agent small { color: var(--muted); font-size: 9px; }
+      .dialog-input { width: 100%; min-height: 82px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+      .dispatch-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+      .preview-cell { border: 1px solid var(--line); border-radius: 9px; background: var(--wash); padding: 8px; }
+      .preview-cell strong, .preview-cell small { display: block; }
+      .preview-cell small { color: var(--muted); font-size: 9px; }
+      .dialog-foot { justify-content: flex-end; border-top: 1px solid var(--line); }
+      .keyboard-note { color: var(--muted); font-size: 9px; }
+
+      .statusbar { display: flex; height: 27px; flex: 0 0 27px; align-items: center; gap: 13px; border-top: 1px solid var(--line); background: #f8f9fc; padding: 0 10px; color: var(--muted); font-size: 9px; }
+      .statusbar .push { margin-left: auto; }
+      .prototype-switcher { position: fixed; z-index: 100; left: 50%; bottom: 34px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); border: 1px solid #3a455d; border-radius: 999px; background: #111827; padding: 5px; color: white; box-shadow: 0 12px 32px rgb(0 0 0 / 28%); }
+      .prototype-switcher button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: white; }
+      .prototype-switcher button:hover { background: #2d374b; }
+      .variant-name { min-width: 172px; text-align: center; font-size: 10px; }
+      .variant-name strong { font-size: 11px; }
+      .prototype-flag { position: fixed; z-index: 90; right: 10px; bottom: 35px; border-radius: 7px; background: #fff3cd; padding: 5px 8px; color: #6e4b00; font-size: 9px; box-shadow: 0 3px 12px rgb(23 32 51 / 10%); }
+      .toast { position: fixed; z-index: 120; right: 14px; bottom: 70px; transform: translateY(8px); border-radius: 10px; background: var(--ink); padding: 9px 11px; color: white; opacity: 0; pointer-events: none; transition: 150ms ease; font-size: 10px; }
+      .toast.show { transform: translateY(0); opacity: 1; }
+
+      @media (max-width: 1220px) {
+        .variant-a .app-shell { grid-template-columns: 70px 218px minmax(0, 1fr); }
+        .variant-b .app-shell { grid-template-columns: 62px minmax(0, 1fr) 250px; }
+        .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .content-grid { grid-template-columns: 1fr; }
+        .button .optional { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const variants = {
+        A: { name: '双侧栏指挥台', note: '稳定导航 + 上下文目录 + 工作区' },
+        B: { name: '运行雷达', note: '主画布 + 常驻运行态势' },
+        C: { name: '沉浸画布', note: '最大化工作区 + 浮动目录' },
+      };
+
+      const project = {
+        projectId: 'prj_sales_01',
+        name: '销售数据分析',
+        root: '~/Projects/sales-analysis',
+        branch: 'main',
+      };
+
+      const agents = [
+        { agentInstanceId: 'agt_data_7f2', name: 'cc_data', providerId: 'claude', provider: 'Claude Code', state: 'running', label: '运行中', work: '清洗 Q2 销售流水' },
+        { agentInstanceId: 'agt_sql_a91', name: 'cc_sql', providerId: 'claude', provider: 'Claude Code', state: 'ready', label: '就绪', work: '等待第一条指令' },
+        { agentInstanceId: 'agt_anti_b04', name: 'cx_anti', providerId: 'codex', provider: 'Codex', state: 'attention', label: '需要输入', work: '等待确认异常值策略' },
+        { agentInstanceId: 'agt_forecast_21c', name: 'cx_forecast', providerId: 'codex', provider: 'Codex', state: 'ready', label: '已完成', work: '季度预测模型待验收' },
+        { agentInstanceId: 'agt_visual_883', name: 'kimi_Visual', providerId: 'kimi', provider: 'Kimi Code', state: 'running', label: '运行中', work: '绘制区域销售趋势' },
+        { agentInstanceId: 'agt_legacy_11d', name: 'legacy_review', providerId: 'kimi', provider: 'Kimi Code', state: 'unavailable', label: '不可用', work: 'Provider Doctor 未通过' },
+      ];
+
+      const panels = {
+        pnl_main_11: { panelId: 'pnl_main_11', tabs: ['agt_data_7f2', 'agt_sql_a91'], activeTabId: 'agt_data_7f2' },
+        pnl_review_22: { panelId: 'pnl_review_22', tabs: ['agt_anti_b04', 'agt_forecast_21c'], activeTabId: 'agt_anti_b04' },
+        pnl_visual_33: { panelId: 'pnl_visual_33', tabs: ['agt_visual_883'], activeTabId: 'agt_visual_883' },
+      };
+
+      const makeAnalysisTree = () => ({
+        kind: 'split', nodeId: 'split_root', direction: 'horizontal', ratio: 61,
+        first: { kind: 'panel', panelId: 'pnl_main_11' },
+        second: {
+          kind: 'split', nodeId: 'split_right', direction: 'vertical', ratio: 52,
+          first: { kind: 'panel', panelId: 'pnl_review_22' },
+          second: { kind: 'panel', panelId: 'pnl_visual_33' },
+        },
+      });
+
+      const state = {
+        variant: new URLSearchParams(location.search).get('variant')?.toUpperCase() in variants
+          ? new URLSearchParams(location.search).get('variant').toUpperCase()
+          : 'A',
+        section: 'agents',
+        selectedAgentId: 'agt_data_7f2',
+        focusedPanelId: 'pnl_main_11',
+        focusPanelId: null,
+        attentionOpen: false,
+        paletteOpen: true,
+        dispatchOpen: false,
+        dispatchTargets: ['agt_anti_b04', 'agt_forecast_21c'],
+        dispatchInstruction: '分析异常值对季度预测的影响，分别给出独立结果。',
+        layoutTree: makeAnalysisTree(),
+        draggedTabId: null,
+      };
+
+      const byId = (id) => agents.find((agent) => agent.agentInstanceId === id);
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+      const providerCode = (providerId) => ({ claude: 'CC', codex: 'CX', kimi: 'KM' })[providerId] || 'AG';
+      const panelNumber = (panelId) => Object.keys(panels).indexOf(panelId) + 1;
+
+      function showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.classList.add('show');
+        clearTimeout(showToast.timer);
+        showToast.timer = setTimeout(() => toast.classList.remove('show'), 1800);
+      }
+
+      function setVariant(key) {
+        state.variant = key;
+        const url = new URL(location.href);
+        url.searchParams.set('variant', key);
+        history.replaceState(null, '', url);
+        render();
+      }
+
+      function navItem(id, glyph, label) {
+        const count = id === 'attention' ? '<span class="attention-count">4</span>' : `<span class="nav-glyph">${glyph}</span>`;
+        return `<button class="nav-item ${state.section === id || (id === 'attention' && state.attentionOpen) ? 'active' : ''}" data-nav="${id}" type="button">${count}<span>${label}</span></button>`;
+      }
+
+      function renderPrimaryNav() {
+        return `<nav class="primary-nav" aria-label="项目主导航">
+          <div class="brand">AT</div><div class="nav-separator"></div>
+          ${navItem('overview', '⌂', '概览')}
+          ${navItem('agents', '⌘', 'Agents')}
+          ${navItem('tasks', '✓', '任务')}
+          ${navItem('knowledge', '◇', '知识')}
+          ${navItem('handoffs', '⇄', '交接')}
+          ${navItem('activity', '≋', '活动')}
+          <div class="nav-spacer"></div>
+          ${navItem('attention', '!', '关注')}
+          ${navItem('settings', '⚙', '设置')}
+        </nav>`;
+      }
+
+      function agentRow(agent) {
+        return `<button class="context-row ${state.selectedAgentId === agent.agentInstanceId ? 'selected' : ''}" type="button" data-agent="${agent.agentInstanceId}">
+          <span class="agent-avatar">${providerCode(agent.providerId)}</span>
+          <span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(agent.work)}</small></span>
+          <span class="state-dot ${agent.state}" title="${agent.label}"></span>
+        </button>`;
+      }
+
+      function renderContextPane(extraClass = '') {
+        return `<aside class="context-pane ${extraClass}">
+          <button class="project-switch" type="button" data-action="switch-project">
+            <span class="project-mark">销</span><span><strong>${project.name}</strong><small>${project.root}</small></span><span>⌄</span>
+          </button>
+          <div class="context-head"><span>Agent Directory</span><button class="mini-button" type="button" data-action="new-agent">＋ 新建</button></div>
+          <div class="search"><input type="search" placeholder="搜索名称、状态或 Provider" aria-label="搜索 Agent" /></div>
+          <div class="context-list">
+            <div class="context-group"><div class="context-label"><span>需要处理</span><span>1</span></div>${agents.filter((agent) => agent.state === 'attention').map(agentRow).join('')}</div>
+            <div class="context-group"><div class="context-label"><span>全部实例</span><span>${agents.length}</span></div>${agents.map(agentRow).join('')}</div>
+          </div>
+          <div class="context-footer">2 个运行中 · 1 个等待确认<br />切换 Project 不停止后台 Run</div>
+        </aside>`;
+      }
+
+      function findPanel(panelId) { return panels[panelId]; }
+      function panelIds(node = state.layoutTree, result = []) {
+        if (!node) return result;
+        if (node.kind === 'panel') result.push(node.panelId);
+        else { panelIds(node.first, result); panelIds(node.second, result); }
+        return result;
+      }
+
+      function layoutMinimum(node = state.layoutTree) {
+        if (!node) return { width: 0, height: 0 };
+        if (node.kind === 'panel') return { width: 280, height: 220 };
+        const first = layoutMinimum(node.first);
+        const second = layoutMinimum(node.second);
+        return node.direction === 'horizontal'
+          ? { width: first.width + second.width + 8, height: Math.max(first.height, second.height) }
+          : { width: Math.max(first.width, second.width), height: first.height + second.height + 8 };
+      }
+
+      function activateTab(panelId, agentId) {
+        const panel = panels[panelId];
+        if (!panel?.tabs.includes(agentId)) return;
+        panel.activeTabId = agentId;
+        state.focusedPanelId = panelId;
+        state.selectedAgentId = agentId;
+        render();
+      }
+
+      function chainPanels(ids, direction = 'horizontal') {
+        if (!ids.length) return null;
+        if (ids.length === 1) return { kind: 'panel', panelId: ids[0] };
+        return { kind: 'split', nodeId: `split_${Date.now().toString(36)}_${ids.length}`, direction, ratio: 50, first: { kind: 'panel', panelId: ids[0] }, second: chainPanels(ids.slice(1), direction) };
+      }
+
+      function analysisTreeFromCurrentPanels() {
+        const ids = Object.keys(panels).filter((panelId) => panels[panelId].tabs.length);
+        if (ids.length <= 1) return chainPanels(ids);
+        return { kind: 'split', nodeId: `split_analysis_${Date.now().toString(36)}`, direction: 'horizontal', ratio: 61, first: { kind: 'panel', panelId: ids[0] }, second: chainPanels(ids.slice(1), 'vertical') };
+      }
+
+      function renderPanel(panelId) {
+        const panel = findPanel(panelId);
+        if (!panel) return '';
+        const agent = byId(panel.activeTabId);
+        const tabs = panel.tabs.map((agentId) => {
+          const tabAgent = byId(agentId);
+          if (!tabAgent) return '';
+          return `<div class="tab ${panel.activeTabId === agentId ? 'active' : ''}" draggable="true" role="tab" aria-selected="${panel.activeTabId === agentId}" tabindex="${panel.activeTabId === agentId ? '0' : '-1'}" data-tab="${agentId}" data-panel="${panelId}">
+            <span class="state-dot ${tabAgent.state}"></span><strong>${escapeHtml(tabAgent.name)}</strong>
+            <button class="tab-close" type="button" data-close-tab="${agentId}" data-panel="${panelId}" aria-label="关闭 ${escapeHtml(tabAgent.name)} Tab">×</button>
+          </div>`;
+        }).join('');
+        return `<section class="panel ${state.focusedPanelId === panelId ? 'focused' : ''}" data-panel-target="${panelId}">
+          <div class="panel-tabs" role="tablist" aria-label="Panel ${panelNumber(panelId)} Tabs"><span class="panel-label">P${panelNumber(panelId)}</span>${tabs}<span class="panel-actions">
+            <button class="icon-button" type="button" data-action="split-right" data-panel="${panelId}" title="向右分割">⇥</button>
+            <button class="icon-button" type="button" data-action="split-down" data-panel="${panelId}" title="向下分割">↧</button>
+            <button class="icon-button" type="button" data-action="focus-panel" data-panel="${panelId}" title="临时聚焦">${state.focusPanelId === panelId ? '⊙' : '⌗'}</button>
+          </span></div>
+          ${agent ? renderAgentSession(agent) : '<div class="empty-panel"><div><strong>空 Panel</strong>从目录打开 Agent，或把 Tab 拖到这里。</div></div>'}
+          <span class="drop-edge left" data-drop-edge="left" data-panel="${panelId}"></span>
+          <span class="drop-edge right" data-drop-edge="right" data-panel="${panelId}"></span>
+          <span class="drop-edge top" data-drop-edge="top" data-panel="${panelId}"></span>
+          <span class="drop-edge bottom" data-drop-edge="bottom" data-panel="${panelId}"></span>
+        </section>`;
+      }
+
+      function renderAgentSession(agent) {
+        const running = agent.state === 'running';
+        const attention = agent.state === 'attention';
+        const queueNote = agent.queueDepth ? ` · 队列 ${agent.queueDepth}` : '';
+        return `<div class="panel-body">
+          <div class="agent-head"><span class="agent-avatar">${providerCode(agent.providerId)}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${agent.provider} · 独立 worktree</small></span><span class="status-pill"><span class="state-dot ${agent.state}"></span>${agent.label}${queueNote}</span></div>
+          <div class="session-nav"><span class="active">Chat</span><span>Activity</span><span>Changes</span><span>Terminal</span></div>
+          <div class="messages">
+            <article class="message"><div class="speaker">当前任务</div><p>${escapeHtml(agent.work)}</p></article>
+            <article class="message"><div class="speaker">${escapeHtml(agent.name)}</div><p>${attention ? '我需要你确认：异常值应该按区域分组裁剪，还是保留并增加风险标签？' : running ? '正在执行。当前 Run 使用创建时记录的权限与配置快照。' : '实例已准备好；创建本身不会启动 Run。'}</p>${running ? '<div class="tool-line"><span class="state-dot running"></span>tool · 分析 worktree 中的输入文件</div>' : ''}</article>
+          </div>
+          <form class="composer" data-compose="${agent.agentInstanceId}"><textarea aria-label="发送给 ${escapeHtml(agent.name)}" placeholder="只发送给 ${escapeHtml(agent.name)}…"></textarea><button type="submit" title="显式启动或继续 Run">↑</button></form>
+        </div>`;
+      }
+
+      function renderNode(node) {
+        if (!node) return '<div class="empty-panel"><div><strong>工作区没有打开的 Tab</strong>从 Agent Directory 打开一个实例。</div></div>';
+        if (node.kind === 'panel') return `<div class="node">${renderPanel(node.panelId)}</div>`;
+        return `<div class="split ${node.direction}" data-node="${node.nodeId}" style="--ratio:${node.ratio}%">
+          <div class="node">${renderNode(node.first)}</div><div class="divider" data-divider="${node.nodeId}" role="separator" aria-orientation="${node.direction === 'horizontal' ? 'vertical' : 'horizontal'}" aria-valuemin="22" aria-valuemax="78" aria-valuenow="${node.ratio}" tabindex="0" title="拖动或使用方向键调整 Panel 比例"></div><div class="node">${renderNode(node.second)}</div>
+        </div>`;
+      }
+
+      function workspaceToolbar() {
+        return `<header class="commandbar"><div class="surface-title"><strong>Agent 工作区</strong><small>Tab 属于 Panel；运行生命周期独立于视图</small></div>
+          <div class="command-actions"><div class="segmented" aria-label="布局预设"><button class="${state.focusPanelId ? 'active' : ''}" data-action="focus-current" type="button">Focus</button><button data-preset="split" type="button">Split</button><button data-preset="analysis" class="${!state.focusPanelId ? 'active' : ''}" type="button">Analysis</button></div><button class="button" type="button" data-action="dispatch">派发给 Agent</button><button class="button primary" type="button" data-action="new-agent">＋ <span class="optional">新建 Agent</span></button></div>
+        </header>`;
+      }
+
+      function renderWorkspace() {
+        const visibleTree = state.focusPanelId ? { kind: 'panel', panelId: state.focusPanelId } : state.layoutTree;
+        const minimum = layoutMinimum(visibleTree);
+        return `${workspaceToolbar()}<div class="surface workspace-surface"><div class="layout-canvas ${state.focusPanelId ? 'focus-mode' : ''}" style="min-width:${minimum.width + 18}px;min-height:${minimum.height + 18}px">${renderNode(visibleTree)}</div></div>`;
+      }
+
+      const recentEvents = [
+        ['attention', 'cx_anti 等待输入', '异常值处理策略需要确认 · 2 分钟前'],
+        ['running', 'cc_data 正在运行', '清洗 Q2 销售流水 · Run #184'],
+        ['ready', 'cx_forecast 已完成', '执行结果等待用户验收，飞书任务尚未完成'],
+        ['unavailable', 'legacy_review Provider 不可用', '历史与 handoff 仍可只读查看'],
+      ];
+
+      function renderOverview() {
+        return `<header class="commandbar"><div class="surface-title"><strong>Project Overview</strong><small>项目态势、等待处理与最近工作</small></div><div class="command-actions"><button class="button" data-action="dispatch" type="button">派发任务</button><button class="button primary" data-nav="agents" type="button">进入工作区</button></div></header>
+          <div class="surface"><div class="page"><div class="page-head"><div><h1>早上好，销售数据分析</h1><p>后台 Run 会在切换 Project 后继续。所有需要决策的事项集中进入 Attention Center。</p></div><span class="chip brand">main · 工作树干净</span></div>
+          <div class="metric-grid"><div class="metric"><span>Agent Instances</span><strong>6</strong></div><div class="metric"><span>Active Runs</span><strong>2</strong></div><div class="metric"><span>Needs attention</span><strong>4</strong></div><div class="metric"><span>Queued</span><strong>1</strong></div></div>
+          <div class="content-grid"><section class="card"><div class="card-head"><strong>实时活动</strong><button class="mini-button" data-nav="activity">查看全部</button></div>${recentEvents.map((event) => `<div class="event"><span class="state-dot ${event[0]}"></span><span><strong>${event[1]}</strong><small>${event[2]}</small></span><span>›</span></div>`).join('')}</section>
+          <section class="card"><div class="card-head"><strong>项目边界</strong></div><div class="event"><span class="state-dot ready"></span><span><strong>飞书主连接</strong><small>销售团队工作区 · 3 个资源范围</small></span></div><div class="event"><span class="state-dot ready"></span><span><strong>Git 隔离</strong><small>5 个独立 worktree</small></span></div><div class="event"><span class="state-dot attention"></span><span><strong>待生成 handoff</strong><small>1 个 dirty Agent</small></span></div></section></div></div></div>`;
+      }
+
+      function renderTasks() {
+        const tasks = [
+          ['进行中', '核对华东区异常订单', 'Q3 分析', ['cc_data', 'cx_anti'], '执行结果待验收', 'tk_329ab1'],
+          ['待处理', '补充销售预测解释', '季度计划', ['cx_forecast'], '尚未派发', 'tk_95ce20'],
+          ['已完成', '生成区域趋势图', '可视化', ['kimi_Visual'], '用户已验收', 'tk_581f73'],
+        ];
+        return `<header class="commandbar"><div class="surface-title"><strong>Tasks</strong><small>飞书是业务字段真相；AgentTest 记录派发、Run 与结果</small></div><div class="command-actions"><button class="button">同步</button><button class="button primary" data-action="dispatch" type="button">派发给 Agent</button></div></header>
+          <div class="surface"><div class="page"><div class="page-head"><div><h1>飞书任务</h1><p>外部任务变化不会自动启动 Agent。同一任务可以显式派发给多个实例，最终完成仍需用户验收。</p></div><span class="chip">销售分析任务清单 · 已同步</span></div><div class="task-table"><div class="task-row header"><span>状态</span><span>任务</span><span>清单</span><span>派发目标</span><span>结果</span></div>${tasks.map((task) => `<div class="task-row"><span><span class="chip">${task[0]}</span></span><span><strong>${task[1]}</strong><small>外部 ID · ${task[5]}</small></span><span>${task[2]}</span><span>${task[3].map((name) => `<span class="chip brand">${name}</span>`).join(' ')}</span><span><button class="mini-button" data-action="dispatch">${task[4]}</button></span></div>`).join('')}</div></div></div>`;
+      }
+
+      function renderKnowledge() {
+        return `<header class="commandbar"><div class="surface-title"><strong>Knowledge</strong><small>受信任飞书域名 · 人工浏览与 Agent CLI 授权严格分离</small></div><div class="command-actions"><button class="button">在系统浏览器打开</button><button class="button">管理范围</button></div></header>
+          <div class="surface"><div class="page"><div class="web-shell"><div class="web-chrome"><button class="icon-button">‹</button><button class="icon-button">›</button><button class="icon-button">↻</button><div class="address"><span>🔒</span><strong>feishu.cn/wiki/销售分析方法库</strong></div><span class="chip">人工身份 · 可编辑</span></div><div class="web-body"><aside class="web-tree"><strong>飞书知识库</strong><button class="active">销售分析方法库</button><button>数据口径</button><button>复盘记录</button></aside><article class="web-document"><span class="chip brand">Feishu authoritative</span><h1>销售数据分析方法与口径</h1><p>此处模拟隔离浏览器分区中的飞书页面。用户遵循飞书账号原有权限正常编辑；Agent 不读取 Cookie，只能请求受控 Connector 在当前 Run 的显式授权范围内代执行官方 CLI。</p><p>Connector 写入成功后刷新投影和索引；失败的拟议修改保留在 AgentTest 中等待处理。</p></article></div></div></div></div>`;
+      }
+
+      function renderHandoffs() {
+        const rows = [
+          ['hnd_93aa', 'cc_data → cx_anti', '异常值策略与选定 patch', '已导入'],
+          ['hnd_84bf', 'cx_forecast → 用户', '预测模型结果与验证报告', '待验收'],
+          ['hnd_71c2', 'kimi_Visual → 退出快照', '应用兜底生成，内容不完整', '不完整'],
+        ];
+        return `<header class="commandbar"><div class="surface-title"><strong>Handoffs</strong><small>规范记录以 handoffId 标识；名称与文件路径不是身份</small></div><div class="command-actions"><button class="button">重新生成全部 dirty Agent</button></div></header><div class="surface"><div class="page"><div class="page-head"><div><h1>交接记录</h1><p>跨 Project 必须导出并显式导入；目标 Agent 永远在自己的 worktree 中工作。</p></div></div><section class="card">${rows.map((row) => `<div class="handoff-row" style="grid-template-columns:110px minmax(0,1fr) 160px auto"><span class="chip">${row[0]}</span><span><strong>${row[1]}</strong><small>${row[2]}</small></span><span>${row[3]}</span><button class="mini-button">查看</button></div>`).join('')}</section></div></div>`;
+      }
+
+      function renderActivity() {
+        return `<header class="commandbar"><div class="surface-title"><strong>Project Activity</strong><small>跨 Run、权限、外部写入和生命周期的可审计时间线</small></div><div class="command-actions"><button class="button">筛选</button><button class="button">导出</button></div></header><div class="surface"><div class="page"><section class="card">${recentEvents.concat([['ready', '用户批准一次性网络访问', 'cc_data · Run #184 · 09:42'], ['attention', '飞书单条更新等待确认', 'cx_anti · task tk_329ab1']]).map((event) => `<div class="event"><span class="state-dot ${event[0]}"></span><span><strong>${event[1]}</strong><small>${event[2]}</small></span><button class="mini-button">详情</button></div>`).join('')}</section></div></div>`;
+      }
+
+      function renderAttentionDrawer() {
+        return `<aside class="attention-drawer"><div class="drawer-head"><strong>Attention Center · 4</strong><button class="icon-button" data-action="close-attention" type="button">×</button></div><div class="drawer-body"><div class="attention-item"><strong>cx_anti 请求你的输入</strong><small>销售数据分析 / Agent / 2 分钟前</small></div><div class="attention-item"><strong>飞书更新等待二次确认</strong><small>修改任务负责人 · Run #184</small></div><div class="attention-item"><strong>legacy_review Provider 不可用</strong><small>可只读查看历史，修复 Provider 后原位恢复</small></div><div class="attention-item"><strong>退出 handoff 不完整</strong><small>kimi_Visual · 已生成确定性快照</small></div></div></aside>`;
+      }
+
+      function renderDispatchDialog() {
+        const candidates = agents.filter((agent) => agent.state !== 'unavailable');
+        const selected = candidates.filter((agent) => state.dispatchTargets.includes(agent.agentInstanceId));
+        const queued = selected.filter((agent) => ['running', 'attention'].includes(agent.state)).length;
+        return `<div class="modal-backdrop" role="presentation"><section class="dispatch-dialog" role="dialog" aria-modal="true" aria-labelledby="dispatch-title">
+          <header class="dialog-head"><span><strong id="dispatch-title">显式派发给 Agent</strong><small>每个目标生成独立 Dispatch / Run / worktree / result</small></span><button class="icon-button" type="button" data-action="close-dispatch" aria-label="关闭派发对话框">×</button></header>
+          <div class="dialog-body">
+            <div class="dialog-section"><strong>1. 选择明确目标</strong><div class="picker-grid">${candidates.map((agent) => `<button class="picker-agent ${state.dispatchTargets.includes(agent.agentInstanceId) ? 'selected' : ''}" type="button" data-dispatch-target="${agent.agentInstanceId}" aria-pressed="${state.dispatchTargets.includes(agent.agentInstanceId)}"><span class="agent-avatar">${providerCode(agent.providerId)}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${agent.label}${['running', 'attention'].includes(agent.state) ? ' · 将进入实例队列' : ''}</small></span><span>${state.dispatchTargets.includes(agent.agentInstanceId) ? '✓' : ''}</span></button>`).join('')}</div></div>
+            <label class="dialog-section"><strong>2. 确认指令</strong><textarea class="dialog-input" data-dispatch-instruction>${escapeHtml(state.dispatchInstruction)}</textarea></label>
+            <div class="dialog-section"><strong>3. 执行预览</strong><div class="dispatch-preview"><div class="preview-cell"><small>目标</small><strong>${selected.length} 个实例</strong></div><div class="preview-cell"><small>队列</small><strong>${queued ? `${queued} 个等待当前 Run` : '可直接排队'}</strong></div><div class="preview-cell"><small>资源范围</small><strong>Task + 只读 Wiki</strong></div></div><p class="keyboard-note">外部任务变化不会自动到达此步；点击确认才创建派发。高风险外部写入仍在执行时独立确认。</p></div>
+          </div><footer class="dialog-foot"><button class="button" type="button" data-action="close-dispatch">取消</button><button class="button primary" type="button" data-action="confirm-dispatch" ${selected.length && state.dispatchInstruction.trim() ? '' : 'disabled'}>确认创建 ${selected.length} 个 Dispatch</button></footer>
+        </section></div>`;
+      }
+
+      function renderMainSurface() {
+        if (state.section === 'overview') return renderOverview();
+        if (state.section === 'tasks') return renderTasks();
+        if (state.section === 'knowledge') return renderKnowledge();
+        if (state.section === 'handoffs') return renderHandoffs();
+        if (state.section === 'activity') return renderActivity();
+        return renderWorkspace();
+      }
+
+      function renderRadar() {
+        return `<aside class="radar-roster"><div class="radar-head"><strong>运行雷达</strong><small>全局 2 / 6 · Project 2 / 3</small></div><div class="radar-section"><h3>Needs attention</h3>${agents.filter((agent) => ['attention', 'unavailable'].includes(agent.state)).map((agent) => `<button class="radar-agent" type="button" data-agent="${agent.agentInstanceId}"><span class="agent-avatar">${providerCode(agent.providerId)}</span><span><strong>${agent.name}</strong><small>${agent.label}</small></span><span class="state-dot ${agent.state}"></span></button>`).join('')}</div><div class="radar-section"><h3>Running & queued</h3>${agents.filter((agent) => ['running', 'queued'].includes(agent.state)).map((agent) => `<button class="radar-agent" type="button" data-agent="${agent.agentInstanceId}"><span class="agent-avatar">${providerCode(agent.providerId)}</span><span><strong>${agent.name}</strong><small>${agent.work}</small></span><span class="state-dot ${agent.state}"></span></button>`).join('')}</div><div class="radar-section"><h3>最近完成</h3><button class="radar-agent" type="button" data-agent="agt_forecast_21c"><span class="agent-avatar">CX</span><span><strong>cx_forecast</strong><small>等待用户验收</small></span><span class="state-dot ready"></span></button></div></aside>`;
+      }
+
+      function renderVariantShell() {
+        const main = `<main class="main">${renderMainSurface()}${state.variant === 'C' && state.paletteOpen ? `<div class="canvas-palette">${renderContextPane('palette-inner').replace(/^<aside[^>]*>|<\/aside>$/g, '')}</div>` : ''}</main>`;
+        const overlays = `${state.attentionOpen ? renderAttentionDrawer() : ''}${state.dispatchOpen ? renderDispatchDialog() : ''}`;
+        if (state.variant === 'A') return `<div class="app-shell">${renderPrimaryNav()}${renderContextPane()}${main}${overlays}</div>`;
+        if (state.variant === 'B') return `<div class="app-shell">${renderPrimaryNav()}${main}${renderRadar()}${overlays}</div>`;
+        return `<div class="app-shell">${renderPrimaryNav()}${main}${overlays}</div>`;
+      }
+
+      function renderSwitcher() {
+        const keys = Object.keys(variants);
+        const index = keys.indexOf(state.variant);
+        return `<div class="prototype-switcher" aria-label="原型变体切换器"><button type="button" data-variant="${keys[(index - 1 + keys.length) % keys.length]}" aria-label="上一个变体">←</button><div class="variant-name"><strong>${state.variant} — ${variants[state.variant].name}</strong><br />${variants[state.variant].note}</div><button type="button" data-variant="${keys[(index + 1) % keys.length]}" aria-label="下一个变体">→</button></div><div class="prototype-flag">THROWAWAY PROTOTYPE · 内存状态</div>`;
+      }
+
+      function render() {
+        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>AgentTest</strong> / ${project.name}</span><span class="title-status"><span class="live-dot"></span>后台 2 个 Run <span>⌘K 命令</span></span></header>${renderVariantShell()}<footer class="statusbar"><span>${project.root}</span><span>${project.branch}</span><span>布局自动保存</span><span class="push">Project 2 / 3 · Global 4 / 6</span></footer></div>${renderSwitcher()}`;
+      }
+
+      function findNode(node, nodeId) {
+        if (!node || node.kind === 'panel') return null;
+        if (node.nodeId === nodeId) return node;
+        return findNode(node.first, nodeId) || findNode(node.second, nodeId);
+      }
+
+      function replacePanelNode(node, panelId, replacement) {
+        if (!node) return node;
+        if (node.kind === 'panel') return node.panelId === panelId ? replacement : node;
+        return { ...node, first: replacePanelNode(node.first, panelId, replacement), second: replacePanelNode(node.second, panelId, replacement) };
+      }
+
+      function prunePanel(node, panelId) {
+        if (!node) return null;
+        if (node.kind === 'panel') return node.panelId === panelId ? null : node;
+        const first = prunePanel(node.first, panelId);
+        const second = prunePanel(node.second, panelId);
+        return first && second ? { ...node, first, second } : first || second;
+      }
+
+      function sourcePanelId(tabId) { return Object.values(panels).find((panel) => panel.tabs.includes(tabId))?.panelId; }
+
+      function moveTab(tabId, targetPanelId) {
+        const sourceId = sourcePanelId(tabId);
+        const target = panels[targetPanelId];
+        if (!target || sourceId === targetPanelId) return;
+        const source = panels[sourceId];
+        source.tabs = source.tabs.filter((id) => id !== tabId);
+        if (!target.tabs.includes(tabId)) target.tabs.push(tabId);
+        target.activeTabId = tabId;
+        if (!source.tabs.length) { state.layoutTree = prunePanel(state.layoutTree, sourceId); delete panels[sourceId]; }
+        else if (source.activeTabId === tabId) source.activeTabId = source.tabs[0];
+        state.focusedPanelId = targetPanelId;
+        render();
+        showToast('Tab 已移动；正式版会自动保存 Project Layout');
+      }
+
+      function splitWithTab(targetPanelId, edge, tabId) {
+        const sourceId = sourcePanelId(tabId);
+        const source = panels[sourceId];
+        if (!source || (sourceId === targetPanelId && source.tabs.length === 1)) { showToast('同一 Agent 不能复制为镜像 Tab'); return; }
+        source.tabs = source.tabs.filter((id) => id !== tabId);
+        if (source.activeTabId === tabId) source.activeTabId = source.tabs[0];
+        const newPanelId = `pnl_${Date.now().toString(36)}`;
+        panels[newPanelId] = { panelId: newPanelId, tabs: [tabId], activeTabId: tabId };
+        const direction = ['left', 'right'].includes(edge) ? 'horizontal' : 'vertical';
+        const oldLeaf = { kind: 'panel', panelId: targetPanelId };
+        const newLeaf = { kind: 'panel', panelId: newPanelId };
+        const first = ['left', 'top'].includes(edge) ? newLeaf : oldLeaf;
+        const second = ['left', 'top'].includes(edge) ? oldLeaf : newLeaf;
+        state.layoutTree = replacePanelNode(state.layoutTree, targetPanelId, { kind: 'split', nodeId: `split_${Date.now().toString(36)}`, direction, ratio: 50, first, second });
+        if (!source.tabs.length && sourceId !== targetPanelId) { state.layoutTree = prunePanel(state.layoutTree, sourceId); delete panels[sourceId]; }
+        state.focusedPanelId = newPanelId;
+        state.focusPanelId = null;
+        render();
+        if (panelIds().length > 3) showToast('已创建第 4 个 Panel；正式版只提示，不阻止');
+      }
+
+      function openAgent(agentId) {
+        const existing = sourcePanelId(agentId);
+        if (existing) {
+          panels[existing].activeTabId = agentId;
+          state.focusedPanelId = existing;
+          state.focusPanelId = null;
+        } else {
+          const targetId = panels[state.focusedPanelId] ? state.focusedPanelId : panelIds()[0];
+          if (!targetId) {
+            const newId = `pnl_${Date.now().toString(36)}`;
+            panels[newId] = { panelId: newId, tabs: [agentId], activeTabId: agentId };
+            state.layoutTree = { kind: 'panel', panelId: newId };
+            state.focusedPanelId = newId;
+          } else {
+            panels[targetId].tabs.push(agentId);
+            panels[targetId].activeTabId = agentId;
+          }
+        }
+        state.selectedAgentId = agentId;
+        state.section = 'agents';
+        render();
+      }
+
+      function closeTab(tabId, panelId) {
+        const panel = panels[panelId];
+        if (!panel) return;
+        panel.tabs = panel.tabs.filter((id) => id !== tabId);
+        if (panel.activeTabId === tabId) panel.activeTabId = panel.tabs[0];
+        if (!panel.tabs.length) { state.layoutTree = prunePanel(state.layoutTree, panelId); delete panels[panelId]; state.focusedPanelId = panelIds()[0] || null; }
+        state.focusPanelId = null;
+        render();
+        showToast('仅关闭 Tab；Agent、Run、PTY 与会话保持不变');
+      }
+
+      function confirmDispatch() {
+        const targets = agents.filter((agent) => state.dispatchTargets.includes(agent.agentInstanceId) && agent.state !== 'unavailable');
+        if (!targets.length || !state.dispatchInstruction.trim()) return;
+        targets.forEach((agent) => {
+          if (['running', 'attention'].includes(agent.state)) agent.queueDepth = (agent.queueDepth || 0) + 1;
+          else {
+            agent.state = 'queued';
+            agent.label = '排队中';
+            agent.work = state.dispatchInstruction.trim();
+          }
+        });
+        state.dispatchOpen = false;
+        render();
+        showToast(`已显式创建 ${targets.length} 个独立 Dispatch；活动实例的新工作已入队`);
+      }
+
+      function moveTabByKeyboard(tabId, direction) {
+        const ids = panelIds();
+        const sourceId = sourcePanelId(tabId);
+        const sourceIndex = ids.indexOf(sourceId);
+        const delta = ['left', 'up'].includes(direction) ? -1 : 1;
+        const targetId = ids[sourceIndex + delta];
+        if (!targetId) { showToast('该方向没有相邻 Panel'); return; }
+        moveTab(tabId, targetId);
+      }
+
+      function splitFocused(panelId, edge) {
+        const visible = new Set(Object.values(panels).flatMap((panel) => panel.tabs));
+        const candidate = agents.find((agent) => !visible.has(agent.agentInstanceId) && agent.state !== 'unavailable');
+        const panel = panels[panelId];
+        const movable = panel?.tabs.length > 1 ? panel.tabs.at(-1) : candidate?.agentInstanceId;
+        if (!movable) { showToast('没有可移动的 Tab；先从目录打开另一个 Agent'); return; }
+        if (candidate && movable === candidate.agentInstanceId) panel.tabs.push(movable);
+        splitWithTab(panelId, edge, movable);
+      }
+
+      document.addEventListener('click', (event) => {
+        const tab = event.target.closest('[data-tab]');
+        const button = event.target.closest('button');
+        if (!button) { if (tab) activateTab(tab.dataset.panel, tab.dataset.tab); return; }
+        if (button.dataset.variant) { setVariant(button.dataset.variant); return; }
+        if (button.dataset.nav === 'settings') { location.href = `project-integrations-settings-desktop-b.html?project=${project.projectId}&variant=${state.variant}`; return; }
+        if (button.dataset.nav === 'attention') { state.attentionOpen = !state.attentionOpen; render(); return; }
+        if (button.dataset.nav) { state.section = button.dataset.nav; state.attentionOpen = false; render(); return; }
+        if (button.dataset.closeTab) { event.stopPropagation(); closeTab(button.dataset.closeTab, button.dataset.panel); return; }
+        if (button.dataset.agent) { openAgent(button.dataset.agent); return; }
+        if (button.dataset.dispatchTarget) {
+          const target = button.dataset.dispatchTarget;
+          state.dispatchTargets = state.dispatchTargets.includes(target) ? state.dispatchTargets.filter((id) => id !== target) : [...state.dispatchTargets, target];
+          render(); return;
+        }
+        if (button.dataset.action === 'close-attention') { state.attentionOpen = false; render(); return; }
+        if (button.dataset.action === 'close-dispatch') { state.dispatchOpen = false; render(); return; }
+        if (button.dataset.action === 'confirm-dispatch') { confirmDispatch(); return; }
+        if (button.dataset.action === 'focus-panel' || button.dataset.action === 'focus-current') { const panelId = button.dataset.panel || state.focusedPanelId; state.focusPanelId = state.focusPanelId === panelId ? null : panelId; render(); return; }
+        if (button.dataset.action === 'split-right') { splitFocused(button.dataset.panel, 'right'); return; }
+        if (button.dataset.action === 'split-down') { splitFocused(button.dataset.panel, 'bottom'); return; }
+        if (button.dataset.preset === 'analysis') { state.focusPanelId = null; state.layoutTree = analysisTreeFromCurrentPanels(); render(); return; }
+        if (button.dataset.preset === 'split') { state.focusPanelId = null; state.layoutTree = chainPanels(Object.keys(panels).filter((panelId) => panels[panelId].tabs.length), 'horizontal'); render(); return; }
+        if (button.dataset.action === 'new-agent') { showToast('新 Agent 将创建为 Ready，不自动启动 Run'); return; }
+        if (button.dataset.action === 'dispatch') { state.dispatchOpen = true; render(); return; }
+        if (button.dataset.action === 'switch-project') { showToast('切换 Project；后台 Run 默认继续'); }
+      });
+
+      document.addEventListener('input', (event) => {
+        if (event.target.matches('[data-dispatch-instruction]')) state.dispatchInstruction = event.target.value;
+      });
+
+      document.addEventListener('submit', (event) => {
+        const form = event.target.closest('[data-compose]');
+        if (!form) return;
+        event.preventDefault();
+        const text = form.querySelector('textarea').value.trim();
+        if (!text) return;
+        const agent = byId(form.dataset.compose);
+        if (agent.state === 'unavailable') { showToast('Provider 不可用，Run 已阻止'); return; }
+        if (agent.state === 'running') {
+          agent.queueDepth = (agent.queueDepth || 0) + 1;
+          render();
+          showToast(`${agent.name} 已有活动 Run；新指令已加入该实例队列`);
+          return;
+        }
+        const continuing = agent.state === 'attention';
+        agent.state = 'running'; agent.label = '运行中'; agent.work = text;
+        render();
+        showToast(continuing ? `已继续 ${agent.name} 当前等待输入的 Run` : `已显式启动 ${agent.name} 的 Run`);
+      });
+
+      document.addEventListener('dragstart', (event) => {
+        const tab = event.target.closest('[data-tab]');
+        if (!tab) return;
+        state.draggedTabId = tab.dataset.tab;
+        document.body.classList.add('tab-dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', tab.dataset.tab);
+      });
+      document.addEventListener('dragover', (event) => {
+        const target = event.target.closest('[data-drop-edge], [data-panel-target]');
+        if (!target) return;
+        event.preventDefault();
+        if (target.dataset.dropEdge) target.classList.add('drag-over');
+      });
+      document.addEventListener('dragleave', (event) => event.target.closest('[data-drop-edge]')?.classList.remove('drag-over'));
+      document.addEventListener('drop', (event) => {
+        const edge = event.target.closest('[data-drop-edge]');
+        const panelTarget = event.target.closest('[data-panel-target]');
+        if (!edge && !panelTarget) return;
+        event.preventDefault();
+        const tabId = event.dataTransfer.getData('text/plain') || state.draggedTabId;
+        if (edge) splitWithTab(edge.dataset.panel, edge.dataset.dropEdge, tabId);
+        else moveTab(tabId, panelTarget.dataset.panelTarget);
+        state.draggedTabId = null;
+        document.body.classList.remove('tab-dragging');
+      });
+      document.addEventListener('dragend', () => { state.draggedTabId = null; document.body.classList.remove('tab-dragging'); });
+
+      document.addEventListener('pointerdown', (event) => {
+        const divider = event.target.closest('[data-divider]');
+        if (!divider) return;
+        const split = divider.parentElement;
+        const node = findNode(state.layoutTree, divider.dataset.divider);
+        if (!node) return;
+        const rect = split.getBoundingClientRect();
+        const move = (moveEvent) => {
+          const raw = node.direction === 'horizontal' ? ((moveEvent.clientX - rect.left) / rect.width) * 100 : ((moveEvent.clientY - rect.top) / rect.height) * 100;
+          node.ratio = Math.max(22, Math.min(78, raw));
+          split.style.setProperty('--ratio', `${node.ratio}%`);
+        };
+        const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); showToast('Panel 比例已调整并自动保存'); };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && (state.dispatchOpen || state.attentionOpen)) {
+          state.dispatchOpen = false; state.attentionOpen = false; render(); return;
+        }
+        const divider = event.target.closest?.('[data-divider]');
+        if (divider && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+          const node = findNode(state.layoutTree, divider.dataset.divider);
+          if (!node) return;
+          const negative = ['ArrowLeft', 'ArrowUp'].includes(event.key);
+          node.ratio = Math.max(22, Math.min(78, node.ratio + (negative ? -3 : 3)));
+          event.preventDefault();
+          render();
+          document.querySelector(`[data-divider="${divider.dataset.divider}"]`)?.focus();
+          return;
+        }
+        const tab = event.target.closest?.('[data-tab]');
+        if (tab) {
+          if (['Enter', ' '].includes(event.key)) { event.preventDefault(); activateTab(tab.dataset.panel, tab.dataset.tab); return; }
+          if (event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+            event.preventDefault(); moveTabByKeyboard(tab.dataset.tab, event.key.replace('Arrow', '').toLowerCase()); return;
+          }
+          if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+            const panel = panels[tab.dataset.panel];
+            const index = panel.tabs.indexOf(tab.dataset.tab);
+            const next = panel.tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + panel.tabs.length) % panel.tabs.length];
+            event.preventDefault(); activateTab(panel.panelId, next); return;
+          }
+        }
+        const editing = event.target.matches('input, textarea, [contenteditable="true"]');
+        if (!editing && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+          const keys = Object.keys(variants); const index = keys.indexOf(state.variant);
+          setVariant(keys[(index + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length]);
+        }
+      });
+
+      render();
+    </script>
+  </body>
+</html>

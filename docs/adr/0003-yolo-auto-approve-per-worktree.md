@@ -1,6 +1,6 @@
 # ADR-0003：worktree 内 YOLO / auto-approve
 
-- 状态：已接受（Accepted）
+- 状态：已被 [ADR-0012](./0012-enforced-execution-and-brokered-capabilities.md) 取代
 - 日期：2026-07-31
 - 关联：[PLAN-v0.1](../PLAN-v0.1.md)、[ADR-0001](./0001-v0.1-oneshot-resume-model.md)、[ADR-0002](./0002-per-agent-git-worktree.md)
 
@@ -15,6 +15,10 @@
 - Claude Code：`--dangerously-skip-permissions`（或 `--permission-mode bypassPermissions`）
 - Kimi Code：`--auto`
 - Codex：full-auto / bypass
+
+> 这是 v0.1 非交互执行的历史决策和当前实现事实，不再是 v0.2 安全
+> 契约。Project-first Run 必须先通过可强制的有效权限门禁，详见
+> ADR-0012。
 
 ## 后果（Consequences）
 

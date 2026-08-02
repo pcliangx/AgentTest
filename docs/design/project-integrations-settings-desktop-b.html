@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'" />
+    <title>AgentTest · Project Settings B 版原型</title>
+    <style>
+      /*
+       * THROWAWAY UI PROTOTYPE — DO NOT PROMOTE TO PRODUCTION.
+       * Three settings variants, switchable with ?variant=A|B|C.
+       * Configuration changes are staged in memory and only affect the next Run.
+       */
+      :root {
+        --ink: #172033;
+        --muted: #677187;
+        --line: #d9deea;
+        --paper: #ffffff;
+        --wash: #f4f6fa;
+        --nav: #151c2b;
+        --nav-soft: #222c40;
+        --brand: #3d68f5;
+        --brand-soft: #e8edff;
+        --teal: #0f8a83;
+        --amber: #ad6a00;
+        --danger: #b42318;
+        --shadow: 0 18px 50px rgb(23 32 51 / 14%);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #b8c0d1 transparent; }
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      body { overflow: hidden; color: var(--ink); background: var(--wash); font: 13px/1.45 var(--sans); }
+      button, input, select, textarea { color: inherit; font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+      button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .52; }
+      [hidden] { display: none !important; }
+
+      .app { display: flex; width: 100%; height: 100%; min-width: 1024px; min-height: 680px; flex-direction: column; overflow: hidden; background: white; }
+      .titlebar { display: flex; height: 38px; flex: 0 0 38px; align-items: center; border-bottom: 1px solid var(--line); background: #f8f9fc; padding: 0 13px; user-select: none; }
+      .traffic { display: flex; gap: 7px; }
+      .traffic i { width: 11px; height: 11px; border: 1px solid #858da0; border-radius: 50%; background: white; }
+      .window-title { margin-left: 18px; color: var(--muted); font-size: 11px; }
+      .window-title strong { color: var(--ink); }
+      .title-project { margin-left: auto; color: var(--muted); font-size: 10px; }
+
+      .toolbar { display: flex; min-height: 54px; flex: 0 0 54px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); background: white; padding: 0 12px; }
+      .back { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: white; }
+      .toolbar-title strong { display: block; font-size: 13px; }
+      .toolbar-title small { display: block; color: var(--muted); font-size: 9px; }
+      .toolbar-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
+      .save-state { color: var(--muted); font-size: 10px; }
+      .button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 0 10px; font-size: 11px; font-weight: 650; }
+      .button:hover { border-color: #aeb7ca; background: var(--wash); }
+      .button.primary { border-color: var(--brand); background: var(--brand); color: white; }
+      .button.danger { color: var(--danger); }
+      .button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+      .button:disabled:hover { border-color: var(--line); background: white; }
+
+      .settings-shell { position: relative; display: grid; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
+      .variant-a .settings-shell { grid-template-columns: 82px 238px minmax(0, 1fr) 278px; }
+      .variant-b .settings-shell { grid-template-columns: 68px 214px minmax(0, 1fr); }
+      .variant-c .settings-shell { grid-template-columns: 68px minmax(0, 1fr); }
+      .primary-nav { display: flex; min-height: 0; flex-direction: column; align-items: center; gap: 5px; overflow: hidden; background: var(--nav); padding: 12px 8px 10px; color: #dfe5f1; }
+      .brand { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--brand); color: white; font-size: 11px; font-weight: 800; }
+      .nav-separator { width: 30px; height: 1px; background: #334057; margin: 7px 0 4px; }
+      .nav-item { display: grid; width: 100%; min-height: 50px; place-items: center; gap: 2px; border: 0; border-radius: 10px; background: transparent; color: #97a3b8; padding: 5px 2px; font-size: 9px; }
+      .nav-item:hover { background: var(--nav-soft); color: white; }
+      .nav-item.active { background: #eef2ff; color: var(--nav); }
+      .nav-item b { font-size: 15px; }
+      .nav-spacer { flex: 1; }
+      .attention-count { display: grid; min-width: 17px; height: 17px; place-items: center; border-radius: 999px; background: #f04438; color: white; font-size: 9px; font-weight: 700; }
+
+      .settings-nav { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: #f8f9fc; padding: 12px 9px 70px; }
+      .project-card { display: grid; grid-template-columns: 35px minmax(0, 1fr); align-items: center; gap: 9px; border-bottom: 1px solid var(--line); margin: -12px -9px 13px; padding: 11px; }
+      .project-mark { display: grid; width: 35px; height: 35px; place-items: center; border-radius: 9px; background: var(--brand-soft); color: var(--brand); font-weight: 800; }
+      .project-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .project-card small { display: block; color: var(--muted); font-size: 9px; }
+      .nav-group { margin-bottom: 14px; }
+      .nav-label { padding: 7px 7px 5px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+      .setting-nav-item { display: grid; width: 100%; min-height: 42px; grid-template-columns: 27px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 5px 7px; text-align: left; }
+      .setting-nav-item:hover { background: white; }
+      .setting-nav-item.active { border-color: #b9c4f6; background: white; box-shadow: 0 2px 9px rgb(23 32 51 / 6%); }
+      .setting-nav-item strong { display: block; font-size: 10px; }
+      .setting-nav-item small { display: block; color: var(--muted); font-size: 8px; }
+      .nav-icon { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 7px; background: #e9edf5; font-size: 11px; font-weight: 750; }
+      .health { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+      .health.warn { background: var(--amber); }
+      .health.bad { border: 1px solid var(--danger); background: transparent; }
+
+      .detail { min-width: 0; min-height: 0; overflow: auto; background: white; }
+      .detail-head { position: sticky; z-index: 3; top: 0; display: flex; min-height: 68px; align-items: center; gap: 11px; border-bottom: 1px solid var(--line); background: rgb(255 255 255 / 96%); padding: 10px 18px; backdrop-filter: blur(10px); }
+      .detail-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 10px; background: var(--brand-soft); color: var(--brand); font-size: 16px; }
+      .detail-head h1 { margin: 0; font-size: 17px; }
+      .detail-head p { margin: 2px 0 0; color: var(--muted); font-size: 9px; }
+      .detail-badge { margin-left: auto; border-radius: 999px; background: var(--wash); padding: 5px 8px; color: var(--muted); font-size: 9px; }
+      .form { max-width: 880px; padding: 8px 20px 90px; }
+      .section { border-bottom: 1px solid var(--line); padding: 17px 0; }
+      .section:last-child { border-bottom: 0; }
+      .section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+      .section-title h2 { margin: 0; font-size: 12px; }
+      .section-note { margin: 0 0 10px; color: var(--muted); font-size: 9px; }
+      .field { display: grid; grid-template-columns: minmax(190px, .42fr) minmax(280px, .58fr); align-items: start; gap: 20px; padding: 8px 0; }
+      .field-label strong { display: block; font-size: 10px; }
+      .field-label p { max-width: 48ch; margin: 3px 0 0; color: var(--muted); font-size: 9px; }
+      .control { min-width: 0; }
+      .input, .select { width: 100%; max-width: 420px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: white; padding: 0 9px; font-size: 10px; }
+      .readonly { display: flex; min-height: 34px; max-width: 520px; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--wash); padding: 6px 9px; }
+      .readonly strong { font-size: 10px; }
+      .readonly small { color: var(--muted); font-size: 8px; }
+      .mono { font-family: var(--mono); }
+      .switch { position: relative; width: 39px; height: 22px; border: 0; border-radius: 999px; background: #cbd2df; padding: 0; }
+      .switch::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgb(23 32 51 / 25%); content: ""; transition: 140ms; }
+      .switch[aria-checked="true"] { background: var(--brand); }
+      .switch[aria-checked="true"]::after { transform: translateX(17px); }
+      .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+      .chip { display: inline-flex; min-height: 24px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: white; padding: 0 8px; color: var(--muted); font-size: 9px; }
+      .chip.brand { width: auto; height: auto; place-items: initial; border-color: #bdc8fa; background: var(--brand-soft); color: #274bc9; font-size: 9px; font-weight: inherit; letter-spacing: normal; }
+      .chip.good { border-color: #a4d6ce; background: #eefaf8; color: #086c66; }
+      .chip.warn { border-color: #e6c786; background: #fff8e9; color: #825000; }
+      .notice { border: 1px solid #e6c786; border-radius: 9px; background: #fff8e9; padding: 9px 10px; color: #704800; font-size: 9px; }
+      .notice.danger { border-color: #efb5b0; background: #fff3f2; color: #8a1c13; }
+      .resource { display: grid; max-width: 600px; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; padding: 8px; }
+      .resource strong { display: block; font-size: 10px; }
+      .resource small { display: block; color: var(--muted); font-size: 8px; }
+
+      .changes { min-height: 0; overflow: auto; border-left: 1px solid var(--line); background: #f8f9fc; }
+      .changes-head { position: sticky; top: 0; border-bottom: 1px solid var(--line); background: #f8f9fc; padding: 13px; }
+      .changes-head strong { display: block; }
+      .changes-head small { color: var(--muted); font-size: 9px; }
+      .change-item { border-bottom: 1px solid var(--line); padding: 10px 12px; }
+      .change-item strong { display: block; font-size: 10px; }
+      .change-item small { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; }
+      .empty-changes { padding: 18px 13px; color: var(--muted); font-size: 9px; }
+
+      .matrix-wrap { min-height: 0; overflow: auto; padding: 18px 18px 90px; background: var(--wash); }
+      .matrix-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      .matrix-head h1 { margin: 0; font-size: 21px; }
+      .matrix-head p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+      .matrix { min-width: 820px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: white; }
+      .matrix-row { display: grid; grid-template-columns: 190px repeat(3, minmax(160px, 1fr)); border-bottom: 1px solid var(--line); }
+      .matrix-row:last-child { border-bottom: 0; }
+      .matrix-cell { min-height: 58px; border-right: 1px solid var(--line); padding: 9px 10px; }
+      .matrix-cell:last-child { border-right: 0; }
+      .matrix-row.header .matrix-cell { min-height: 72px; background: #f8f9fc; }
+      .matrix-cell strong { display: block; font-size: 10px; }
+      .matrix-cell small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }
+      .matrix-cell.label { background: #fbfcfe; }
+      .effective { display: inline-flex; margin-top: 5px; border-radius: 999px; background: var(--wash); padding: 3px 6px; color: var(--muted); font-size: 8px; }
+
+      .review-shell { min-height: 0; overflow: auto; background: var(--wash); padding: 0 0 90px; }
+      .review-tabs { position: sticky; z-index: 4; top: 0; display: flex; min-height: 44px; align-items: center; gap: 5px; overflow-x: auto; border-bottom: 1px solid var(--line); background: rgb(255 255 255 / 96%); padding: 0 14px; backdrop-filter: blur(10px); }
+      .review-tabs button { min-height: 30px; border: 0; border-radius: 8px; background: transparent; padding: 0 9px; color: var(--muted); font-size: 9px; }
+      .review-tabs button.active { background: var(--brand-soft); color: #274bc9; font-weight: 700; }
+      .review-page { max-width: 1050px; margin: 0 auto; padding: 22px; }
+      .review-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 14px; }
+      .review-hero h1 { margin: 0; font-size: 22px; }
+      .review-hero p { margin: 4px 0 0; color: var(--muted); }
+      .review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .review-card { border: 1px solid var(--line); border-radius: 12px; background: white; padding: 13px; }
+      .review-card.wide { grid-column: 1 / -1; }
+      .review-card h2 { margin: 0 0 4px; font-size: 12px; }
+      .review-card > p { margin: 0 0 10px; color: var(--muted); font-size: 9px; }
+      .review-line { display: flex; min-height: 39px; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #edf0f5; }
+      .review-line strong { font-size: 9px; }
+
+      .statusbar { display: flex; height: 27px; flex: 0 0 27px; align-items: center; gap: 13px; border-top: 1px solid var(--line); background: #f8f9fc; padding: 0 10px; color: var(--muted); font-size: 9px; }
+      .statusbar .push { margin-left: auto; }
+      .apply-dock { position: fixed; z-index: 60; right: 18px; bottom: 42px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; background: white; padding: 8px 9px 8px 12px; box-shadow: var(--shadow); }
+      .apply-dock span { color: var(--muted); font-size: 9px; }
+      .prototype-switcher { position: fixed; z-index: 100; left: 50%; bottom: 34px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); border: 1px solid #3a455d; border-radius: 999px; background: #111827; padding: 5px; color: white; box-shadow: 0 12px 32px rgb(0 0 0 / 28%); }
+      .prototype-switcher button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: white; }
+      .prototype-switcher button:hover { background: #2d374b; }
+      .variant-name { min-width: 176px; text-align: center; font-size: 10px; }
+      .variant-name strong { font-size: 11px; }
+      .prototype-flag { position: fixed; z-index: 90; right: 10px; bottom: 35px; border-radius: 7px; background: #fff3cd; padding: 5px 8px; color: #6e4b00; font-size: 9px; box-shadow: 0 3px 12px rgb(23 32 51 / 10%); }
+      .toast { position: fixed; z-index: 120; right: 14px; bottom: 74px; transform: translateY(8px); border-radius: 10px; background: var(--ink); padding: 9px 11px; color: white; opacity: 0; pointer-events: none; transition: 150ms; font-size: 10px; }
+      .toast.show { transform: translateY(0); opacity: 1; }
+
+      .attention-drawer { position: absolute; z-index: 40; top: 8px; right: 8px; bottom: 8px; width: min(360px, calc(100% - 32px)); overflow: auto; border: 1px solid var(--line); border-radius: 13px; background: white; box-shadow: var(--shadow); }
+      .drawer-head { display: flex; min-height: 52px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 13px; }
+      .drawer-body { padding: 6px; }
+      .attention-item { border-bottom: 1px solid #edf0f5; padding: 10px 8px; }
+      .attention-item strong, .attention-item small { display: block; }
+      .attention-item small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+
+      @media (max-width: 1240px) {
+        .variant-a .settings-shell { grid-template-columns: 70px 214px minmax(0, 1fr); }
+        .variant-a .changes { display: none; }
+        .variant-b .settings-shell { grid-template-columns: 62px 190px minmax(0, 1fr); }
+        .field { grid-template-columns: 170px minmax(260px, 1fr); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const variants = {
+        A: { name: '层级配置台', note: '导航 + 表单 + 待应用摘要' },
+        B: { name: '策略矩阵', note: '跨实例比较有效配置' },
+        C: { name: '安全审阅', note: '按风险与运行边界组织' },
+      };
+      const searchParams = new URLSearchParams(location.search);
+      const requestedVariant = searchParams.get('variant')?.toUpperCase();
+      const state = {
+        variant: variants[requestedVariant] ? requestedVariant : 'A',
+        projectId: searchParams.get('project') || 'prj_sales_01',
+        active: 'agent:agt_data_7f2',
+        changes: [],
+        drafts: {},
+        attentionOpen: false,
+      };
+
+      const agents = [
+        { agentInstanceId: 'agt_data_7f2', name: 'cc_data', provider: 'Claude Code', providerId: 'claude', doctor: '通过', model: 'Provider 默认模型', status: '运行中' },
+        { agentInstanceId: 'agt_anti_b04', name: 'cx_anti', provider: 'Codex', providerId: 'codex', doctor: '通过', model: 'gpt-5.6', status: '需要输入' },
+        { agentInstanceId: 'agt_legacy_11d', name: 'legacy_review', provider: 'Kimi Code', providerId: 'kimi', doctor: '失败', model: 'K2.5', status: '不可用' },
+      ];
+      const projectConfiguration = {
+        projectName: '销售数据分析', landing: '恢复上次工作区', defaultProvider: 'claude',
+        defaultModel: 'provider-default', defaultOpen: 'current', connectionId: 'conn_feishu_sales_02',
+        network: true, snapshots: true,
+      };
+      const agentConfigurations = Object.fromEntries(agents.map((agent) => [agent.agentInstanceId, {
+        name: agent.name, model: agent.model, reasoning: '标准', terminal: true, network: true,
+        externalRead: true, proxy: '继承系统代理',
+      }]));
+      const navSections = [
+        ['general', '常规', '名称、根目录与生命周期', '◎'],
+        ['defaults', 'Agent Defaults', '仅作为创建初始值', '◇'],
+        ['instances', 'Agent Instances', '逐实例配置与状态', '⌘'],
+        ['integrations', 'Integrations', '飞书连接与资源范围', '⇄'],
+        ['permissions', 'Permissions', '可强制执行的有效权限', '◈'],
+        ['storage', 'Storage', '本地数据、备份与导出', '▣'],
+      ];
+
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+      const activeAgent = () => state.active.startsWith('agent:') ? agents.find((agent) => agent.agentInstanceId === state.active.slice(6)) : null;
+      const activeSection = () => state.active.startsWith('agent:') ? 'instances' : state.active;
+
+      function showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message; toast.classList.add('show');
+        clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove('show'), 1900);
+      }
+
+      function setVariant(key) {
+        state.variant = key;
+        const url = new URL(location.href); url.searchParams.set('variant', key); history.replaceState(null, '', url); render();
+      }
+
+      const changeId = (owner, key) => `${owner}.${key}`;
+      function appliedValue(owner, key) {
+        if (owner === 'project') return projectConfiguration[key];
+        return agentConfigurations[owner.replace('agent:', '')]?.[key];
+      }
+      function draftValue(owner, key) {
+        const id = changeId(owner, key);
+        return Object.prototype.hasOwnProperty.call(state.drafts, id) ? state.drafts[id] : appliedValue(owner, key);
+      }
+      function stageChange(owner, key, label, value) {
+        const id = changeId(owner, key);
+        if (Object.is(value, appliedValue(owner, key))) {
+          delete state.drafts[id];
+          state.changes = state.changes.filter((change) => change.id !== id);
+        } else {
+          state.drafts[id] = value;
+          const existing = state.changes.find((change) => change.id === id);
+          if (existing) { existing.value = value; existing.label = label; }
+          else state.changes.push({ id, owner, key, label, value });
+        }
+        render();
+      }
+
+      function applyChanges() {
+        state.changes.forEach((change) => {
+          if (change.owner === 'project') projectConfiguration[change.key] = change.value;
+          else {
+            const agentId = change.owner.replace('agent:', '');
+            agentConfigurations[agentId][change.key] = change.value;
+            const agent = agents.find((item) => item.agentInstanceId === agentId);
+            if (agent && change.key === 'name') agent.name = change.value;
+            if (agent && change.key === 'model') agent.model = change.value;
+          }
+        });
+        state.changes = [];
+        state.drafts = {};
+      }
+
+      function primaryNav() {
+        const items = [['overview', '⌂', '概览'], ['agents', '⌘', 'Agents'], ['tasks', '✓', '任务'], ['knowledge', '◇', '知识'], ['handoffs', '⇄', '交接'], ['activity', '≋', '活动']];
+        return `<nav class="primary-nav" aria-label="项目主导航"><div class="brand">AT</div><div class="nav-separator"></div>${items.map((item) => `<button class="nav-item" type="button" data-project-nav="${item[0]}"><b>${item[1]}</b><span>${item[2]}</span></button>`).join('')}<div class="nav-spacer"></div><button class="nav-item ${state.attentionOpen ? 'active' : ''}" type="button" data-action="attention"><span class="attention-count">4</span><span>关注</span></button><button class="nav-item active" type="button"><b>⚙</b><span>设置</span></button></nav>`;
+      }
+
+      function settingsNav() {
+        return `<aside class="settings-nav"><div class="project-card"><span class="project-mark">销</span><span><strong>${escapeHtml(projectConfiguration.projectName)}</strong><small>${state.projectId}</small></span></div><div class="nav-group"><div class="nav-label">Project Settings</div>${navSections.map((item) => `<button class="setting-nav-item ${activeSection() === item[0] ? 'active' : ''}" type="button" data-setting-nav="${item[0]}"><span class="nav-icon">${item[3]}</span><span><strong>${item[1]}</strong><small>${item[2]}</small></span></button>`).join('')}</div><div class="nav-group"><div class="nav-label">Agent Instances</div>${agents.map((agent) => `<button class="setting-nav-item ${state.active === `agent:${agent.agentInstanceId}` ? 'active' : ''}" type="button" data-setting-nav="agent:${agent.agentInstanceId}" ${agent.doctor === '失败' ? 'title="Provider 不可用：仅历史可读"' : ''}><span class="nav-icon">${agent.providerId === 'claude' ? 'CC' : agent.providerId === 'codex' ? 'CX' : 'KM'}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${agent.provider} · ${agent.status}</small></span><span class="health ${agent.doctor === '失败' ? 'bad' : ''}"></span></button>`).join('')}</div></aside>`;
+      }
+
+      const field = (title, description, control) => `<div class="field"><div class="field-label"><strong>${title}</strong><p>${description}</p></div><div class="control">${control}</div></div>`;
+      const toggle = (owner, key, checked, label, locked = false) => `<button class="switch" type="button" role="switch" aria-checked="${checked}" data-owner="${owner}" data-toggle="${key}" aria-label="${label}" ${locked ? 'disabled title="此确认不可关闭"' : ''}></button>`;
+      const readonly = (value, note = '') => `<div class="readonly"><strong>${value}</strong><small>${note}</small></div>`;
+      const selected = (value, current) => value === current ? 'selected' : '';
+
+      function detailMeta() {
+        const agent = activeAgent();
+        if (agent) return { icon: agent.providerId === 'claude' ? 'CC' : agent.providerId === 'codex' ? 'CX' : 'KM', title: agent.name, note: `${agent.provider} · ${agent.status}`, badge: agent.doctor === '失败' ? 'Unavailable' : '运行配置作用于下一次 Run' };
+        return {
+          general: { icon: '◎', title: '常规', note: 'Project 身份、根目录与生命周期', badge: 'Project scope' },
+          defaults: { icon: '◇', title: 'Agent Defaults', note: '创建实例时复制，不静默覆盖已有实例', badge: 'Initial values' },
+          instances: { icon: '⌘', title: 'Agent Instances', note: 'Provider Doctor 通过后才能创建与配置', badge: `${agents.length} instances` },
+          integrations: { icon: '⇄', title: 'Integrations', note: '全局连接，Project 独立资源范围', badge: draftValue('project', 'connectionId') ? 'Feishu connected' : 'Not connected' },
+          permissions: { icon: '◈', title: 'Permissions', note: '只展示 Provider 与主机真正可强制执行的策略', badge: 'Enforced' },
+          storage: { icon: '▣', title: 'Storage', note: '本地优先、滚动快照与显式导出', badge: 'Local only' },
+        }[state.active];
+      }
+
+      function agentForm(agent) {
+        if (agent.doctor === '失败') return `<div class="form"><section class="section"><div class="notice danger"><strong>${agent.provider} Provider Doctor 未通过。</strong><br />不能启动、重启或修改 Provider 配置；历史、handoff、任务和文件变更仍可只读查看。修复后原位恢复。</div>${field('Provider', 'Provider 在实例创建后不可切换。', readonly(agent.provider, '创建后锁定'))}${field('可用动作', '不可自动替换实例或清空 session/worktree。', '<div class="chips"><button class="button">修复 Provider</button><button class="button">导出 handoff</button><button class="button">归档</button></div>')}</section></div>`;
+        const owner = `agent:${agent.agentInstanceId}`;
+        const value = (key) => draftValue(owner, key);
+        return `<div class="form"><section class="section"><div class="section-title"><h2>身份与运行配置</h2><span class="chip good">Doctor 通过</span></div>
+          ${field('Agent 名称', 'Project 内大小写不敏感唯一；应用前路由仍使用原名。', `<input class="input mono" value="${escapeHtml(value('name'))}" data-owner="${owner}" data-field="name" />`)}
+          ${field('AgentInstanceId', '稳定身份，不因重命名或 Tab 移动改变。', readonly(agent.agentInstanceId, '只读'))}
+          ${field('Provider', '更换 Provider 必须新建实例并执行 handoff。', readonly(agent.provider, '不可修改'))}
+          ${field('模型', '应用后只影响下一次 Run，不重启当前 Run。', `<select class="select" data-owner="${owner}" data-field="model"><option ${selected('Provider 默认模型', value('model'))}>Provider 默认模型</option><option ${selected('gpt-5.6', value('model'))}>gpt-5.6</option><option ${selected('固定模型', value('model'))}>固定模型</option></select>`)}
+          ${field('推理强度', '每个 Run 保存脱敏配置快照。', `<select class="select" data-owner="${owner}" data-field="reasoning"><option ${selected('标准', value('reasoning'))}>标准</option><option ${selected('高', value('reasoning'))}>高</option></select>`)}
+        </section><section class="section"><div class="section-title"><h2>工作区与进程</h2></div>
+          ${field('工作区模式', '写入型 Agent 始终使用独立 worktree。', readonly('独立 worktree', '共享可写 cwd 永不允许'))}
+          ${field('Terminal 接管', 'PTY 属于实例；关闭 Tab 不结束 PTY。', toggle(owner, 'terminal', value('terminal'), '允许 Terminal 接管'))}
+          ${field('网络访问', '必须由 Provider/主机实际强制执行，否则 Run 被阻止。', toggle(owner, 'network', value('network'), '允许网络访问'))}
+          ${field('外部资源读取', '仅限当前 Project 授权的飞书资源范围。', toggle(owner, 'externalRead', value('externalRead'), '允许外部资源读取'))}
+        </section><section class="section"><div class="section-title"><h2>实例环境</h2><span class="chip">不继承项目密钥</span></div>
+          ${field('代理', '按实例配置，不从 Project 默认值继承。', `<select class="select" data-owner="${owner}" data-field="proxy"><option ${selected('继承系统代理', value('proxy'))}>继承系统代理</option><option ${selected('不使用代理', value('proxy'))}>不使用代理</option><option ${selected('自定义代理', value('proxy'))}>自定义代理</option></select>`)}
+          ${field('环境变量', '敏感值进入系统钥匙串，不写入 ProjectStore。', '<div class="resource"><span>◆</span><span><strong>ARK_API_ENDPOINT</strong><small>普通值 · 仅注入当前实例</small></span><button class="button">编辑</button></div>')}
+        </section><section class="section"><div class="section-title"><h2>生命周期</h2></div>${field('归档 Agent', '先停止、关闭 Tab 并生成 handoff；数据可恢复。', '<button class="button">归档…</button>')}${field('永久删除', '展示 session、handoff、worktree 和脏改动影响并二次确认。', '<button class="button danger">永久删除…</button>')}</section></div>`;
+      }
+
+      function generalForm() {
+        const owner = 'project';
+        return `<div class="form"><section class="section">${field('Project 名称', '工作台中的可见名称。', `<input class="input" value="${escapeHtml(draftValue(owner, 'projectName'))}" data-owner="${owner}" data-field="projectName" />`)}${field('ProjectId', '稳定身份，不随路径变化。', readonly(state.projectId, '只读'))}${field('根目录', '不能像普通文本字段一样修改。', readonly('~/Projects/sales-analysis', '<button class="button" data-action="relocate">重新定位…</button>'))}${field('Git 状态', '非 Git Project 可以管理任务与知识，但不能创建可运行 Agent。', readonly('Git repository · main', '可运行'))}</section><section class="section">${field('启动落点', '新 Project 进入 Overview；已使用 Project 恢复上次 surface 与布局。', `<select class="select" data-owner="${owner}" data-field="landing"><option ${selected('恢复上次工作区', draftValue(owner, 'landing'))}>恢复上次工作区</option><option ${selected('Project Overview', draftValue(owner, 'landing'))}>Project Overview</option></select>`)}${field('归档 Project', '活动 Run 必须先完成或停止，并生成 handoff。', '<button class="button">归档…</button>')}${field('永久删除', '只删除 AgentTest 本地数据，不级联删除飞书资源或全局连接。', '<button class="button danger">永久删除…</button>')}</section></div>`;
+      }
+
+      function defaultsForm() {
+        const owner = 'project';
+        return `<div class="form"><section class="section"><p class="section-note">默认值只在创建时复制。代理、凭据、Token、自定义环境变量和敏感信息永不继承。</p>${field('默认 Provider', '只列出 Provider Doctor 完全通过的选项。', `<select class="select" data-owner="${owner}" data-field="defaultProvider"><option value="claude" ${selected('claude', draftValue(owner, 'defaultProvider'))}>Claude Code</option><option value="codex" ${selected('codex', draftValue(owner, 'defaultProvider'))}>Codex</option><option disabled>Kimi Code — Doctor 失败</option></select>`)}${field('默认模型', '可以跟随 Provider 默认模型。', `<select class="select" data-owner="${owner}" data-field="defaultModel"><option value="provider-default" ${selected('provider-default', draftValue(owner, 'defaultModel'))}>Provider 默认模型</option><option value="fixed" ${selected('fixed', draftValue(owner, 'defaultModel'))}>固定模型</option></select>`)}${field('创建后打开', '创建后保持 Ready，不自动启动 Run。', `<select class="select" data-owner="${owner}" data-field="defaultOpen"><option value="current" ${selected('current', draftValue(owner, 'defaultOpen'))}>当前 Panel</option><option value="right" ${selected('right', draftValue(owner, 'defaultOpen'))}>右侧新 Panel</option><option value="background" ${selected('background', draftValue(owner, 'defaultOpen'))}>后台</option></select>`)}${field('默认工作区', '不支持无法强制只读的共享目录。', readonly('独立 worktree', '强制隔离'))}</section></div>`;
+      }
+
+      function instancesForm() {
+        return `<div class="form"><section class="section"><div class="section-title"><h2>Provider Doctor</h2><button class="button">重新检查</button></div>${agents.map((agent) => `<div class="resource"><span class="health ${agent.doctor === '失败' ? 'bad' : ''}"></span><span><strong>${agent.provider}</strong><small>${agent.doctor === '失败' ? '认证或 capability 未通过；禁止创建和配置' : 'executable、version、auth、capability 全部通过'}</small></span><span class="chip ${agent.doctor === '失败' ? 'warn' : 'good'}">${agent.doctor}</span></div>`).join('')}</section><section class="section"><div class="section-title"><h2>实例</h2><button class="button primary" data-action="new-agent">＋ 新建 Agent</button></div>${agents.map((agent) => `<div class="resource"><span class="nav-icon">${agent.providerId === 'claude' ? 'CC' : agent.providerId === 'codex' ? 'CX' : 'KM'}</span><span><strong>${agent.name}</strong><small>${agent.agentInstanceId} · ${agent.status}</small></span><button class="button" data-setting-nav="agent:${agent.agentInstanceId}">${agent.doctor === '失败' ? '只读查看' : '配置'}</button></div>`).join('')}</section></div>`;
+      }
+
+      function integrationsForm() {
+        const owner = 'project';
+        const connectionId = draftValue(owner, 'connectionId');
+        const connected = Boolean(connectionId);
+        const resources = connected ? `<div class="resource"><span>✓</span><span><strong>销售分析任务清单</strong><small>tasklist_tl_782 · 读取 / 单条更新</small></span><button class="button">管理</button></div><div class="resource"><span>✓</span><span><strong>销售分析方法库</strong><small>wiki_space_193 · 读取 / 创建文档</small></span><button class="button">管理</button></div><div class="resource"><span>✓</span><span><strong>季度复盘知识空间</strong><small>wiki_space_271 · 只读</small></span><button class="button">管理</button></div>` : '<div class="notice">Project 未连接飞书。本地 Tasks、Knowledge、Agents 和历史仍可用；只有飞书在线投影、浏览和 CRUD 被关闭。</div>';
+        return `<div class="form"><section class="section"><div class="section-title"><h2>Project 主连接</h2><span class="chip ${connected ? 'good' : ''}">${connected ? '已连接' : '可选 · 未连接'}</span></div>${field('全局飞书连接', '连接属于 App，Project 只保存 0..1 个 connectionId。', `<select class="select" data-owner="${owner}" data-field="connectionId"><option value="" ${selected('', connectionId)}>不连接飞书</option><option value="conn_feishu_sales_02" ${selected('conn_feishu_sales_02', connectionId)}>销售团队工作区 · conn_feishu_sales_02</option><option value="conn_feishu_dev_07" ${selected('conn_feishu_dev_07', connectionId)}>研发工作区 · conn_feishu_dev_07</option></select>`)}<div class="notice">切换或移除主连接前预览失效绑定、未同步修改与权限差异。v0.2 最多一个主连接。</div></section><section class="section"><div class="section-title"><h2>授权资源范围</h2><span class="chip">Project scoped</span></div>${resources}</section><section class="section">${field('人工浏览器身份', '每个 ConnectionId 使用独立持久 partition；不向 Connector 注入 Cookie。', readonly(connected ? '独立人工会话 · 已登录' : '未创建会话', connected ? connectionId : '未连接'))}${field('Connector 执行身份', 'Agent 只请求窄能力；凭据/profile 不交给 Agent。', readonly(connected ? '受控官方 CLI 代执行' : '不可用', connected ? 'Project scope ∩ Run instruction' : '先应用连接'))}${field('高风险写入', '删除、批量、成员和权限变化永远二次确认，不可关闭。', toggle(owner, 'taskWriteConfirm', true, '飞书高风险写入二次确认', true))}</section></div>`;
+      }
+
+      function permissionsForm() {
+        return `<div class="form"><section class="section"><div class="notice"><strong>强制执行原则：</strong>如果 Provider、sandbox 或协议无法实现所选限制，Run 默认被阻止。原生 bypass/auto-approve 不算“已强制”。</div><div class="section-title" style="margin-top:14px"><h2>有效权限</h2><span class="chip good">Run 前验证</span></div>${field('文件写入', '仅限实例独立 worktree。', readonly('Enforced', 'InstanceWorkspace'))}${field('共享目录只读', '只有主机能够真正强制时才显示为可选。', readonly('当前不可用', '不会用 prompt 冒充只读'))}${field('项目默认网络', '实例仍有自己的 applied/draft 配置。', toggle('project', 'network', draftValue('project', 'network'), '允许项目默认网络访问'))}${field('审批范围', '临时允许只支持“一次”或“当前 Run”；永久变更必须进入 Settings。', readonly('拒绝 / 一次 / 当前 Run', '超时默认拒绝'))}${field('飞书 CLI 边界', 'Agent 只能请求 Connector 窄能力。', readonly('原始认证 profile 不可见', '无法防旁路时不授予能力'))}</section><section class="section"><div class="section-title"><h2>不可绕过确认</h2></div><div class="chips"><span class="chip warn">ff-only 合并</span><span class="chip warn">永久删除</span><span class="chip warn">丢弃脏改动</span><span class="chip warn">飞书删除 / 批量 / 权限</span><span class="chip warn">凭据导出</span><span class="chip warn">force / overwrite</span></div></section></div>`;
+      }
+
+      function storageForm() {
+        return `<div class="form"><section class="section">${field('数据位置', 'ProjectStore、RunStore、SessionStore、handoff 与审计仅保存在本机。', readonly('~/Library/Application Support/AgentTest', '本地优先'))}${field('滚动恢复快照', '事务写入与 schema 迁移失败时可恢复。', toggle('project', 'snapshots', draftValue('project', 'snapshots'), '启用滚动恢复快照'))}${field('自动云同步', 'v0.2 不上传项目数据或遥测。', readonly('关闭', '不可配置'))}</section><section class="section">${field('导出 Project', '先展示清单；默认排除凭据、Cookie、Token 和完整飞书缓存。', '<button class="button">预览导出内容…</button>')}${field('恢复备份', '恢复后不启动 Run，也不执行任何飞书写操作。', '<button class="button">选择备份…</button>')}</section></div>`;
+      }
+
+      function formForActive() {
+        const agent = activeAgent();
+        if (agent) return agentForm(agent);
+        return { general: generalForm, defaults: defaultsForm, instances: instancesForm, integrations: integrationsForm, permissions: permissionsForm, storage: storageForm }[state.active]();
+      }
+
+      function detailPane() {
+        const meta = detailMeta();
+        return `<main class="detail"><header class="detail-head"><span class="detail-icon">${meta.icon}</span><span><h1>${escapeHtml(meta.title)}</h1><p>${escapeHtml(meta.note)}</p></span><span class="detail-badge">${meta.badge}</span></header>${formForActive()}</main>`;
+      }
+
+      function changesPane() {
+        return `<aside class="changes"><div class="changes-head"><strong>待应用修改 · ${state.changes.length}</strong><small>应用后仅影响下一次 Run</small></div>${state.changes.length ? state.changes.map((change) => `<div class="change-item"><strong>${escapeHtml(change.label)}</strong><small>${escapeHtml(change.owner)} · ${escapeHtml(change.value)}</small></div>`).join('') : '<div class="empty-changes">更改字段后会在这里生成摘要。“放弃”会恢复 applied 值；工作区布局不进入此列表。</div>'}</aside>`;
+      }
+
+      function matrixPane() {
+        const columns = [agents[0], agents[1], agents[2]];
+        const rows = [
+          ['Provider', '创建后不可切换', 'Claude Code', 'Codex', 'Kimi Code'],
+          ['模型', '下一次 Run 生效', '默认模型', 'gpt-5.6', 'K2.5'],
+          ['文件写入', '必须可强制执行', 'worktree', 'worktree', 'Blocked'],
+          ['网络', '按实例授权', '允许', '当前 Run', 'Blocked'],
+          ['飞书范围', 'Project scope ∩ Run scope', '任务 + Wiki', '只读 Wiki', 'Blocked'],
+          ['Provider Doctor', '创建与配置前置条件', '通过', '通过', '失败'],
+        ];
+        return `<main class="matrix-wrap"><div class="matrix-head"><div><h1>Agent 策略矩阵</h1><p>A 主设置台的专用比较视图：横向比较 applied 配置与 Provider 实际能力。</p></div><button class="button primary" data-apply type="button" ${state.changes.length ? '' : 'disabled'}>应用 ${state.changes.length ? `(${state.changes.length})` : ''}</button></div><div class="matrix"><div class="matrix-row header"><div class="matrix-cell label"><strong>有效配置</strong><small>不是愿望策略</small></div>${columns.map((agent) => `<div class="matrix-cell"><strong>${agent.name}</strong><small>${agent.provider} · ${agent.status}</small><span class="effective">${agent.doctor === '失败' ? 'Blocked' : 'Ready'}</span></div>`).join('')}</div>${rows.map((row) => `<div class="matrix-row"><div class="matrix-cell label"><strong>${row[0]}</strong><small>${row[1]}</small></div>${row.slice(2).map((value, index) => `<div class="matrix-cell"><strong>${value}</strong><small>${index === 2 && value === 'Blocked' ? 'Provider Doctor 未通过' : '有效值已审计'}</small></div>`).join('')}</div>`).join('')}</div><div style="margin-top:12px" class="notice">矩阵不取代完整 Settings 导航，也不提供批量复制密钥。</div></main>`;
+      }
+
+      function reviewPane() {
+        const connectionId = draftValue('project', 'connectionId');
+        return `<main class="review-shell"><nav class="review-tabs"><button class="active" type="button">Readiness 摘要</button><button data-setting-nav="permissions" type="button">进入完整 Permissions</button><button data-setting-nav="integrations" type="button">进入完整 Integrations</button></nav><div class="review-page"><div class="review-hero"><div><h1>运行前安全审阅</h1><p>A 主设置台的 readiness 摘要，不取代完整编辑入口。</p></div><span class="chip good">2 个 Agent 可运行</span></div><div class="review-grid"><section class="review-card"><h2>Provider readiness</h2><p>只有 Doctor 全部通过的 Provider 才能创建或配置实例。</p>${agents.map((agent) => `<div class="review-line"><span><strong>${agent.name}</strong><br /><small>${agent.provider}</small></span><span class="chip ${agent.doctor === '失败' ? 'warn' : 'good'}">${agent.doctor}</span></div>`).join('')}</section><section class="review-card"><h2>Workspace isolation</h2><p>写入型 Agent 必须拥有独立 worktree。</p><div class="review-line"><strong>独立 worktree</strong><span class="chip good">Enforced</span></div><div class="review-line"><strong>共享可写 cwd</strong><span class="chip warn">Never allowed</span></div><div class="review-line"><strong>Base drift</strong><span class="chip">Needs rebase</span></div></section><section class="review-card"><h2>Feishu trust boundary</h2><p>浏览器身份、Connector 身份和 Project scope 严格分离。</p><div class="review-line"><strong>主连接</strong><span>${connectionId || '未连接（可选）'}</span></div><div class="review-line"><strong>授权资源</strong><span>${connectionId ? '3' : '0'}</span></div><div class="review-line"><strong>高风险确认</strong>${toggle('project', 'taskWriteConfirm', true, '高风险确认', true)}</div></section><section class="review-card"><h2>Run policy</h2><p>不支持的限制不会被伪装为已启用。</p><div class="review-line"><strong>项目默认网络</strong>${toggle('project', 'network', draftValue('project', 'network'), '网络访问')}</div><div class="review-line"><strong>超时权限请求</strong><span class="chip">默认拒绝</span></div><div class="review-line"><strong>原始 CLI profile</strong><span class="chip good">Not exposed</span></div></section><section class="review-card wide"><h2>配置生效边界</h2><p>Panel、Tab、surface、筛选器和输入草稿自动保存；身份、权限、代理、环境、资源范围、并发与预算必须点击应用。</p><div class="review-line"><strong>当前 Run</strong><span>保持 applied 配置，不静默重启</span></div><div class="review-line"><strong>下一次 Run</strong><span class="chip brand">${state.changes.length ? `${state.changes.length} 项草稿待应用` : '使用当前 applied 快照'}</span></div></section></div></div></main>`;
+      }
+
+      function renderAttentionDrawer() {
+        return `<aside class="attention-drawer"><div class="drawer-head"><strong>Global Attention · 4</strong><button class="button ghost" type="button" data-action="close-attention">关闭</button></div><div class="drawer-body"><div class="attention-item"><strong>cx_anti 请求输入</strong><small>销售数据分析 · Run #184</small></div><div class="attention-item"><strong>飞书高风险更新待确认</strong><small>确认不可由 Agent permission 代替</small></div><div class="attention-item"><strong>legacy_review Provider 不可用</strong><small>只降级该实例，Project 仍可用</small></div><div class="attention-item"><strong>退出 handoff 不完整</strong><small>已保留确定性快照</small></div></div></aside>`;
+      }
+
+      function switcher() {
+        const keys = Object.keys(variants); const index = keys.indexOf(state.variant);
+        return `<div class="prototype-switcher"><button type="button" data-variant="${keys[(index - 1 + keys.length) % keys.length]}">←</button><div class="variant-name"><strong>${state.variant} — ${variants[state.variant].name}</strong><br />${variants[state.variant].note}</div><button type="button" data-variant="${keys[(index + 1) % keys.length]}">→</button></div><div class="prototype-flag">THROWAWAY PROTOTYPE · 内存状态</div>`;
+      }
+
+      function render() {
+        const content = state.variant === 'A' ? `${primaryNav()}${settingsNav()}${detailPane()}${changesPane()}` : state.variant === 'B' ? `${primaryNav()}${settingsNav()}${matrixPane()}` : `${primaryNav()}${reviewPane()}`;
+        document.getElementById('root').innerHTML = `<div class="app variant-${state.variant.toLowerCase()}"><header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span><span class="window-title"><strong>AgentTest</strong> / Project Settings</span><span class="title-project">${escapeHtml(projectConfiguration.projectName)} · ${state.projectId}</span></header><header class="toolbar"><button class="back" data-back type="button" aria-label="返回工作台">←</button><span class="toolbar-title"><strong>Project Settings</strong><small>同一主窗口 · 不改变当前 Run</small></span><span class="toolbar-actions"><span class="save-state">${state.changes.length ? `${state.changes.length} 项待应用` : '配置已应用'}</span><button class="button" data-action="discard" ${state.changes.length ? '' : 'disabled'}>放弃</button><button class="button primary" data-apply type="button" ${state.changes.length ? '' : 'disabled'}>应用${state.changes.length ? ` (${state.changes.length})` : ''}</button></span></header><div class="settings-shell">${content}${state.attentionOpen ? renderAttentionDrawer() : ''}</div><footer class="statusbar"><span>Project scope</span><span>Local-first</span><span>Secrets → System Keychain</span><span class="push">draft → 应用 → 下一次 Run</span></footer></div>${state.variant === 'C' && state.changes.length ? `<div class="apply-dock"><span>${state.changes.length} 项修改已暂存</span><button class="button primary" data-apply>应用到下一次 Run</button></div>` : ''}${switcher()}`;
+      }
+
+      document.addEventListener('click', (event) => {
+        const button = event.target.closest('button'); if (!button) return;
+        if (button.dataset.variant) { setVariant(button.dataset.variant); return; }
+        if (button.hasAttribute('data-back') || button.dataset.projectNav) { location.href = `project-command-center-desktop-b.html?project=${state.projectId}&variant=${state.variant}`; return; }
+        if (button.dataset.settingNav) { state.active = button.dataset.settingNav; if (state.variant !== 'A') setVariant('A'); else render(); return; }
+        if (button.dataset.action === 'attention') { state.attentionOpen = !state.attentionOpen; render(); return; }
+        if (button.dataset.action === 'close-attention') { state.attentionOpen = false; render(); return; }
+        if (button.dataset.toggle) {
+          const owner = button.dataset.owner; const key = button.dataset.toggle; const next = !draftValue(owner, key);
+          stageChange(owner, key, button.getAttribute('aria-label'), next); return;
+        }
+        if (button.hasAttribute('data-apply')) { if (!state.changes.length) return; applyChanges(); render(); showToast('配置已应用；当前 Run 不变，下一次 Run 使用新快照'); return; }
+        if (button.dataset.action === 'discard') { state.changes = []; state.drafts = {}; render(); showToast('已放弃所有暂存修改并恢复 applied 值'); return; }
+        if (button.dataset.action === 'new-agent') { showToast('仅列出 Doctor 通过的 Provider；创建后保持 Ready'); return; }
+        if (button.dataset.action === 'relocate') { showToast('重新定位只接受同一 Git 仓库，且必须没有活动 Run'); }
+      });
+
+      document.addEventListener('change', (event) => {
+        const field = event.target.closest('[data-field]'); if (!field) return;
+        const owner = field.dataset.owner || 'project';
+        stageChange(owner, field.dataset.field, field.closest('.field')?.querySelector('.field-label strong')?.textContent || field.dataset.field, field.value);
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && state.attentionOpen) { state.attentionOpen = false; render(); return; }
+        const editing = event.target.matches('input, textarea, select, [contenteditable="true"]');
+        if (!editing && ['ArrowLeft', 'ArrowRight'].includes(event.key)) { const keys = Object.keys(variants); const index = keys.indexOf(state.variant); setVariant(keys[(index + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length]); }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (state.changes.length) { applyChanges(); render(); showToast('配置已应用；当前 Run 不变'); } }
+      });
+
+      render();
+    </script>
+  </body>
+</html>

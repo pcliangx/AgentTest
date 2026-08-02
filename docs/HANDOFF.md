@@ -1,6 +1,6 @@
 # AgentTest — Claude Code / Codex 续开发文档
 
-> 更新日期：2026-07-31 · 结构化通道基线：`ba49614` · 分支：`main`
+> 更新日期：2026-08-02 · 结构化通道基线：`ba49614` · 分支：`main`
 >
 > 本文是 Claude Code 与 Codex 共用的当前状态说明；实时 HEAD 和工作树状态以
 > `git log` / `git status` 为准。
@@ -17,14 +17,20 @@ Codex CLI 和 Kimi Code：
 - 可查看各 worktree 的改动，并 fast-forward 合并到主仓库。
 
 当前产品路线见 [PLAN-v0.2](./PLAN-v0.2.md)：下一阶段从“三 pane 运行器”升级为
-**Project-first 工作台**。一个 Project 可创建任意数量、用户命名的 Agent
-Instance；Claude Code、Codex、Kimi Code 只是 Provider。Agent 通过 Tab 打开，
-通过 Panel 分屏管理。
+**Project-first 集成工作台与指挥中心**。一个 Project 可创建任意数量、用户命名的
+Agent Instance；Claude Code、Codex、Kimi Code 只是 Provider。Agent 通过 Tab
+打开，通过自由 split tree 中的 Panel 分屏管理。Overview、Tasks、Knowledge、
+Handoffs、Activity、Attention 与 Settings 都是正式 Project 工作面。
 
 现行架构决策见
 [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)：**结构化 Chat 是默认编排通道，
 PTY 只负责 Terminal 接管**；产品对象决策见
-[ADR-0008](./adr/0008-project-first-agent-instances.md)。ADR-0006 已被取代。
+[ADR-0008](./adr/0008-project-first-agent-instances.md)。工作区与生命周期、飞书信任
+边界、交付顺序和可强制执行安全契约分别见
+[ADR-0009](./adr/0009-command-center-workspace-lifecycle.md)、
+[ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md) 和
+[ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md)、
+[ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)。ADR-0006 已被取代。
 
 ## 2. 当前状态
 
@@ -39,10 +45,15 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | Terminal PTY 接管及结构化 run 互斥 | ✅ |
 | worktree 隔离、RepoPicker、改动查看与 ff-only 合并 | ✅ |
 | 仓库切换前等待结构化子进程退出 | ✅ |
-| Project-first 信息架构与 Provider/Instance 领域模型 | ✅ 设计基线 |
-| 5 实例 Tab/Panel A/B/C 方向稿 + D 推荐组合稿 | 🟡 待用户确认 |
-| D 推荐稿独立本地 HTML | ✅ 无构建、无网络依赖 |
+| Project-first 指挥中心、Provider/Instance 与生命周期决策 | ✅ 用户已确认 |
+| 飞书浏览器/CLI 身份、Project scope、CRUD 与数据主权决策 | ✅ 用户已确认 |
+| A 版原始 HTML 原型 | ✅ 保留为历史基线 |
+| B 版指挥中心与 Settings A/B/C 结构原型 | ✅ 专家评审完成；冻结 A 主结构 + B/C 辅助视图 |
+| Design Gate | ✅ 2026-08-02 已关闭 |
+| Phase 1 spec 与 7 个本地 tickets | ✅ 已建立；生产实现尚未启动 |
+| 生产 UI-first + contract mock 交付顺序 | ✅ 用户已确认；尚未启动 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
+| Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
 
 旧 `TranscriptWatcher` 与 Claude transcript mapper 仍保留，但不再属于默认主链路；
@@ -53,12 +64,18 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 1. 本文档。
 2. [领域词汇表](../CONTEXT.md)。
 3. [PLAN-v0.2](./PLAN-v0.2.md)。
-4. [UX-v0.2](./UX-v0.2.md)；设计门禁完成前暂停生产功能开发。
+4. [UX-v0.2](./UX-v0.2.md)；设计基线已冻结，Phase 1 尚未启动。
 5. [ADR-0008](./adr/0008-project-first-agent-instances.md)。
-6. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
-7. [open-design 通信调研](./research/open-design-agent-communication.md)。
-8. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
-9. 根目录 `agent-adapter-architecture.md`。
+6. [ADR-0009](./adr/0009-command-center-workspace-lifecycle.md)。
+7. [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md)。
+8. [ADR-0011](./adr/0011-ui-first-contract-driven-delivery.md)。
+9. [ADR-0012](./adr/0012-enforced-execution-and-brokered-capabilities.md)。
+10. [ADR-0007](./adr/0007-structured-chat-pty-terminal.md)。
+11. [B 版原型说明](./design/README.md)。
+12. [Phase 1 spec](../.scratch/ui-first-command-center/spec.md)。
+13. [open-design 通信调研](./research/open-design-agent-communication.md)。
+14. [`src/main/adapters/PROBE.md`](../src/main/adapters/PROBE.md)。
+15. 根目录 `agent-adapter-architecture.md`。
 
 `docs/PLAN-v0.1.md` 和 ADR-0001 至 ADR-0006 是历史背景；发生冲突时以当前代码、
 最新 Accepted ADR 和 PLAN-v0.2 为准。
@@ -227,24 +244,31 @@ src/renderer/src/
 docs/
   PLAN-v0.2.md                  当前产品与工程路线
   UX-v0.2.md                    当前信息架构、流程与状态
+  design/                       throwaway A/B 原型与评审说明
   adr/0007-*.md                结构化 Chat / PTY 通道决策
   adr/0008-*.md                Project-first / Agent Instance 决策
+  adr/0009-*.md                指挥中心布局、显式执行与生命周期
+  adr/0010-*.md                飞书集成信任边界与数据主权
+  adr/0011-*.md                生产 UI-first 与契约化 mock 顺序
+  adr/0012-*.md                强制执行门禁与受控 Connector 能力
   research/open-design-*.md    迁移依据
 CONTEXT.md                      Project、Agent、Tab、Panel 领域词汇
 ```
 
 ## 9. 下一步
 
-UI/UX 设计在外部进行。设计确认后，将选择同步回 UX/PLAN，再按以下顺序恢复生产开发：
+Design Gate 已关闭，冻结结果是“指挥中心 A 主骨架 + B 态势抽屉 + C Focus/窄窗口
+palette”和“Settings A 完整编辑器 + B 比较视图 + C readiness 摘要”。生产 UI 尚未
+启动；收到明确开工指令后，从
+[`01-contract-and-mock-scenarios`](../.scratch/ui-first-command-center/issues/01-contract-and-mock-scenarios.md)
+开始，依次执行该 feature 的 7 个 tickets。
 
-1. 确认 Project/Agent Directory、New Agent、Tab 与 Panel 的操作；
-2. 确认关闭 Tab、停止 Agent、删除 Agent 和 Project 切换的语义；
-3. 按 PLAN-v0.2 顺序恢复 Provider Doctor、ProjectStore、Agent Instance、
-   Tabs/Panels 和实例级 runtime/worktree 的生产开发。
-
-不要继续实现 Task-first TaskStore，也不要先实现从 assistant 普通文本自动触发的
-agent-to-agent `@@`。当前代码的 `AgentId` 实际是 ProviderId；生产迁移必须将它与
-AgentInstanceId 分开。
+第一生产阶段只做契约驱动 UI 与 MockScenarioAdapter，不能先实现真实 ProjectStore、
+Agent/PTY、Git mutation、PermissionBroker 或飞书副作用。当前代码的 `AgentId` 实际是
+ProviderId，迁移必须将它与 AgentInstanceId 分开；当前 v0.1 的 Claude
+`bypassPermissions` 与 Kimi 自动允许只是既有安全缺口，不能被描述为 v0.2 的有效权限。
+Phase 3 在最小 PermissionBroker 就绪前禁止启动真实 Run。不要实现外部事件或 assistant
+普通文本自动触发 Agent。
 
 ## 10. 交付纪律
 

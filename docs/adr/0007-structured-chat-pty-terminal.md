@@ -3,7 +3,12 @@
 - 状态：已接受（Accepted）
 - 日期：2026-07-31
 - 取代：[ADR-0006](./0006-v0.1-pty-primary.md)
-- 关联：[ADR-0001](./0001-v0.1-oneshot-resume-model.md)、[ADR-0002](./0002-per-agent-git-worktree.md)、[调研报告](../research/open-design-agent-communication.md)
+- 关联：[ADR-0001](./0001-v0.1-oneshot-resume-model.md)、
+  [ADR-0002](./0002-per-agent-git-worktree.md)、
+  [ADR-0008](./0008-project-first-agent-instances.md)、
+  [ADR-0009](./0009-command-center-workspace-lifecycle.md)、
+  [ADR-0012](./0012-enforced-execution-and-brokered-capabilities.md)、
+  [调研报告](../research/open-design-agent-communication.md)
 
 ## 背景（Context）
 
@@ -42,7 +47,7 @@ Claude partial 参数/decoder 与 UI 呈现问题，并非结构化协议的固�
 无 protocol error 时持久化会话和 transcript。失败的 native resume 会清除失效
 session id，下轮以已完成 transcript 重建上下文。
 
-PTY 保留，但职责收缩为每 pane 显式选择的 **Terminal**：
+PTY 保留，但职责收缩为每个 Agent Instance 在 Agent Tab 内显式选择的 **Terminal**：
 
 - Terminal 运行 agent 原生 TUI，支持键盘、resize 和人工操作。
 - 同一 agent 的结构化 run 与 Terminal PTY 互斥。

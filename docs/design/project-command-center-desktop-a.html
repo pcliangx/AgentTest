@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentTest · 桌面项目中心方案 A</title>
+    <style>
+      /* THROWAWAY UI PROTOTYPE — 方案 A：项目侧栏、Agent 工作台与内嵌知识库网页。 */
+      :root {
+        --bg: #ffffff;
+        --surface: #f7f8fa;
+        --fg: #111111;
+        --muted: #6b7280;
+        --border: #d9dee7;
+        --accent: #1677ff;
+        --font-display: Inter, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        --font-body: Inter, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        --shadow-sm: 0 1px 2px color-mix(in oklab, var(--fg) 8%, transparent);
+        --shadow-md: 0 16px 40px color-mix(in oklab, var(--fg) 14%, transparent);
+      }
+
+      * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+      html, body { width: 100%; height: 100%; margin: 0; }
+      #root { width: 100%; height: 100%; }
+      body { overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 13px; line-height: 1.45; }
+      button, input { font: inherit; }
+      button { color: inherit; letter-spacing: 0.02em; }
+      button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      input:disabled { cursor: not-allowed; opacity: 0.58; }
+      svg { display: block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      [hidden] { display: none !important; }
+
+      .app { display: flex; height: 100%; min-width: 0; flex-direction: column; }
+      .titlebar { position: relative; display: flex; height: 38px; flex: 0 0 38px; align-items: center; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 12px; user-select: none; }
+      .window-controls { display: flex; gap: 7px; }
+      .window-control { width: 11px; height: 11px; border: 1px solid var(--muted); border-radius: 50%; background: var(--bg); }
+      .window-title { position: absolute; left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 550; }
+      .window-context { margin-left: auto; color: var(--muted); font-size: 11px; }
+      .topbar { position: relative; z-index: 30; display: flex; height: 44px; flex: 0 0 44px; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg); padding: 0 10px; }
+      .brand-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: 10px; font-weight: 600; }
+      .breadcrumb { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--muted); }
+      .breadcrumb strong { overflow: hidden; color: var(--fg); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+      .key-hint { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+      .button, .icon-button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 0 10px; cursor: pointer; font-weight: 550; }
+      .button:hover, .icon-button:hover { background: var(--surface); }
+      .button.secondary { border-color: var(--border); background: var(--bg); box-shadow: var(--shadow-sm); }
+      .button.primary { background: var(--accent); color: var(--bg); box-shadow: 0 2px 0 color-mix(in oklab, var(--accent) 68%, var(--fg)); }
+      .button.primary:active { transform: translateY(2px); box-shadow: none; }
+      .icon-button { width: 34px; padding: 0; color: var(--muted); }
+      .icon-button.active { background: var(--fg); color: var(--bg); }
+      .text-button { border: 0; background: transparent; padding: 4px; color: var(--muted); cursor: pointer; }
+      .text-button:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+
+      .shell { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: 272px minmax(0, 1fr); }
+      .sidebar { position: relative; display: flex; min-height: 0; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg); }
+      .sidebar-block { border-bottom: 1px solid var(--border); padding: 12px; }
+      .sidebar-block.agents { display: flex; min-height: 0; flex: 1; flex-direction: column; border-bottom: 0; }
+      .eyebrow { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+      .block-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 11px; }
+      .current-project { display: grid; width: 100%; min-height: 58px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid var(--fg); border-radius: 8px; background: var(--surface); padding: 9px; text-align: left; cursor: pointer; }
+      .current-project:hover { background: var(--bg); }
+      .current-project strong { display: block; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .current-project small { display: block; overflow: hidden; margin-top: 3px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .current-project svg { color: var(--muted); }
+      .search-wrap { position: relative; margin-bottom: 8px; }
+      .search-wrap svg { position: absolute; top: 10px; left: 10px; width: 16px; height: 16px; color: var(--muted); }
+      .search { width: 100%; height: 38px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 0 34px; color: var(--fg); }
+      .search::placeholder { color: var(--muted); }
+      .agent-list { min-height: 0; overflow: auto; }
+      .agent-row { display: grid; width: 100%; min-height: 50px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; border-radius: 8px; background: transparent; padding: 7px 8px; text-align: left; }
+      .agent-row:hover { background: var(--surface); }
+      .agent-row.selected { background: var(--fg); color: var(--bg); }
+      .agent-row.selected small, .agent-row.selected .status { color: color-mix(in oklab, var(--bg) 72%, var(--fg)); }
+      .glyph { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: 10px; font-weight: 600; }
+      .agent-row strong { display: block; overflow: hidden; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .agent-row small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .status { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .dot { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; }
+      .dot.running { border-color: var(--fg); border-top-color: transparent; animation: spin 1s linear infinite; }
+      .dot.attention { border-radius: 2px; background: var(--fg); }
+      .dot.completed { background: var(--fg); }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .sidebar-summary { margin-top: auto; border-top: 1px solid var(--border); padding-top: 12px; color: var(--muted); font-size: 11px; }
+
+      .workspace { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: auto; background: var(--surface); padding: 0 0 52px; }
+      .workspace.agents-view::before { position: fixed; inset: 82px 0 24px 272px; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 24px 24px; opacity: 0.16; content: ""; pointer-events: none; }
+      .workspace-inner { position: relative; z-index: 1; width: 100%; min-height: 100%; margin: 0; }
+      .workspace-head { position: sticky; z-index: 4; top: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border); background: var(--bg); margin: 0; padding: 12px 14px; }
+      .workspace-head h1 { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; }
+      .workspace-head p { max-width: 65ch; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+      .meta-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+      .meta-pill { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 4px 7px; color: var(--muted); font-size: 11px; }
+      .resource-summary-inline { color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .workspace-nav { display: grid; gap: 3px; }
+      .workspace-nav-item { display: grid; width: 100%; min-height: 46px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 5px 7px; text-align: left; cursor: pointer; }
+      .workspace-nav-item:hover { background: var(--surface); }
+      .workspace-nav-item.active { border-color: var(--fg); background: var(--surface); }
+      .workspace-nav-item strong { display: block; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .workspace-nav-item small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .sidebar-context { display: flex; min-height: 0; flex: 1; flex-direction: column; border-bottom: 0; }
+      .resource-source-list { display: grid; gap: 3px; overflow: auto; }
+      .resource-source-row { display: grid; width: 100%; min-height: 42px; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; padding: 6px 8px; text-align: left; }
+      .resource-source-row:hover { background: var(--surface); }
+      button.resource-source-row { cursor: pointer; }
+      .resource-source-row.active { background: var(--surface); box-shadow: inset 0 0 0 1px var(--fg); }
+      .resource-source-row strong { overflow: hidden; font-size: 11px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+      .resource-source-row small { display: block; color: var(--muted); font-size: 10px; }
+      .workspace.content-workspace { overflow: hidden; padding: 0; background: var(--bg); }
+      .workspace.content-workspace .workspace-inner { height: 100%; min-height: 0; }
+      .content-view { display: flex; min-width: 0; height: 100%; min-height: 0; flex-direction: column; background: var(--bg); }
+      .content-head { position: sticky; z-index: 4; top: 0; display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--border); background: var(--bg); margin: 0; padding: 12px 14px; }
+      .content-head > div:first-child { min-width: 0; }
+      .content-head h1 { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; }
+      .content-head p { max-width: 65ch; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+      .content-actions { display: flex; align-items: center; gap: 7px; }
+      .content-panel { min-height: 0; flex: 1; overflow: auto; border: 0; border-radius: 0; background: var(--bg); box-shadow: none; }
+      .content-toolbar { position: sticky; z-index: 3; top: 0; display: flex; min-height: 40px; align-items: center; gap: 7px; border-bottom: 1px solid var(--border); background: var(--bg); padding: 0 11px; }
+      .view-chip { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 4px 7px; color: var(--muted); font-size: 10px; }
+      .content-spacer { flex: 1; }
+      .task-table { width: 100%; min-width: 720px; }
+      .task-table-row { display: grid; min-height: 48px; grid-template-columns: 104px minmax(250px, 1.4fr) minmax(150px, 0.8fr) 120px 90px; align-items: center; border-bottom: 1px solid var(--border); }
+      .task-table-row:last-child { border-bottom: 0; }
+      .task-table-row.header { position: sticky; z-index: 2; top: 40px; min-height: 34px; background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+      .task-cell { min-width: 0; padding: 8px 12px; }
+      .task-cell strong { display: block; overflow: hidden; font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+      .task-cell small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .webview-panel { overflow: hidden; }
+      .wiki-webview { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; background: var(--bg); }
+      .webview-chrome { display: flex; min-height: 42px; flex: 0 0 42px; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); background: var(--surface); padding: 0 8px; }
+      .webview-control { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+      .webview-control:hover { background: var(--bg); color: var(--fg); }
+      .webview-address { display: flex; min-width: 0; min-height: 30px; flex: 1; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 0 10px; color: var(--muted); font-size: 10px; }
+      .webview-address strong { overflow: hidden; color: var(--fg); font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+      .feishu-webpage { display: grid; min-height: 0; flex: 1; grid-template-columns: 220px minmax(0, 1fr); overflow: hidden; background: var(--bg); }
+      .feishu-web-sidebar { min-height: 0; overflow: auto; border-right: 1px solid var(--border); background: var(--surface); padding: 14px 10px; }
+      .web-brand { display: flex; align-items: center; gap: 8px; margin: 0 6px 14px; font-size: 12px; font-weight: 600; }
+      .web-space-button { display: grid; width: 100%; min-height: 40px; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 5px 7px; text-align: left; cursor: pointer; }
+      .web-space-button:hover { background: var(--bg); }
+      .web-space-button.active { border-color: var(--fg); background: var(--bg); }
+      .web-space-button strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .feishu-document { min-height: 0; overflow: auto; padding: 28px clamp(24px, 5vw, 64px) 80px; }
+      .web-breadcrumb { color: var(--muted); font-size: 10px; }
+      .feishu-document h1 { max-width: 22ch; margin: 14px 0 8px; font-family: var(--font-display); font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; }
+      .web-doc-meta { color: var(--muted); font-size: 10px; }
+      .web-summary { max-width: 66ch; margin: 24px 0 0; border-top: 1px solid var(--border); padding-top: 18px; font-size: 14px; line-height: 1.65; }
+      .web-section { max-width: 66ch; margin-top: 24px; }
+      .web-section h2 { margin: 0 0 9px; font-size: 15px; font-weight: 600; }
+      .web-section p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.65; }
+      .board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 10px; }
+      .stage { min-width: 0; min-height: 300px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-sm); }
+      .stage-head { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding: 0 13px; }
+      .stage-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+      .stage-body { display: grid; gap: 8px; padding: 10px; }
+      .task-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 11px; }
+      .task-card strong { display: flex; align-items: center; justify-content: space-between; gap: 10px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .task-card p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+      .workspace.agents-view { overflow: hidden; padding: 0; }
+      .workspace.agents-view .workspace-inner { height: 100%; min-height: 0; }
+      .agent-command-view { display: flex; min-width: 0; height: 100%; min-height: 0; flex-direction: column; }
+      .workbench-toolbar { display: flex; min-width: 0; min-height: 48px; flex: 0 0 48px; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); background: var(--bg); padding: 0 10px; }
+      .workbench-title { min-width: 0; }
+      .workbench-title strong { display: block; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .workbench-title small { display: block; color: var(--muted); font-size: 10px; }
+      .workbench-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-left: auto; }
+      .layout-switcher { display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 2px; }
+      .layout-option { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; padding: 0 8px; color: var(--muted); cursor: pointer; font-size: 10px; }
+      .layout-option.active { background: var(--bg); color: var(--fg); box-shadow: var(--shadow-sm); }
+      .workbench-body { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr) 280px; }
+      .workbench-body.inspector-off { grid-template-columns: minmax(0, 1fr); }
+      .agent-canvas { position: relative; min-width: 0; min-height: 0; overflow: auto; padding: 10px 10px 72px; }
+      .agent-panels { position: relative; z-index: 1; display: grid; min-height: 100%; gap: 9px; }
+      .agent-panels[data-layout="analysis"] { grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr); grid-template-rows: repeat(2, minmax(360px, 1fr)); }
+      .agent-panels[data-layout="analysis"] .workbench-panel:first-child { grid-row: 1 / 3; }
+      .agent-panels[data-layout="split"] { grid-template-columns: repeat(2, minmax(360px, 1fr)); }
+      .agent-panels[data-layout="focus"] { grid-template-columns: minmax(0, 1fr); }
+      .workbench-panel { display: flex; min-width: 0; min-height: 500px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-sm); }
+      .agent-panels[data-layout="analysis"] .workbench-panel { min-height: 360px; }
+      .workbench-panel.focused { border-color: var(--fg); }
+      .workbench-panel[hidden] { display: none; }
+      .workbench-panel-head { display: flex; min-height: 40px; flex: 0 0 40px; align-items: center; border-bottom: 1px solid var(--border); background: var(--surface); }
+      .workbench-panel-label { padding: 0 10px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+      .panel-tabs { display: flex; min-width: 0; height: 40px; overflow-x: auto; border-left: 1px solid var(--border); }
+      .panel-tab-unit { display: flex; min-width: 0; border-right: 1px solid var(--border); background: var(--bg); }
+      .panel-tab { display: flex; min-width: 0; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 0 8px; color: var(--muted); cursor: pointer; }
+      .panel-tab strong { overflow: hidden; max-width: 110px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .panel-tab.active { border-bottom-color: var(--fg); color: var(--fg); }
+      .panel-tab-close { width: 28px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+      .panel-tab-close:hover { background: var(--surface); color: var(--fg); }
+      .panel-focus { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); margin: 0 5px 0 auto; cursor: pointer; }
+      .panel-focus:hover { background: var(--bg); color: var(--fg); }
+      .agent-session { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+      .session-head { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 9px; border-bottom: 1px solid var(--border); padding: 7px 10px; }
+      .session-identity { display: flex; min-width: 0; align-items: center; gap: 8px; }
+      .session-identity strong { display: block; overflow: hidden; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .session-identity small { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .session-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); padding: 0 10px; }
+      .session-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 7px 0 6px; color: var(--muted); cursor: pointer; font-size: 10px; }
+      .session-tab.active { border-bottom-color: var(--fg); color: var(--fg); font-weight: 600; }
+      .session-body { min-height: 0; flex: 1; overflow: auto; padding: 11px; }
+      .message-block { max-width: 66ch; margin-bottom: 14px; }
+      .message-block + .message-block { border-top: 1px solid var(--border); padding-top: 11px; }
+      .speaker { margin-bottom: 4px; color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+      .session-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+      .session-list li { display: grid; min-height: 38px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); font-size: 11px; }
+      .session-list small { color: var(--muted); }
+      .terminal-output { min-height: 100%; margin: 0; border-radius: 8px; background: var(--fg); padding: 11px; color: var(--bg); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+      .composer { display: flex; align-items: flex-end; gap: 7px; border-top: 1px solid var(--border); padding: 8px; }
+      .composer textarea { min-height: 36px; max-height: 96px; flex: 1; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 8px 9px; color: var(--fg); line-height: 1.4; }
+      .composer button { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 8px; background: var(--fg); color: var(--bg); cursor: pointer; box-shadow: var(--shadow-sm); }
+      .workbench-panel.focused .composer button { background: var(--accent); }
+      .panel-empty { display: grid; min-height: 300px; flex: 1; place-items: center; padding: 24px; color: var(--muted); text-align: center; }
+      .agent-inspector { min-height: 0; overflow: auto; border-left: 1px solid var(--border); background: var(--bg); padding: 14px 12px 72px; }
+      .workbench-body.inspector-off .agent-inspector { display: none; }
+      .inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+      .inspector-agent { display: flex; align-items: center; gap: 9px; }
+      .inspector-agent strong { display: block; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .inspector-agent small { color: var(--muted); font-size: 10px; }
+      .inspector-card { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 10px; }
+      .inspector-card p { margin: 6px 0 0; font-size: 11px; }
+      .inspector-facts { margin: 12px 0; border-top: 1px solid var(--border); }
+      .inspector-fact { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; }
+      .inspector-fact strong { color: var(--fg); font-weight: 550; text-align: right; }
+      .empty-workspace { display: grid; min-height: 360px; place-items: center; border: 1px dashed var(--border); border-radius: 8px; background: var(--bg); margin: 10px; padding: 40px; text-align: center; }
+      .content-view > .empty-workspace { min-height: 0; flex: 1; }
+      .empty-workspace h2 { margin: 0; font-family: var(--font-display); font-size: 28px; letter-spacing: -0.02em; }
+      .empty-workspace p { max-width: 54ch; margin: 9px auto 18px; color: var(--muted); }
+
+      .project-popover { position: absolute; z-index: 50; top: 118px; left: 12px; width: 340px; max-height: calc(100vh - 166px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 8px; box-shadow: var(--shadow-md); }
+      .popover-head { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px 10px; }
+      .project-search { position: relative; margin-bottom: 6px; }
+      .project-search svg { position: absolute; top: 11px; left: 10px; width: 16px; height: 16px; color: var(--muted); }
+      .project-search input { width: 100%; height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px 0 34px; }
+      .project-list { display: grid; gap: 3px; }
+      .project-option { display: grid; width: 100%; min-height: 58px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 9px 10px; text-align: left; cursor: pointer; }
+      .project-option:hover { background: var(--surface); }
+      .project-option.selected { border-color: var(--fg); background: var(--surface); }
+      .project-option strong { display: block; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .project-option small { display: block; overflow: hidden; margin-top: 2px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+      .project-option .status { justify-self: end; }
+      .popover-footer { display: grid; gap: 6px; border-top: 1px solid var(--border); margin-top: 8px; padding: 8px 0 0; }
+      .popover-footer .button { width: 100%; justify-content: flex-start; }
+      .no-results { border: 1px dashed var(--border); border-radius: 8px; padding: 24px 12px; color: var(--muted); text-align: center; }
+
+      .command-overlay { position: fixed; z-index: 45; inset: 82px 0 24px; display: grid; align-items: start; justify-items: center; background: color-mix(in oklab, var(--fg) 38%, transparent); padding: 48px 20px; }
+      .command-panel { width: min(680px, 100%); max-height: calc(100vh - 160px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-md); }
+      .command-input { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); padding: 12px 14px; }
+      .command-input input { width: 100%; border: 0; outline: 0; background: transparent; font-size: 18px; }
+      .command-body { padding: 8px; }
+      .command-section-label { padding: 8px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+      .command-project { grid-template-columns: 40px minmax(0, 1fr) auto; }
+      .command-project .project-index { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-weight: 600; }
+
+      .launcher { min-height: 0; flex: 1; overflow: auto; background: var(--surface); padding: 0 0 64px; }
+      .launcher-inner { position: relative; width: 100%; margin: 0; }
+      .launcher-head { position: sticky; z-index: 3; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); background: var(--bg); margin: 0; padding: 12px 14px; }
+      .launcher-head h1 { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; }
+      .launcher-head p { max-width: 58ch; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+      .launcher-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; padding: 10px; }
+      .launcher-card { display: grid; min-height: 64px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 8px 10px; text-align: left; cursor: pointer; box-shadow: none; }
+      .launcher-card:hover { border-color: var(--fg); background: var(--surface); }
+      .launcher-card.selected { border-color: var(--fg); }
+      .launcher-card h2 { margin: 0; font-family: var(--font-display); font-size: 15px; line-height: 1.2; letter-spacing: -0.01em; }
+      .launcher-card .path { margin-top: 5px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .launcher-card .card-meta { display: flex; align-items: center; justify-content: flex-end; gap: 12px; color: var(--muted); font-size: 11px; }
+      .new-project-card { display: flex; min-height: 62px; align-items: center; justify-content: flex-start; border-style: dashed; color: var(--muted); text-align: left; }
+      .new-project-card svg { width: 20px; height: 20px; margin: 0 4px 0 0; }
+
+      .modal-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; background: color-mix(in oklab, var(--fg) 52%, transparent); padding: 20px; }
+      .modal { width: min(520px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 24px; box-shadow: var(--shadow-md); }
+      .modal h2 { margin: 0; font-family: var(--font-display); font-size: 20px; line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; }
+      .modal > p { max-width: 60ch; margin: 8px 0 20px; color: var(--muted); }
+      .field { margin-bottom: 16px; }
+      .field-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+      .field-input { width: 100%; height: 42px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 0 10px; color: var(--fg); }
+      .field-help { margin-top: 5px; color: var(--muted); font-size: 12px; }
+      .choice-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .choice-grid.agent-providers { grid-template-columns: repeat(3, 1fr); }
+      .choice { min-height: 88px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 12px; text-align: left; cursor: pointer; }
+      .choice[aria-checked="true"] { border-color: var(--fg); background: var(--surface); }
+      .choice strong { display: block; font-weight: 600; }
+      .choice small { display: block; margin-top: 4px; color: var(--muted); line-height: 1.4; }
+      .form-error { min-height: 20px; color: var(--fg); font-size: 12px; font-weight: 600; }
+      .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+      .toast { position: fixed; z-index: 100; top: 94px; right: 16px; transform: translateY(-8px); border: 1px solid var(--fg); border-radius: 8px; background: var(--fg); padding: 10px 12px; color: var(--bg); opacity: 0; pointer-events: none; transition: 160ms ease; }
+      .toast.show { transform: translateY(0); opacity: 1; }
+      .desktop-statusbar { display: flex; height: 24px; flex: 0 0 24px; align-items: center; gap: 12px; border-top: 1px solid var(--border); background: var(--surface); padding: 0 10px; color: var(--muted); font-size: 10px; }
+      .desktop-statusbar .statusbar-spacer { flex: 1; }
+
+      @media (max-width: 1180px) {
+        .shell { grid-template-columns: 232px minmax(0, 1fr); }
+        .workspace.agents-view::before { left: 232px; }
+        .board { grid-template-columns: 1fr; }
+        .stage { min-height: 240px; }
+        .feishu-webpage { grid-template-columns: 190px minmax(0, 1fr); }
+      }
+      @media (max-width: 900px) {
+        .shell { grid-template-columns: 72px minmax(0, 1fr); }
+        .workspace.agents-view::before { left: 72px; }
+        .sidebar-block { padding: 10px; }
+        .sidebar .eyebrow, .current-project div, .agent-row > span:nth-child(2), .agent-row .status, .sidebar-summary, .agent-search-wrap, .workspace-nav-item > span:nth-child(2), .workspace-nav-item > span:last-child, .resource-source-list { display: none; }
+        .current-project { min-height: 44px; grid-template-columns: 1fr; place-items: center; padding: 0; }
+        .current-project::before { content: "项"; font-weight: 600; }
+        .current-project svg { display: none; }
+        .agent-row { grid-template-columns: 1fr; place-items: center; }
+        .launcher { padding: 0 0 64px; }
+        .launcher-grid { grid-template-columns: 1fr; }
+        .launcher-head { align-items: flex-start; flex-direction: column; }
+        .workspace-nav-item { grid-template-columns: 1fr; place-items: center; padding: 5px; }
+        .content-head { align-items: stretch; flex-direction: column; }
+        .content-actions { justify-content: flex-end; }
+        .feishu-webpage { grid-template-columns: 160px minmax(0, 1fr); }
+        .workbench-body { grid-template-columns: minmax(0, 1fr); }
+        .agent-inspector { position: fixed; z-index: 38; top: 82px; right: 0; bottom: 24px; width: 280px; border-left: 1px solid var(--border); box-shadow: var(--shadow-md); }
+        .agent-panels[data-layout="split"] { grid-template-columns: minmax(320px, 1fr); }
+        .layout-option { width: 30px; padding: 0; justify-content: center; }
+        .layout-option span, .workbench-title small { display: none; }
+        .top-actions .button span:not(.key-hint) { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-od-id="project-management-prototype"></div>
+
+    <div class="modal-backdrop" id="newProjectModal" hidden>
+      <form class="modal" id="newProjectForm" role="dialog" aria-modal="true" aria-labelledby="newProjectTitle">
+        <h2 id="newProjectTitle">新建项目</h2>
+        <p>创建本地项目工作区。此原型只保存界面状态，不会真的创建目录或启动 Agent。</p>
+        <div class="field">
+          <label class="field-label" for="projectName">项目名称</label>
+          <input class="field-input" id="projectName" autocomplete="off" placeholder="例如：客户流失分析" />
+        </div>
+        <div class="field">
+          <label class="field-label" for="projectPath">本地目录</label>
+          <input class="field-input" id="projectPath" autocomplete="off" placeholder="~/Projects/customer-churn" />
+          <div class="field-help">目录仅用于原型展示，不会访问本地文件系统。</div>
+        </div>
+        <div class="field">
+          <span class="field-label" id="startModeLabel">起始方式</span>
+          <div class="choice-grid" id="startModeOptions" role="radiogroup" aria-labelledby="startModeLabel">
+            <button class="choice" type="button" role="radio" aria-checked="true" data-start-mode="blank"><strong>空白工作台</strong><small>从一个空 Panel 开始，不复制任何 Agent。</small></button>
+            <button class="choice" type="button" role="radio" aria-checked="false" data-start-mode="copy"><strong>复制当前布局</strong><small>复制 Panel 布局，不复制 Agent、会话或运行状态。</small></button>
+          </div>
+        </div>
+        <div class="form-error" id="projectError" role="alert"></div>
+        <div class="modal-actions">
+          <button class="button secondary" type="button" data-close-modal>取消</button>
+          <button class="button primary" type="submit">创建并打开</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="modal-backdrop" id="switchProjectModal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="switchProjectTitle">
+        <h2 id="switchProjectTitle">切换项目</h2>
+        <p id="switchProjectDescription">当前项目仍有运行中的 Agent。请选择切换后的运行策略。</p>
+        <div class="choice-grid">
+          <button class="choice" type="button" id="keepRunningAndSwitch"><strong>保持后台运行</strong><small>切换界面，Agent 继续执行并保留通知。</small></button>
+          <button class="choice" type="button" id="stopAndSwitch"><strong>停止后切换</strong><small>模拟停止当前项目的运行，再进入目标项目。</small></button>
+        </div>
+        <div class="modal-actions"><button class="button secondary" type="button" data-close-modal>取消</button></div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="newAgentModal" hidden>
+      <form class="modal" id="newAgentForm" role="dialog" aria-modal="true" aria-labelledby="newAgentTitle">
+        <h2 id="newAgentTitle">新建 Agent</h2>
+        <p>Agent 属于当前项目，创建后会直接打开到当前 Panel。</p>
+        <span class="field-label" id="agentProviderLabel">Provider</span>
+        <div class="choice-grid agent-providers" id="agentProviderOptions" role="radiogroup" aria-labelledby="agentProviderLabel"></div>
+        <div class="field">
+          <label class="field-label" for="newAgentName">Agent 名称</label>
+          <input class="field-input" id="newAgentName" autocomplete="off" placeholder="例如 cc_marketing" />
+          <div class="field-help">以字母开头，可使用字母、数字、下划线或连字符。</div>
+        </div>
+        <div class="form-error" id="agentNameError" role="alert"></div>
+        <div class="modal-actions"><button class="button secondary" type="button" data-close-modal>取消</button><button class="button primary" type="submit">创建并打开</button></div>
+      </form>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const iconPaths = {
+        search: '<circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path>',
+        plus: '<path d="M12 5v14M5 12h14"></path>',
+        chevron: '<path d="m9 18 6-6-6-6"></path>',
+        down: '<path d="m6 9 6 6 6-6"></path>',
+        command: '<path d="M18 9a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3Z"></path>',
+        left: '<path d="m15 18-6-6 6-6"></path>',
+        right: '<path d="m9 18 6-6-6-6"></path>',
+        close: '<path d="m7 7 10 10M17 7 7 17"></path>',
+        folder: '<path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>',
+        task: '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="m8 11 2 2 4-4M8 16h8"></path>',
+        wiki: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22Z"></path><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22Z"></path>',
+        terminal: '<path d="m5 7 4 4-4 4M11 17h8"></path><rect x="3" y="3" width="18" height="18" rx="2"></rect>',
+        external: '<path d="M14 5h5v5M19 5l-9 9"></path><path d="M19 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"></path>',
+        inspector: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7h.01"></path>',
+        send: '<path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path>',
+        focus: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>',
+        split: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16"></path>',
+        analysis: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16M12 12h9"></path>',
+        refresh: '<path d="M20 6v5h-5"></path><path d="M4 18v-5h5"></path><path d="M18 9a7 7 0 0 0-12-2L4 11M6 15a7 7 0 0 0 12 2l2-4"></path>',
+        arrow: '<path d="M5 12h14M13 6l6 6-6 6"></path>'
+      };
+      const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${iconPaths[name]}</svg>`;
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+
+      const seedProjects = [
+        {
+          id: 'sales-analysis', name: '销售数据分析', path: '~/Projects/sales-analysis', lastOpened: '刚刚', layout: ['Panel 1', 'Panel 2', 'Panel 3'],
+          agents: [
+            { name: 'cc_data', provider: 'CL', status: 'running', label: '运行中', work: '校验销售数据清洗脚本', stage: 0 },
+            { name: 'cc_sql', provider: 'CL', status: 'ready', label: '就绪', work: '等待指标查询指令', stage: 0 },
+            { name: 'cx_anti', provider: 'CX', status: 'attention', label: '需要确认', work: '确认高额订单处理策略', stage: 1 },
+            { name: 'cx_forecast', provider: 'CX', status: 'completed', label: '已完成', work: '季度预测基线已交付', stage: 1 },
+            { name: 'kimi_visual', provider: 'KM', status: 'running', label: '运行中', work: '整理管理层趋势视图', stage: 2 }
+          ]
+        },
+        {
+          id: 'design-system', name: 'Design System', path: '~/Projects/design-system', lastOpened: '今天', layout: ['Panel 1', 'Panel 2', 'Panel 3'],
+          agents: [
+            { name: 'cx_tokens', provider: 'CX', status: 'ready', label: '就绪', work: '等待设计令牌检查', stage: 0 },
+            { name: 'cc_docs', provider: 'CL', status: 'completed', label: '已完成', work: '组件文档已整理', stage: 2 }
+          ]
+        },
+        { id: 'research-notes', name: '研究资料整理', path: '~/Projects/research-notes', lastOpened: '昨天', layout: ['Panel 1'], agents: [] }
+      ];
+      const resourceSeeds = {
+        'sales-analysis': {
+          connected: true, taskLists: ['产品迭代', 'Agent 协作任务'], taskMode: '双向同步', wikiCliConfigured: true, wikiSpaces: ['产品知识库', '研究资料'], wikiMode: '只读',
+          taskItems: [
+            { title: '校验销售数据清洗脚本', list: '产品迭代', owner: 'cc_data', status: '进行中', state: 'running' },
+            { title: '确认高额订单处理策略', list: 'Agent 协作任务', owner: 'cx_anti', status: '待确认', state: 'attention' },
+            { title: '季度预测基线交付', list: '产品迭代', owner: 'cx_forecast', status: '已完成', state: 'completed' }
+          ],
+          wikiDocs: [
+            { id: 'sales-metrics', space: '产品知识库', title: '销售指标口径', sync: '已同步', summary: '记录订单金额、退款、区域和时间维度的统一统计口径，供当前项目内的 Agent 检索引用。' },
+            { id: 'cleaning-rules', space: '研究资料', title: '数据清洗约定', sync: '已同步', summary: '说明字段缺失、异常订单、重复记录与时区转换的处理规则。' }
+          ]
+        },
+        'design-system': {
+          connected: true, taskLists: ['组件交付'], taskMode: '只读同步', wikiCliConfigured: true, wikiSpaces: ['设计系统知识库'], wikiMode: '只读',
+          taskItems: [{ title: '整理组件文档', list: '组件交付', owner: 'cc_docs', status: '已完成', state: 'completed' }],
+          wikiDocs: [{ id: 'component-guidance', space: '设计系统知识库', title: '组件使用规范', sync: '已同步', summary: '记录组件选择、状态覆盖与交互一致性的项目约定。' }]
+        },
+        'research-notes': { connected: false, taskLists: [], taskMode: '未接入', wikiCliConfigured: false, wikiSpaces: [], wikiMode: '未接入', taskItems: [], wikiDocs: [] }
+      };
+      const agentProviders = {
+        CL: { label: 'Claude Code', model: 'Sonnet 4.5' },
+        CX: { label: 'Codex', model: 'gpt-5.6' },
+        KM: { label: 'Kimi Code', model: 'K2.5' }
+      };
+      const params = new URLSearchParams(location.search);
+      const stored = loadStoredState();
+      let projects = stored?.projects?.length ? stored.projects : structuredClone(seedProjects);
+      projects.forEach((project) => {
+        const fallback = structuredClone(resourceSeeds[project.id] || { connected: false, taskLists: [], taskMode: '未接入', wikiCliConfigured: false, wikiSpaces: [], wikiMode: '未接入', taskItems: [], wikiDocs: [] });
+        project.layout = project.layout.map((_, index) => `Panel ${index + 1}`);
+        project.resources = { ...fallback, ...(project.resources || {}), taskItems: project.resources?.taskItems || fallback.taskItems, wikiDocs: project.resources?.wikiDocs || fallback.wikiDocs };
+        project.agents.forEach((agent) => {
+          agent.stage = Number.isInteger(agent.stage) ? Math.min(agent.stage, Math.max(0, project.layout.length - 1)) : 0;
+          agent.open = agent.open !== false;
+          agent.branch ||= `agent/${agent.name.toLowerCase().replaceAll('_', '-')}`;
+          agent.messages ||= [{ role: '你', text: `继续处理：${agent.work}` }, { role: agent.name, text: '工作区已恢复，可以继续查看活动或发送指令。' }];
+          agent.activity ||= ['恢复项目上下文', agent.work];
+          agent.changes ||= [];
+        });
+      });
+      const requestedProject = params.get('project');
+      const state = {
+        variant: 'A',
+        currentProjectId: projects.some((project) => project.id === requestedProject) ? requestedProject : (stored?.currentProjectId || projects[0].id),
+        section: ['agents', 'tasks', 'wiki'].includes(params.get('section')) ? params.get('section') : 'agents',
+        activeWikiDoc: null,
+        projectSurfaceOpen: false,
+        projectQuery: '',
+        startMode: 'blank',
+        activeModal: null,
+        pendingProjectId: null,
+        lastFocused: null,
+        pathEdited: false,
+        layout: 'analysis',
+        focusedStage: 0,
+        selectedAgent: null,
+        inspector: true,
+        selectedProvider: 'CL',
+        viewByAgent: {},
+        activeByStage: {},
+        activeWikiSpace: null
+      };
+      const $ = (selector) => document.querySelector(selector);
+      const currentProject = () => projects.find((project) => project.id === state.currentProjectId) || projects[0];
+      const runningCount = (project) => project.agents.filter((agent) => agent.status === 'running').length;
+      const resourceCount = (project) => project.resources.taskLists.length + (project.resources.wikiCliConfigured ? project.resources.wikiSpaces.length : 0);
+      const sectionLabel = () => ({ agents: 'Agent 工作区', tasks: '飞书任务清单', wiki: '飞书知识库' })[state.section];
+
+      function loadStoredState() {
+        try { return JSON.parse(localStorage.getItem('agenttest-projects-prototype')); } catch (_) { return null; }
+      }
+      function persistState() {
+        localStorage.setItem('agenttest-projects-prototype', JSON.stringify({ projects, currentProjectId: state.currentProjectId }));
+      }
+      function updateUrl() {
+        const url = new URL(location.href);
+        url.searchParams.set('variant', state.variant);
+        url.searchParams.set('project', state.currentProjectId);
+        url.searchParams.set('section', state.section);
+        history.replaceState({}, '', url);
+      }
+      function projectStatus(project) {
+        const running = runningCount(project);
+        return running ? `<span class="status"><span class="dot running"></span>${running} 个运行中</span>` : `<span class="status"><span class="dot"></span>${project.agents.length ? '无运行任务' : '空项目'}</span>`;
+      }
+      function agentRows(project) {
+        if (!project.agents.length) return '<div class="no-results">这个项目还没有 Agent。</div>';
+        return project.agents.map((agent) => `<button class="agent-row ${state.selectedAgent === agent.name ? 'selected' : ''}" type="button" data-agent="${escapeHtml(agent.name)}" data-od-id="agent-${escapeHtml(agent.name)}"><span class="glyph">${agent.provider}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(agent.work)}</small></span><span class="status"><span class="dot ${agent.status}"></span>${agent.label}</span></button>`).join('');
+      }
+      function filteredProjects() {
+        const query = state.projectQuery.trim().toLowerCase();
+        return projects.filter((project) => `${project.name} ${project.path}`.toLowerCase().includes(query));
+      }
+      function projectOptions(className = '') {
+        const filtered = filteredProjects();
+        if (!filtered.length) return '<div class="no-results">没有匹配的项目。</div>';
+        return filtered.map((project, index) => `<button class="project-option ${className} ${project.id === state.currentProjectId ? 'selected' : ''}" type="button" data-project-id="${project.id}" data-od-id="project-option-${project.id}">${className ? `<span class="project-index">${index + 1}</span>` : ''}<span><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.path)}</small></span>${projectStatus(project)}</button>`).join('');
+      }
+
+      function renderTitlebar(project) {
+        return `<div class="titlebar" data-od-id="desktop-titlebar"><div class="window-controls" aria-hidden="true"><span class="window-control"></span><span class="window-control"></span><span class="window-control"></span></div><div class="window-title">AgentTest — 项目</div><div class="window-context">${escapeHtml(project.name)}</div></div>`;
+      }
+      function renderStatusbar(project) {
+        return `<footer class="desktop-statusbar" data-od-id="desktop-statusbar"><span>${projects.length} 个项目</span><span>${project.agents.length} 个 Agent</span><span>${runningCount(project)} 个运行中</span><span>任务：${project.resources.connected ? '已连接' : '未连接'}</span><span>知识库 CLI：${project.resources.wikiCliConfigured ? '已配置' : '待配置'}</span><span class="statusbar-spacer"></span><span>当前：${sectionLabel()} · ⌘1/2/3 切换</span></footer>`;
+      }
+      function renderTopbar(project, commandPrimary = false) {
+        return `<header class="topbar" data-od-id="top-navigation"><div class="brand-mark" aria-label="AgentTest">AT</div><nav class="breadcrumb" aria-label="当前位置"><span>项目</span><span aria-hidden="true">/</span><strong>${escapeHtml(project.name)}</strong><span aria-hidden="true">/</span><span>${sectionLabel()}</span></nav><div class="top-actions"><button class="button secondary" type="button" data-open-workspace>${icon('arrow')}<span>Agent 工作台</span></button><button class="button ${commandPrimary ? 'primary' : 'secondary'}" type="button" data-toggle-projects aria-expanded="${state.projectSurfaceOpen}">${icon('command')}<span>切换项目</span><span class="key-hint">⌘ K</span></button></div></header>`;
+      }
+      function renderWorkspaceNavigation(project) {
+        const items = [
+          { id: 'agents', label: 'Agent 工作区', note: 'Panels 与运行实例', icon: 'folder', count: project.agents.length, shortcut: '⌘1' },
+          { id: 'tasks', label: '飞书任务清单', note: project.resources.taskMode, icon: 'task', count: project.resources.taskLists.length, shortcut: '⌘2' },
+          { id: 'wiki', label: '飞书知识库', note: project.resources.wikiCliConfigured ? '内嵌网页 · CLI 已配置' : '内嵌网页 · 待配置 CLI', icon: 'wiki', count: project.resources.wikiSpaces.length, shortcut: '⌘3' }
+        ];
+        return `<nav class="workspace-nav" aria-label="项目工作区">${items.map((item) => `<button class="workspace-nav-item ${state.section === item.id ? 'active' : ''}" type="button" data-section="${item.id}" data-od-id="project-nav-${item.id}" title="${item.label} · ${item.shortcut}"><span class="glyph">${icon(item.icon)}</span><span><strong>${item.label}</strong><small>${item.note}</small></span><span class="status">${item.count}${item.external ? icon('external') : ''}</span></button>`).join('')}</nav>`;
+      }
+      function renderSidebarContext(project) {
+        if (state.section === 'agents') return `<div class="block-heading"><span class="eyebrow">Agent Directory</span><button class="button secondary" type="button" data-open-new-agent>${icon('plus')}新建</button></div><div class="agent-list">${agentRows(project)}</div><div class="sidebar-summary">${project.agents.length} 个 Agent · 关闭 Tab 不会删除实例</div>`;
+        const isTasks = state.section === 'tasks';
+        const values = isTasks ? project.resources.taskLists : project.resources.wikiSpaces;
+        const available = isTasks ? project.resources.connected : project.resources.wikiCliConfigured;
+        if (!available) return `<div class="block-heading"><span class="eyebrow">${isTasks ? '已接入清单' : '授权知识空间'}</span><span class="status">0 个</span></div><div class="no-results">${isTasks ? '当前项目尚未连接飞书任务。' : '当前项目尚未配置知识库 CLI。'}</div><div class="sidebar-summary"><button class="text-button" type="button" data-open-integrations>${isTasks ? '连接飞书工作区' : '配置知识库 CLI'}</button></div>`;
+        const rows = values.map((value) => isTasks ? `<div class="resource-source-row"><span class="glyph">${icon('task')}</span><span><strong>${escapeHtml(value)}</strong><small>${project.resources.taskMode}</small></span></div>` : `<button class="resource-source-row ${state.activeWikiSpace === value ? 'active' : ''}" type="button" data-wiki-space="${escapeHtml(value)}" data-od-id="sidebar-wiki-space-${slugify(value)}"><span class="glyph">${icon('wiki')}</span><span><strong>${escapeHtml(value)}</strong><small>网页阅读 · Agent CLI</small></span></button>`).join('');
+        return `<div class="block-heading"><span class="eyebrow">${isTasks ? '已接入清单' : '授权知识空间'}</span><span class="status">${values.length} 个</span></div><div class="resource-source-list">${rows || '<div class="no-results">尚未选择资源。</div>'}</div><div class="sidebar-summary"><button class="text-button" type="button" data-open-integrations>${isTasks ? '管理飞书接入' : '管理知识库 CLI'}</button></div>`;
+      }
+      function renderSidebar(project) {
+        return `<aside class="sidebar" data-od-id="project-sidebar"><section class="sidebar-block"><div class="block-heading"><span class="eyebrow">当前项目</span></div><button class="current-project" type="button" data-toggle-projects aria-expanded="${state.projectSurfaceOpen}" data-od-id="current-project-button"><div><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.path)}</small></div>${icon('down')}</button></section><section class="sidebar-block" data-od-id="project-workspace-navigation"><div class="block-heading"><span class="eyebrow">项目工作区</span></div>${renderWorkspaceNavigation(project)}</section><section class="sidebar-block sidebar-context">${renderSidebarContext(project)}</section>${renderPopover()}</aside>`;
+      }
+      function ensureAgentState(project) {
+        if (!project.agents.some((agent) => agent.name === state.selectedAgent)) state.selectedAgent = project.agents[0]?.name || null;
+        state.focusedStage = Math.min(state.focusedStage, Math.max(0, project.layout.length - 1));
+        project.layout.forEach((_, index) => {
+          const key = `${project.id}:${index}`;
+          const available = project.agents.filter((agent) => agent.stage === index && agent.open !== false);
+          if (!available.some((agent) => agent.name === state.activeByStage[key])) state.activeByStage[key] = available[0]?.name || null;
+        });
+      }
+      function agentProvider(agent) { return agentProviders[agent.provider] || { label: agent.provider, model: '项目配置' }; }
+      function stageKey(project, index) { return `${project.id}:${index}`; }
+      function visibleStageIndexes(project) {
+        if (state.layout === 'focus') return [state.focusedStage];
+        if (state.layout === 'split' && project.layout.length > 1) return [state.focusedStage, (state.focusedStage + 1) % project.layout.length];
+        return project.layout.map((_, index) => index);
+      }
+      function renderAgentView(agent) {
+        const view = state.viewByAgent[agent.name] || 'chat';
+        if (view === 'activity') return `<div class="session-body"><ul class="session-list">${agent.activity.map((item, index) => `<li><span class="dot ${index === agent.activity.length - 1 ? agent.status : 'completed'}"></span><span>${escapeHtml(item)}</span><small>${index === agent.activity.length - 1 ? '当前' : '已完成'}</small></li>`).join('')}</ul></div>`;
+        if (view === 'changes') return `<div class="session-body">${agent.changes.length ? `<ul class="session-list">${agent.changes.map((file) => `<li><span>文件</span><strong>${escapeHtml(file)}</strong><small>本地变更</small></li>`).join('')}</ul>` : '<div class="no-results">当前没有文件变更。</div>'}</div>`;
+        if (view === 'terminal') return `<div class="session-body"><pre class="terminal-output">$ agenttest status ${escapeHtml(agent.name)}\n状态：${escapeHtml(agent.label)}\n任务：${escapeHtml(agent.work)}\n\n此处为原型输出，不会运行真实命令。</pre></div>`;
+        return `<div class="session-body">${agent.messages.map((message) => `<div class="message-block"><div class="speaker">${escapeHtml(message.role)}</div><div>${escapeHtml(message.text)}</div></div>`).join('')}</div>`;
+      }
+      function renderAgentSession(agent) {
+        const activeView = state.viewByAgent[agent.name] || 'chat';
+        return `<div class="agent-session" data-od-id="agent-session-${escapeHtml(agent.name)}"><div class="session-head"><div class="session-identity"><span class="glyph">${agent.provider}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(agent.work)}</small></span></div><span class="status"><span class="dot ${agent.status}"></span>${escapeHtml(agent.label)}</span></div><div class="session-tabs">${[['chat','对话'],['activity','活动'],['changes','变更'],['terminal','终端']].map(([id,label]) => `<button class="session-tab ${activeView === id ? 'active' : ''}" type="button" data-agent-view="${id}" data-agent-name="${escapeHtml(agent.name)}">${label}</button>`).join('')}</div>${renderAgentView(agent)}<form class="composer" data-compose="${escapeHtml(agent.name)}"><textarea rows="1" aria-label="发送消息给 ${escapeHtml(agent.name)}" placeholder="发送给 ${escapeHtml(agent.name)}…"></textarea><button type="submit" aria-label="发送消息">${icon('send')}</button></form></div>`;
+      }
+      function renderWorkbenchPanel(project, panelName, index) {
+        const available = project.agents.filter((agent) => agent.stage === index && agent.open !== false);
+        const key = stageKey(project, index);
+        const activeName = state.activeByStage[key];
+        const active = project.agents.find((agent) => agent.name === activeName);
+        const visible = visibleStageIndexes(project).includes(index);
+        return `<section class="workbench-panel ${state.focusedStage === index ? 'focused' : ''}" ${visible ? '' : 'hidden'} data-od-id="workbench-panel-${index}"><div class="workbench-panel-head"><span class="workbench-panel-label">${escapeHtml(panelName)}</span><div class="panel-tabs">${available.map((agent) => `<div class="panel-tab-unit"><button class="panel-tab ${activeName === agent.name ? 'active' : ''}" type="button" data-panel-tab="${escapeHtml(agent.name)}" data-stage-index="${index}"><span class="dot ${agent.status}"></span><strong>${escapeHtml(agent.name)}</strong></button><button class="panel-tab-close" type="button" data-close-agent-tab="${escapeHtml(agent.name)}" aria-label="关闭 ${escapeHtml(agent.name)} 的 Tab">${icon('close')}</button></div>`).join('')}</div><button class="panel-focus" type="button" data-focus-panel="${index}" aria-label="聚焦 ${escapeHtml(panelName)}">${icon('focus')}</button></div>${active ? renderAgentSession(active) : `<div class="panel-empty"><div>当前 Panel 没有打开的 Agent。<br><button class="text-button" type="button" data-open-new-agent>新建 Agent</button></div></div>`}</section>`;
+      }
+      function renderAgentInspector(project) {
+        const agent = project.agents.find((item) => item.name === state.selectedAgent) || project.agents[0];
+        if (!agent) return '<aside class="agent-inspector"><div class="no-results">当前没有 Agent。</div></aside>';
+        const provider = agentProvider(agent);
+        return `<aside class="agent-inspector" data-od-id="agent-inspector"><div class="inspector-heading"><span class="eyebrow">Agent 检查器</span><button class="icon-button" type="button" data-toggle-inspector aria-label="关闭检查器">${icon('close')}</button></div><div class="inspector-agent"><span class="glyph">${agent.provider}</span><span><strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(provider.label)}</small></span></div><div class="inspector-card"><span class="status"><span class="dot ${agent.status}"></span>${escapeHtml(agent.label)}</span><p>${escapeHtml(agent.work)}</p></div><div class="inspector-facts"><div class="inspector-fact"><span>模型</span><strong>${escapeHtml(provider.model)}</strong></div><div class="inspector-fact"><span>Branch</span><strong>${escapeHtml(agent.branch)}</strong></div><div class="inspector-fact"><span>所在 Panel</span><strong>${escapeHtml(project.layout[agent.stage] || '未打开')}</strong></div></div><button class="button secondary" type="button" data-toggle-agent-run>${agent.status === 'running' ? '停止运行' : '继续运行'}</button></aside>`;
+      }
+      function renderAgentWorkspace(project) {
+        ensureAgentState(project);
+        const layoutOptions = [['focus','focus','聚焦'],['split','split','双栏'],['analysis','analysis','分析']];
+        const toolbar = `<div class="workbench-toolbar"><div class="workbench-title"><strong>${escapeHtml(project.name)} · Agent 工作台</strong><small>${project.agents.length} 个 Agent · ${runningCount(project)} 个运行中</small></div><div class="workbench-actions"><div class="layout-switcher">${layoutOptions.map(([id,iconName,label]) => `<button class="layout-option ${state.layout === id ? 'active' : ''}" type="button" data-agent-layout="${id}" aria-pressed="${state.layout === id}">${icon(iconName)}<span>${label}</span></button>`).join('')}</div><button class="button secondary" type="button" data-open-new-agent>${icon('plus')}新建 Agent</button><button class="icon-button ${state.inspector ? 'active' : ''}" type="button" data-toggle-inspector aria-pressed="${state.inspector}" aria-label="显示或隐藏检查器">${icon('inspector')}</button></div></div>`;
+        if (!project.agents.length) return `<div class="workspace-inner agent-command-view">${toolbar}<div class="empty-workspace" data-od-id="empty-project-workspace"><div>${icon('folder')}<h2>这是一个空白项目</h2><p>新建第一个 Agent 后，会在当前项目的 Panel 中直接打开。</p><button class="button primary" type="button" data-open-new-agent>${icon('plus')}新建 Agent</button></div></div></div>`;
+        return `<div class="workspace-inner agent-command-view" data-od-id="unified-agent-workbench">${toolbar}<div class="workbench-body ${state.inspector ? '' : 'inspector-off'}"><main class="agent-canvas"><div class="agent-panels" data-layout="${state.layout}">${project.layout.map((name,index) => renderWorkbenchPanel(project,name,index)).join('')}</div></main>${renderAgentInspector(project)}</div></div>`;
+      }
+      function renderTaskWorkspace(project) {
+        const resources = project.resources;
+        if (!resources.connected) return `<div class="workspace-inner content-view"><div class="content-head"><div><h1>飞书任务清单</h1><p>当前项目尚未连接飞书，连接后可在这里查看已授权清单中的任务。</p></div><button class="button primary" type="button" data-open-integrations>连接飞书</button></div><div class="empty-workspace"><div>${icon('task')}<h2>没有可用的任务清单</h2><p>前往项目配置连接飞书工作区并选择任务清单。</p></div></div></div>`;
+        const rows = resources.taskItems.map((task) => `<div class="task-table-row" data-od-id="feishu-task-${escapeHtml(task.owner)}"><span class="task-cell"><span class="status"><span class="dot ${task.state}"></span>${task.status}</span></span><span class="task-cell"><strong>${escapeHtml(task.title)}</strong><small>来自飞书任务</small></span><span class="task-cell">${escapeHtml(task.list)}</span><span class="task-cell"><span class="glyph">${escapeHtml(task.owner.slice(0,2).toUpperCase())}</span></span><span class="task-cell"><span class="status"><span class="dot completed"></span>已同步</span></span></div>`).join('');
+        return `<div class="workspace-inner content-view" data-od-id="feishu-task-workspace"><div class="content-head"><div><h1>飞书任务清单</h1><p>查看当前项目已授权的任务，并保持状态与飞书同步。</p></div><div class="content-actions"><button class="button secondary" type="button" data-open-integrations>管理接入</button></div></div><section class="content-panel"><div class="content-toolbar"><span class="view-chip">${resources.taskLists.length} 个清单</span><span class="view-chip">${resources.taskMode}</span><span class="content-spacer"></span><span class="status"><span class="dot completed"></span>工作区已连接</span></div><div class="task-table"><div class="task-table-row header"><span class="task-cell">状态</span><span class="task-cell">任务</span><span class="task-cell">清单</span><span class="task-cell">负责人</span><span class="task-cell">同步</span></div>${rows || '<div class="no-results">已接入清单中暂无任务。</div>'}</div></section></div>`;
+      }
+      function renderWikiWorkspace(project) {
+        const resources = project.resources;
+        if (!resources.wikiCliConfigured) return `<div class="workspace-inner content-view"><div class="content-head"><div><h1>飞书知识库</h1><p>在项目中配置知识库 CLI 和网页地址后，右侧主窗口会直接显示网页。</p></div><button class="button primary" type="button" data-open-integrations>${icon('terminal')}配置 CLI</button></div><div class="empty-workspace"><div>${icon('terminal')}<h2>尚未配置知识库</h2><p>完成项目级 CLI 与知识空间授权后，这里将成为内嵌网页阅读区域。</p><button class="button secondary" type="button" data-open-integrations>前往项目设置</button></div></div></div>`;
+        const activeSpace = state.activeWikiSpace || resources.wikiSpaces[0];
+        const docs = resources.wikiDocs.filter((doc) => doc.space === activeSpace);
+        const activeDoc = docs[0];
+        const spaceButtons = resources.wikiSpaces.map((space) => `<button class="web-space-button ${activeSpace === space ? 'active' : ''}" type="button" data-wiki-space="${escapeHtml(space)}"><span class="glyph">${icon('wiki')}</span><strong>${escapeHtml(space)}</strong></button>`).join('');
+        return `<div class="workspace-inner content-view" data-od-id="feishu-wiki-workspace"><div class="content-head"><div><h1>飞书知识库</h1><p>知识库网页显示在应用主窗口中；Agent 通过当前项目配置的 CLI 访问同一授权范围。</p></div><div class="content-actions"><button class="button secondary" type="button" data-open-integrations>管理 CLI</button><button class="button secondary" type="button" data-open-wiki-web>${icon('external')}在系统浏览器打开</button></div></div><section class="content-panel webview-panel"><div class="wiki-webview" data-od-id="embedded-feishu-webview"><div class="webview-chrome"><button class="webview-control" type="button" data-webview-action="后退" aria-label="后退">${icon('left')}</button><button class="webview-control" type="button" data-webview-action="前进" aria-label="前进">${icon('right')}</button><button class="webview-control" type="button" data-webview-action="刷新" aria-label="刷新">${icon('refresh')}</button><div class="webview-address">${icon('wiki')}<strong>飞书知识库 / ${escapeHtml(activeSpace || '未选择空间')}</strong></div><span class="view-chip">CLI 已配置</span></div><div class="feishu-webpage"><aside class="feishu-web-sidebar"><div class="web-brand"><span class="glyph">${icon('wiki')}</span><span>飞书知识库</span></div>${spaceButtons}</aside><article class="feishu-document"><div class="web-breadcrumb">${escapeHtml(activeSpace || '知识空间')} / 网页</div>${activeDoc ? `<h1>${escapeHtml(activeDoc.title)}</h1><div class="web-doc-meta">${escapeHtml(activeDoc.sync)} · 当前项目可访问</div><p class="web-summary">${escapeHtml(activeDoc.summary)}</p><section class="web-section"><h2>网页阅读</h2><p>此区域模拟项目配置的飞书知识库网页。正式版由桌面 WebView 加载实际地址，并保持在右侧主窗口内。</p></section><section class="web-section"><h2>Agent 访问</h2><p>项目内 Agent 通过飞书知识库 CLI 检索授权内容，网页阅读与 CLI 使用同一项目范围。</p></section>` : `<div class="no-results">当前知识空间没有可显示的网页内容。</div>`}</article></div></div></section></div>`;
+      }
+      function renderWorkspace(project) {
+        if (state.section === 'tasks') return renderTaskWorkspace(project);
+        if (state.section === 'wiki') return renderWikiWorkspace(project);
+        return renderAgentWorkspace(project);
+      }
+      function ensureWikiState(project) {
+        if (!project.resources.wikiSpaces.includes(state.activeWikiSpace)) state.activeWikiSpace = project.resources.wikiSpaces[0] || null;
+      }
+      function renderPopover() {
+        if (!state.projectSurfaceOpen || state.variant !== 'A') return '';
+        return `<section class="project-popover" data-project-surface data-od-id="sidebar-project-switcher"><div class="popover-head"><span class="eyebrow">切换项目</span><button class="icon-button" type="button" data-close-projects aria-label="关闭项目切换器">${icon('close')}</button></div><div class="project-search">${icon('search')}<input data-project-search value="${escapeHtml(state.projectQuery)}" placeholder="搜索项目或目录…" aria-label="搜索项目" /></div><div class="project-list">${projectOptions()}</div><div class="popover-footer"><button class="button primary" type="button" data-open-new-project>${icon('plus')}新建项目</button></div></section>`;
+      }
+      function renderVariantA() {
+        const project = currentProject();
+        if (state.section === 'wiki') ensureWikiState(project);
+        return `<div class="app">${renderTitlebar(project)}${renderTopbar(project, true)}<div class="shell">${renderSidebar(project)}<main class="workspace ${state.section === 'agents' ? 'agents-view' : 'content-workspace'}" data-od-id="project-workspace">${renderWorkspace(project)}</main></div>${renderStatusbar(project)}</div>`;
+      }
+      function renderAll() {
+        $('#root').innerHTML = renderVariantA();
+        updateUrl();
+        if (state.projectSurfaceOpen) requestAnimationFrame(() => $('[data-project-search]')?.focus());
+      }
+
+      function openAgent(name) {
+        const project = currentProject();
+        const agent = project.agents.find((item) => item.name === name);
+        if (!agent) return;
+        agent.open = true;
+        state.selectedAgent = name;
+        state.focusedStage = agent.stage;
+        state.activeByStage[stageKey(project, agent.stage)] = name;
+        state.section = 'agents';
+        renderAll();
+      }
+      function closeAgentTab(name) {
+        const project = currentProject();
+        const agent = project.agents.find((item) => item.name === name);
+        if (!agent) return;
+        agent.open = false;
+        const key = stageKey(project, agent.stage);
+        const next = project.agents.find((item) => item.stage === agent.stage && item.open !== false);
+        state.activeByStage[key] = next?.name || null;
+        if (state.selectedAgent === name) state.selectedAgent = next?.name || project.agents.find((item) => item.open !== false)?.name || project.agents[0]?.name;
+        renderAll();
+        showToast(`已关闭 ${name} 的 Tab，Agent 仍保留在项目中`);
+      }
+      function sendAgentMessage(name, text) {
+        const agent = currentProject().agents.find((item) => item.name === name);
+        if (!agent || !text.trim()) return;
+        agent.messages.push({ role: '你', text: text.trim() });
+        agent.status = 'running'; agent.label = '运行中'; agent.work = '正在处理最新指令';
+        renderAll();
+        setTimeout(() => {
+          const current = currentProject().agents.find((item) => item.name === name);
+          if (!current) return;
+          current.messages.push({ role: name, text: '已收到。这是合并原型的模拟回复，不会调用真实 Provider。' });
+          current.status = 'ready'; current.label = '就绪'; current.work = '等待下一条指令';
+          renderAll(); showToast(`${name} 已完成模拟回复`);
+        }, 700);
+      }
+      function renderAgentProviderOptions() {
+        $('#agentProviderOptions').innerHTML = Object.entries(agentProviders).map(([key, provider]) => `<button class="choice" type="button" role="radio" aria-checked="${state.selectedProvider === key}" data-agent-provider="${key}"><strong>${key}</strong><small>${escapeHtml(provider.label)}</small></button>`).join('');
+      }
+      function openNewAgentModal() {
+        state.lastFocused = document.activeElement;
+        state.activeModal = 'newAgentModal';
+        state.selectedProvider = 'CL';
+        $('#newAgentName').value = '';
+        $('#agentNameError').textContent = '';
+        renderAgentProviderOptions();
+        $('#newAgentModal').hidden = false;
+        requestAnimationFrame(() => $('#newAgentName').focus());
+      }
+      function toggleSelectedAgentRun() {
+        const agent = currentProject().agents.find((item) => item.name === state.selectedAgent);
+        if (!agent) return;
+        if (agent.status === 'running') { agent.status = 'ready'; agent.label = '已停止'; agent.work = '运行已暂停'; }
+        else { agent.status = 'running'; agent.label = '运行中'; agent.work = '正在继续处理任务'; }
+        renderAll(); showToast(`${agent.name}：${agent.label}`);
+      }
+
+      function switchProject(id, strategy = null) {
+        const project = projects.find((item) => item.id === id);
+        if (!project) return;
+        if (id === state.currentProjectId) { state.projectSurfaceOpen = false; renderAll(); return; }
+        const outgoing = currentProject();
+        if (runningCount(outgoing) && !strategy) {
+          state.pendingProjectId = id;
+          state.projectSurfaceOpen = false;
+          renderAll();
+          state.lastFocused = document.activeElement;
+          state.activeModal = 'switchProjectModal';
+          $('#switchProjectDescription').textContent = `“${outgoing.name}”仍有 ${runningCount(outgoing)} 个运行中的 Agent。请选择切换后的运行策略。`;
+          $('#switchProjectModal').hidden = false;
+          requestAnimationFrame(() => $('#keepRunningAndSwitch').focus());
+          return;
+        }
+        if (strategy === 'stop') outgoing.agents.filter((agent) => agent.status === 'running').forEach((agent) => { agent.status = 'ready'; agent.label = '已停止'; });
+        state.currentProjectId = id;
+        state.activeWikiDoc = null;
+        state.activeWikiSpace = null;
+        state.selectedAgent = project.agents[0]?.name || null;
+        state.focusedStage = project.agents[0]?.stage || 0;
+        state.projectSurfaceOpen = false;
+        state.projectQuery = '';
+        project.lastOpened = '刚刚';
+        persistState();
+        renderAll();
+        showToast(strategy === 'stop' ? `已停止后台运行并切换到“${project.name}”` : `已切换到“${project.name}”，原项目保持后台运行`);
+      }
+      function toggleProjectSurface(force) {
+        state.projectSurfaceOpen = typeof force === 'boolean' ? force : !state.projectSurfaceOpen;
+        state.projectQuery = '';
+        renderAll();
+      }
+      function slugify(value) {
+        const normalized = value.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-|-$/g, '');
+        return normalized || 'new-project';
+      }
+      function uniqueId(name) {
+        const base = slugify(name);
+        let id = base;
+        let index = 2;
+        while (projects.some((project) => project.id === id)) id = `${base}-${index++}`;
+        return id;
+      }
+      function openNewProjectModal() {
+        state.lastFocused = document.activeElement;
+        state.activeModal = 'newProjectModal';
+        state.pathEdited = false;
+        state.startMode = 'blank';
+        $('#projectName').value = '';
+        $('#projectPath').value = '';
+        $('#projectError').textContent = '';
+        syncStartMode();
+        $('#newProjectModal').hidden = false;
+        requestAnimationFrame(() => $('#projectName').focus());
+      }
+      function closeModal() {
+        if (!state.activeModal) return;
+        document.getElementById(state.activeModal).hidden = true;
+        state.activeModal = null;
+        state.pendingProjectId = null;
+        state.lastFocused?.focus?.();
+      }
+      function syncStartMode() {
+        document.querySelectorAll('[data-start-mode]').forEach((button) => button.setAttribute('aria-checked', String(button.dataset.startMode === state.startMode)));
+      }
+      function trapFocus(event) {
+        if (!state.activeModal || event.key !== 'Tab') return;
+        const modal = document.getElementById(state.activeModal);
+        const focusable = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled)')];
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+      function showToast(message) {
+        const toast = $('#toast');
+        toast.textContent = message;
+        toast.classList.add('show');
+        clearTimeout(showToast.timer);
+        showToast.timer = setTimeout(() => toast.classList.remove('show'), 2400);
+      }
+
+      document.addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (!button) return;
+        if (button.hasAttribute('data-open-workspace')) { state.variant = 'A'; state.section = 'agents'; state.projectSurfaceOpen = false; renderAll(); return; }
+        if (button.hasAttribute('data-open-integrations')) { location.href = `project-integrations-settings-desktop-a.html?project=${encodeURIComponent(state.currentProjectId)}`; return; }
+        if (button.hasAttribute('data-open-wiki-web')) { const space = button.dataset.wikiSpace ? `“${button.dataset.wikiSpace}”` : '飞书知识库'; showToast(`原型：正式版将通过系统浏览器打开${space}`); return; }
+        if (button.dataset.wikiSpace) { state.activeWikiSpace = button.dataset.wikiSpace; state.section = 'wiki'; state.projectSurfaceOpen = false; renderAll(); return; }
+        if (button.dataset.webviewAction) { showToast(`网页视图：${button.dataset.webviewAction}`); return; }
+        if (button.hasAttribute('data-open-new-agent')) { openNewAgentModal(); return; }
+        if (button.dataset.agent) { openAgent(button.dataset.agent); return; }
+        if (button.dataset.panelTab) { const project = currentProject(); const agent = project.agents.find((item) => item.name === button.dataset.panelTab); if (agent) { state.focusedStage = Number(button.dataset.stageIndex); state.selectedAgent = agent.name; state.activeByStage[stageKey(project, state.focusedStage)] = agent.name; renderAll(); } return; }
+        if (button.dataset.closeAgentTab) { closeAgentTab(button.dataset.closeAgentTab); return; }
+        if (button.dataset.agentView) { state.viewByAgent[button.dataset.agentName] = button.dataset.agentView; renderAll(); return; }
+        if (button.dataset.agentLayout) { state.layout = button.dataset.agentLayout; renderAll(); return; }
+        if (button.dataset.focusPanel !== undefined) { state.focusedStage = Number(button.dataset.focusPanel); state.layout = 'focus'; const project = currentProject(); state.selectedAgent = state.activeByStage[stageKey(project, state.focusedStage)] || state.selectedAgent; renderAll(); return; }
+        if (button.hasAttribute('data-toggle-inspector')) { state.inspector = !state.inspector; renderAll(); return; }
+        if (button.hasAttribute('data-toggle-agent-run')) { toggleSelectedAgentRun(); return; }
+        if (button.dataset.agentProvider) { state.selectedProvider = button.dataset.agentProvider; renderAgentProviderOptions(); return; }
+        if (button.dataset.section) { state.section = button.dataset.section; state.activeWikiDoc = null; state.projectSurfaceOpen = false; renderAll(); }
+        if (button.dataset.projectId) switchProject(button.dataset.projectId);
+        if (button.hasAttribute('data-toggle-projects')) toggleProjectSurface();
+        if (button.hasAttribute('data-close-projects')) toggleProjectSurface(false);
+        if (button.hasAttribute('data-open-new-project')) { state.projectSurfaceOpen = false; renderAll(); openNewProjectModal(); }
+        if (button.hasAttribute('data-close-modal')) closeModal();
+        if (button.dataset.startMode) { state.startMode = button.dataset.startMode; syncStartMode(); }
+        if (button.id === 'keepRunningAndSwitch') { const id = state.pendingProjectId; closeModal(); if (id) switchProject(id, 'keep'); }
+        if (button.id === 'stopAndSwitch') { const id = state.pendingProjectId; closeModal(); if (id) switchProject(id, 'stop'); }
+      });
+      document.addEventListener('input', (event) => {
+        if (event.target.matches('[data-project-search]')) { state.projectQuery = event.target.value; renderAll(); }
+      });
+      document.addEventListener('submit', (event) => {
+        if (!event.target.matches('[data-compose]')) return;
+        event.preventDefault();
+        const textarea = event.target.querySelector('textarea');
+        sendAgentMessage(event.target.dataset.compose, textarea.value);
+      });
+      document.addEventListener('keydown', (event) => {
+        trapFocus(event);
+        if (event.key === 'Escape') {
+          if (state.activeModal) closeModal();
+          else if (state.projectSurfaceOpen) toggleProjectSurface(false);
+          return;
+        }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); toggleProjectSurface(); return; }
+        if (event.target.matches('textarea') && event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); event.target.closest('form').requestSubmit(); return; }
+        const sectionShortcut = { '1': 'agents', '2': 'tasks', '3': 'wiki' }[event.key];
+        if ((event.metaKey || event.ctrlKey) && !state.activeModal && sectionShortcut) { event.preventDefault(); state.variant = 'A'; state.section = sectionShortcut; state.activeWikiDoc = null; state.projectSurfaceOpen = false; renderAll(); return; }
+      });
+      document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.addEventListener('mousedown', (event) => { if (event.target === backdrop) closeModal(); }));
+      $('#projectName').addEventListener('input', (event) => { if (!state.pathEdited) $('#projectPath').value = `~/Projects/${slugify(event.target.value)}`; });
+      $('#projectPath').addEventListener('input', () => { state.pathEdited = true; });
+      $('#startModeOptions').addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        state.startMode = state.startMode === 'blank' ? 'copy' : 'blank';
+        syncStartMode();
+        $(`[data-start-mode="${state.startMode}"]`).focus();
+      });
+      $('#newProjectForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const name = $('#projectName').value.trim();
+        const path = $('#projectPath').value.trim();
+        if (name.length < 2 || name.length > 32) { $('#projectError').textContent = '项目名称需要 2–32 个字符。'; return; }
+        if (!path) { $('#projectError').textContent = '请输入本地目录。'; return; }
+        if (projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) { $('#projectError').textContent = '已经存在同名项目。'; return; }
+        if (projects.some((project) => project.path.toLowerCase() === path.toLowerCase())) { $('#projectError').textContent = '这个目录已经被其他项目使用。'; return; }
+        const source = currentProject();
+        const project = { id: uniqueId(name), name, path, lastOpened: '刚刚', layout: state.startMode === 'copy' ? [...source.layout] : ['Panel 1'], agents: [], resources: { connected: false, taskLists: [], taskMode: '未接入', wikiCliConfigured: false, wikiSpaces: [], wikiMode: '未接入', taskItems: [], wikiDocs: [] } };
+        projects.unshift(project);
+        state.currentProjectId = project.id;
+        persistState();
+        closeModal();
+        state.variant = 'A';
+        state.section = 'agents';
+        state.selectedAgent = null;
+        renderAll();
+        showToast(`项目“${name}”已创建并打开`);
+      });
+
+      $('#newAgentForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const project = currentProject();
+        const name = $('#newAgentName').value.trim();
+        if (!/^[A-Za-z][A-Za-z0-9_-]{1,31}$/.test(name)) { $('#agentNameError').textContent = '名称格式不正确。'; return; }
+        if (project.agents.some((agent) => agent.name.toLowerCase() === name.toLowerCase())) { $('#agentNameError').textContent = '当前项目已存在同名 Agent。'; return; }
+        const agent = { name, provider: state.selectedProvider, status: 'ready', label: '就绪', work: '等待第一条指令', stage: state.focusedStage, open: true, branch: `agent/${name.toLowerCase().replaceAll('_', '-')}`, messages: [{ role: name, text: '会话已准备好，等待你的第一条指令。' }], activity: ['Agent 已创建'], changes: [] };
+        project.agents.push(agent);
+        state.selectedAgent = name;
+        state.activeByStage[stageKey(project, agent.stage)] = name;
+        persistState();
+        closeModal();
+        renderAll();
+        showToast(`${name} 已创建并打开到 ${project.layout[agent.stage]}`);
+      });
+
+      renderAll();
+    </script>
+  </body>
+</html>
