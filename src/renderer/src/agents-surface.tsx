@@ -7,7 +7,8 @@ import type {
   PanelId,
   ProjectViewModel,
   WorkbenchCommandBody,
-  WorkbenchViewModel
+  WorkbenchViewModel,
+  WorktreeChangesViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
 
@@ -600,6 +601,7 @@ function PanelView({
           key={activeAgent.agentInstanceId}
           agent={activeAgent}
           snapshot={snapshot}
+          sendCommand={sendCommand}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center">
@@ -616,10 +618,12 @@ function PanelView({
 
 function AgentView({
   agent,
-  snapshot
+  snapshot,
+  sendCommand
 }: {
   agent: AgentInstanceViewModel
   snapshot: WorkbenchViewModel
+  sendCommand: SendCommand
 }) {
   const [subView, setSubView] = useState<AgentSubView>('chat')
 
@@ -672,7 +676,11 @@ function AgentView({
             </ul>
           ))}
         {subView === 'changes' && (
-          <p className="text-neutral-500">暂无改动</p>
+          <ChangesView
+            agent={agent}
+            changes={snapshot.changes}
+            sendCommand={sendCommand}
+          />
         )}
         {subView === 'terminal' && (
           <p className="text-neutral-500">
@@ -715,5 +723,129 @@ function ChatState({ agent }: { agent: AgentInstanceViewModel }) {
     <p className="text-neutral-500">
       暂无对话记录；发送首条消息后才会启动 Run。
     </p>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Changes sub-view — mock worktree diff, validation, drift and safe merge (#8)
+// ---------------------------------------------------------------------------
+
+const FILE_STATUS_LABEL: Record<string, string> = {
+  modified: '修改',
+  added: '新增',
+  deleted: '删除'
+}
+
+function ChangesView({
+  agent,
+  changes,
+  sendCommand
+}: {
+  agent: AgentInstanceViewModel
+  changes: WorktreeChangesViewModel[]
+  sendCommand: SendCommand
+}) {
+  const agentChanges = changes.find(
+    (c) => c.agentInstanceId === agent.agentInstanceId
+  )
+
+  if (!agentChanges) {
+    return <p className="text-neutral-500">暂无改动</p>
+  }
+
+  const canMerge =
+    agentChanges.drift === 'none' &&
+    agentChanges.validation.status === 'pass'
+
+  return (
+    <div className="space-y-3">
+      {/* Drift & validation status */}
+      <div className="flex gap-4 text-xs">
+        <span
+          className={
+            agentChanges.drift === 'behind'
+              ? 'text-amber-400'
+              : 'text-emerald-400'
+          }
+        >
+          {agentChanges.drift === 'behind'
+            ? '需要 rebase：base commit 已落后'
+            : 'Base 同步'}
+        </span>
+        <span
+          className={
+            agentChanges.validation.status === 'fail'
+              ? 'text-red-400'
+              : agentChanges.validation.status === 'pass'
+                ? 'text-emerald-400'
+                : 'text-neutral-500'
+          }
+        >
+          验证：{agentChanges.validation.status === 'pass'
+            ? '通过'
+            : agentChanges.validation.status === 'fail'
+              ? `失败${agentChanges.validation.message ? '（' + agentChanges.validation.message + '）' : ''}`
+              : '等待中'}
+        </span>
+        <span className="text-neutral-600">
+          base: {agentChanges.baseCommit}
+        </span>
+      </div>
+
+      {/* Needs rebase notice */}
+      {agentChanges.drift === 'behind' && (
+        <div className="rounded bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+          主仓库已超前于本 worktree 的 base commit。请先更新 worktree、解冲突并重新验证，再尝试合并。不提供自动 rebase、冲突解决或 force merge。
+        </div>
+      )}
+
+      {/* File list */}
+      <ul className="space-y-1 font-mono text-xs">
+        {agentChanges.files.map((file) => (
+          <li key={file.path} className="flex items-center gap-2">
+            <span className="w-8 text-neutral-500">
+              {FILE_STATUS_LABEL[file.status] ?? file.status}
+            </span>
+            <span className="flex-1 text-neutral-300">{file.path}</span>
+            <span className="text-emerald-400">+{file.additions}</span>
+            <span className="text-red-400">-{file.deletions}</span>
+          </li>
+        ))}
+      </ul>
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <button
+          className="rounded bg-blue-700 px-3 py-1 text-xs text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-30"
+          disabled={!canMerge}
+          title={
+            canMerge
+              ? '以快进方式合并到主仓库'
+              : agentChanges.drift === 'behind'
+                ? '需要先 rebase'
+                : '验证未通过'
+          }
+          onClick={() =>
+            void sendCommand({
+              kind: 'merge-agent-changes',
+              agentInstanceId: agent.agentInstanceId
+            })
+          }
+        >
+          ff-only 合并
+        </button>
+        <button
+          className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+          onClick={() =>
+            void sendCommand({
+              kind: 'discard-agent-changes',
+              agentInstanceId: agent.agentInstanceId
+            })
+          }
+        >
+          丢弃改动
+        </button>
+      </div>
+    </div>
   )
 }

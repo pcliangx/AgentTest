@@ -27,7 +27,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private createdAgentCount = 0
   private createdPanelCount = 0
-  private pendingConnectionId: ConnectionId | null = null
+  private pendingAction:
+    | { type: 'connection-deletion'; connectionId: ConnectionId }
+    | { type: 'merge-changes'; agentInstanceId: AgentInstanceId }
+    | { type: 'discard-changes'; agentInstanceId: AgentInstanceId }
+    | null = null
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -171,7 +175,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!conn) {
           return this.reject(command, 'invalid-target', '连接不存在')
         }
-        this.pendingConnectionId = command.connectionId
+        this.pendingAction = {
+          type: 'connection-deletion',
+          connectionId: command.connectionId
+        }
         const affectedProjects = this.snapshot.projects
           .filter((p) => p.primaryConnectionId === command.connectionId)
           .map((p) => p.name)
@@ -198,6 +205,66 @@ export class MockScenarioAdapter implements WorkbenchPort {
         provider.status = 'ready'
         return null
       }
+      case 'merge-agent-changes': {
+        const changes = this.snapshot.changes.find(
+          (c) => c.agentInstanceId === command.agentInstanceId
+        )
+        if (!changes) {
+          return this.reject(command, 'invalid-target', '找不到该 Agent 的改动')
+        }
+        if (changes.drift === 'behind') {
+          return this.reject(
+            command,
+            'unavailable',
+            '需要 rebase：base commit 已落后，请先更新 worktree'
+          )
+        }
+        if (changes.validation.status === 'fail') {
+          return this.reject(
+            command,
+            'unavailable',
+            `验证未通过：${changes.validation.message ?? ''}`
+          )
+        }
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === command.agentInstanceId
+        )
+        this.pendingAction = {
+          type: 'merge-changes',
+          agentInstanceId: command.agentInstanceId
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: 'ff-only 合并',
+          target: agent?.name ?? command.agentInstanceId,
+          impact: `将以快进方式合并 ${changes.files.length} 个文件改动到主仓库。`,
+          nonBypassableReason: '合并前需二次确认，确保主仓库干净'
+        }
+        return null
+      }
+      case 'discard-agent-changes': {
+        const changes = this.snapshot.changes.find(
+          (c) => c.agentInstanceId === command.agentInstanceId
+        )
+        if (!changes) {
+          return this.reject(command, 'invalid-target', '找不到该 Agent 的改动')
+        }
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === command.agentInstanceId
+        )
+        this.pendingAction = {
+          type: 'discard-changes',
+          agentInstanceId: command.agentInstanceId
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: '丢弃改动',
+          target: agent?.name ?? command.agentInstanceId,
+          impact: `将永久丢弃 ${changes.files.length} 个文件的改动，不可恢复。`,
+          nonBypassableReason: '高风险操作需要二次确认，无法跳过'
+        }
+        return null
+      }
       case 'confirm-dangerous-action': {
         const pending = this.snapshot.pendingConfirmation
         if (!pending || pending.confirmationId !== command.confirmationId) {
@@ -209,19 +276,31 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         const { action, target } = pending
         this.snapshot.pendingConfirmation = undefined
-        // Mock result: remove the connection if one was pending deletion.
-        if (this.pendingConnectionId) {
-          this.snapshot.global.connections =
-            this.snapshot.global.connections.filter(
-              (c) => c.connectionId !== this.pendingConnectionId
-            )
-          // Clear dangling primaryConnectionId references on affected projects.
-          for (const proj of this.snapshot.projects) {
-            if (proj.primaryConnectionId === this.pendingConnectionId) {
-              proj.primaryConnectionId = undefined
+        // Execute the pending mock action.
+        if (this.pendingAction) {
+          if (this.pendingAction.type === 'connection-deletion') {
+            const connId = this.pendingAction.connectionId
+            this.snapshot.global.connections =
+              this.snapshot.global.connections.filter(
+                (c) => c.connectionId !== connId
+              )
+            for (const proj of this.snapshot.projects) {
+              if (proj.primaryConnectionId === connId) {
+                proj.primaryConnectionId = undefined
+              }
             }
+          } else {
+            // merge-changes or discard-changes: clear changes for the agent
+            const agentId =
+              this.pendingAction.type === 'merge-changes'
+                ? this.pendingAction.agentInstanceId
+                : (this.pendingAction as { agentInstanceId: AgentInstanceId })
+                    .agentInstanceId
+            this.snapshot.changes = this.snapshot.changes.filter(
+              (c) => c.agentInstanceId !== agentId
+            )
           }
-          this.pendingConnectionId = null
+          this.pendingAction = null
         }
         // Record as a global activity — no projectId attribution.
         this.snapshot.activity.unshift({
@@ -234,7 +313,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
       case 'dismiss-confirmation': {
         this.snapshot.pendingConfirmation = undefined
-        this.pendingConnectionId = null
+        this.pendingAction = null
         return null
       }
       case 'change-layout': {

@@ -209,6 +209,22 @@ export interface ActivityEntry {
   summary: string
 }
 
+export interface WorktreeChangesViewModel {
+  agentInstanceId: AgentInstanceId
+  baseCommit: string
+  drift: 'none' | 'behind'
+  files: Array<{
+    path: string
+    status: 'modified' | 'added' | 'deleted'
+    additions: number
+    deletions: number
+  }>
+  validation: {
+    status: 'pass' | 'fail' | 'pending'
+    message?: string
+  }
+}
+
 export interface WorkbenchViewModel {
   schemaVersion: 1
   revision: number
@@ -221,6 +237,7 @@ export interface WorkbenchViewModel {
   attentionItems: AttentionItemViewModel[]
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
+  changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
   global: {
     attentionCount: number
@@ -348,6 +365,8 @@ export type WorkbenchCommandBody =
   | { kind: 'request-connection-deletion'; connectionId: ConnectionId }
   | { kind: 'request-provider-recovery'; providerId: AgentProviderId }
   | { kind: 'dismiss-confirmation' }
+  | { kind: 'merge-agent-changes'; agentInstanceId: AgentInstanceId }
+  | { kind: 'discard-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'request-quit-preview' }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 
