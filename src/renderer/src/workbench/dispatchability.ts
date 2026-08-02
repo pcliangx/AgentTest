@@ -13,13 +13,19 @@ import type {
 } from './contract'
 
 export type DispatchBlockReason = 'agent-unavailable'
-export type ProjectDispatchBlockReason = 'project-archived'
+export type ProjectDispatchBlockReason =
+  | 'project-archived'
+  | 'project-root-unavailable'
 
 /** Returns why a Project cannot accept new execution-producing commands. */
 export function getProjectDispatchBlockReason(
-  project: Pick<ProjectViewModel, 'lifecycle'>
+  project: Pick<ProjectViewModel, 'lifecycle' | 'rootAvailability'>
 ): ProjectDispatchBlockReason | undefined {
-  return project.lifecycle === 'archived' ? 'project-archived' : undefined
+  if (project.lifecycle === 'archived') return 'project-archived'
+  if (project.rootAvailability === 'unavailable') {
+    return 'project-root-unavailable'
+  }
+  return undefined
 }
 
 /** Opening reserves the PTY slot before the Terminal becomes fully active. */

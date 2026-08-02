@@ -735,7 +735,8 @@ function ChatState({
 
   const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
-  const projectBlocked = getProjectDispatchBlockReason(project) !== undefined
+  const projectBlockReason = getProjectDispatchBlockReason(project)
+  const projectBlocked = projectBlockReason !== undefined
   // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
   // Terminal is opening or active the composer is disabled and shows why.
   const terminalBlocked = isTerminalExecutionSlotOccupied(agent.terminalState)
@@ -779,9 +780,13 @@ function ChatState({
         aria-label="对话记录"
         className="min-h-0 flex-1 overflow-auto"
       >
-        {projectBlocked ? (
+        {projectBlockReason === 'project-archived' ? (
           <p className="text-neutral-500">
             Project 已归档；仅可查看历史记录，不能发送新指令。
+          </p>
+        ) : projectBlockReason === 'project-root-unavailable' ? (
+          <p className="text-neutral-500">
+            Project Root 不可用；仅可查看历史记录，请先恢复或重新定位 Root。
           </p>
         ) : agent.runtimeState === 'unavailable' ? (
           <p className="text-neutral-500">

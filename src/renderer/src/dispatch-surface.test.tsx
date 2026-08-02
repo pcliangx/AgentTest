@@ -342,6 +342,31 @@ describe('Dispatch — Agent Tab composer', () => {
     expect(port.commands).toHaveLength(0)
   })
 
+  it('blocks both composer and Picker when the Project Root is unavailable', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].rootAvailability = 'unavailable'
+    snapshot.projects[0].currentSurface = 'agents'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Project Root 不可用')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+
+    const dialog = await openPicker(user)
+    expect(dialog).toHaveTextContent('Project Root 不可用，不能创建新派发')
+    expect(
+      within(dialog).getByRole('button', { name: /cx_review/ })
+    ).toBeDisabled()
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
+  })
+
   it('explains why the composer is disabled for an archived Agent', async () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].currentSurface = 'agents'
@@ -637,14 +662,33 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
   })
 
   it('does not misread @@all-review (a valid agent name) as an @@all broadcast', async () => {
-    const { user } = await gotoAgentsSurface()
+    const snapshot = createStandardScenario()
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    target.name = 'all-review'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
     const dialog = await openPicker(user)
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
-      'ping @@all-review'
+      '@@all-review inspect'
     )
-    // No broadcast expansion banner should appear.
-    expect(dialog).not.toHaveTextContent('展开为全部实例')
+
+    expect(
+      within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    ).toHaveLength(1)
+    expect(dialog).toHaveTextContent('all-review')
+    expect(dialog).not.toHaveTextContent('@@all 已展开')
+
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    )
+    expect(port.commands.find((c) => c.kind === 'confirm-dispatch')).toMatchObject({
+      kind: 'confirm-dispatch',
+      targets: [target.agentInstanceId],
+      instruction: 'inspect'
+    })
   })
 
   it('uses a whitespace boundary for simple names and braces for exact names containing spaces', async () => {
@@ -1523,6 +1567,43 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       projectId: project.projectId,
       targets: [target.agentInstanceId],
       instruction: 'must not dispatch'
+    })
+
+    expect(instructionResult.ok).toBe(false)
+    expect(dispatchResult.ok).toBe(false)
+    if (!instructionResult.ok) {
+      expect(instructionResult.reason).toBe('unavailable')
+    }
+    if (!dispatchResult.ok) {
+      expect(dispatchResult.reason).toBe('unavailable')
+    }
+    expect(await adapter.getSnapshot()).toEqual(before)
+  })
+
+  it('rejects composer and Dispatch commands atomically when the Project Root is unavailable', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    project.rootAvailability = 'unavailable'
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    const adapter = new MockScenarioAdapter(snapshot)
+    const before = await adapter.getSnapshot()
+
+    const instructionResult = await adapter.dispatch({
+      commandId: id('cmd-root-unavailable-instruction', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'send-agent-instruction',
+      projectId: project.projectId,
+      agentInstanceId: target.agentInstanceId,
+      instruction: 'must wait for the root',
+      mode: 'start-or-queue'
+    })
+    const dispatchResult = await adapter.dispatch({
+      commandId: id('cmd-root-unavailable-dispatch', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'must not dispatch without a root'
     })
 
     expect(instructionResult.ok).toBe(false)

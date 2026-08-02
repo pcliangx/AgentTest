@@ -210,11 +210,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        if (getProjectDispatchBlockReason(project)) {
+        const projectBlockReason = getProjectDispatchBlockReason(project)
+        if (projectBlockReason) {
           return this.reject(
             command,
             'unavailable',
-            'Project 已归档，不能发送新指令'
+            projectBlockReason === 'project-archived'
+              ? 'Project 已归档，不能发送新指令'
+              : 'Project Root 不可用，不能发送新指令'
           )
         }
         // Composer addresses exactly one instance — no multi-target fan-out.
@@ -295,11 +298,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        if (getProjectDispatchBlockReason(project)) {
+        const projectBlockReason = getProjectDispatchBlockReason(project)
+        if (projectBlockReason) {
           return this.reject(
             command,
             'unavailable',
-            'Project 已归档，不能创建新派发'
+            projectBlockReason === 'project-archived'
+              ? 'Project 已归档，不能创建新派发'
+              : 'Project Root 不可用，不能创建新派发'
           )
         }
         // Instruction must be non-empty (#6 P2-5).

@@ -210,7 +210,8 @@ export function DispatchPicker({
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
   )
-  const projectBlocked = getProjectDispatchBlockReason(project) !== undefined
+  const projectBlockReason = getProjectDispatchBlockReason(project)
+  const projectBlocked = projectBlockReason !== undefined
   // Explicit names resolve against every project Agent. Manual selection is
   // limited to targets that can currently accept a Dispatch.
 
@@ -490,9 +491,11 @@ export function DispatchPicker({
           </ul>
         </div>
 
-        {projectBlocked && (
+        {projectBlockReason && (
           <p role="alert" className="text-xs text-amber-400">
-            Project 已归档，不能创建新派发。
+            {projectBlockReason === 'project-archived'
+              ? 'Project 已归档，不能创建新派发。'
+              : 'Project Root 不可用，不能创建新派发。'}
           </p>
         )}
 
