@@ -15,8 +15,8 @@ export interface NameValidation {
 /**
  * Validates a candidate Agent Name. Project uniqueness is verified by the
  * caller. `all` remains a valid name under the accepted domain contract;
- * `@@all` has routing-syntax priority, while that instance remains selectable
- * by its visible Picker entry.
+ * `@@all` has routing-syntax priority, while `@@{all}` or the visible Picker
+ * entry addresses that exact instance.
  */
 export function validateAgentName(raw: string): NameValidation {
   const name = raw.trim()

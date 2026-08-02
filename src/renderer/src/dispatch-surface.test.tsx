@@ -512,6 +512,61 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(dialog).not.toHaveTextContent('展开为全部实例')
   })
 
+  it('uses a whitespace boundary for simple names and braces for exact names containing spaces', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'cx_review')!.name = 'data'
+    snapshot.agents.find((agent) => agent.name === 'kimi_visual')!.name =
+      'data review'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+    const editor = within(dialog).getByRole('textbox', { name: '指令' })
+
+    await user.type(editor, '@@data review the failure')
+    let chips = within(dialog).getAllByRole('listitem', {
+      name: /已选目标/
+    })
+    expect(chips.map((chip) => chip.textContent)).toEqual(['data'])
+    expect(
+      within(dialog).getByRole('region', { name: '派发预览' })
+    ).toHaveTextContent('指令：review the failure')
+
+    await user.clear(editor)
+    await user.type(editor, '@@{{data review} investigate the failure')
+    chips = within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    expect(chips.map((chip) => chip.textContent)).toEqual(['data review'])
+    expect(
+      within(dialog).getByRole('region', { name: '派发预览' })
+    ).toHaveTextContent('指令：investigate the failure')
+  })
+
+  it('routes an all-prefixed Agent Name through exact braced syntax without broadcasting', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'cx_review')!.name =
+      'all review'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@{{all review} inspect the findings'
+    )
+
+    expect(dialog).not.toHaveTextContent('@@all 已展开')
+    const chips = within(dialog).getAllByRole('listitem', {
+      name: /已选目标/
+    })
+    expect(chips.map((chip) => chip.textContent)).toEqual(['all review'])
+    expect(
+      within(dialog).getByRole('region', { name: '派发预览' })
+    ).toHaveTextContent('指令：inspect the findings')
+  })
+
   it('keeps exact @@all as a broadcast when an Agent Name is its prefix', async () => {
     const { user } = await gotoAgentsSurface()
 
@@ -636,7 +691,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
-      'ask @@data review'
+      'ask @@{{data review}'
     )
 
     const chips = within(dialog).getAllByRole('listitem', {

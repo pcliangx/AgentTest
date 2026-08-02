@@ -29,18 +29,86 @@ import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
 // ---------------------------------------------------------------------------
 
 /**
- * `@@<name>` routing must work for any name the create-agent contract allows —
- * including names with spaces (e.g. `data review`). A naive `@@(\S+)`
- * capture stops at the first space.
+ * Unquoted `@@name` uses whitespace as its unambiguous boundary. Agent Names
+ * containing spaces or colliding with control syntax use exact braced form,
+ * e.g. `@@{data review}` or `@@{all}`. Within braces, a backslash escapes the
+ * next character, so the unrestricted Agent Name contract remains representable.
  *
- * The resolver gives the exact `@@all` control token syntax priority, then
- * matches the project's known Agent Names longest-first and consumes their
- * character ranges. Remaining unclaimed `@@token` runs are unresolved. This
- * keeps the accepted Agent Name contract unchanged while making the broadcast
- * token deterministic (#6).
+ * Bare `@@all` is always broadcast syntax; braced `@@{all}` addresses an Agent
+ * literally named `all`. Unknown or malformed mentions remain unresolved and
+ * block the whole dispatch rather than risking a partial or wrong target set.
  */
-const AT_AT_TOKEN = /(?:^|\s)@@(\S+)/g
 const ALL_TOKEN = 'all'
+const WHITESPACE = /\s/u
+
+interface RoutingMention {
+  start: number
+  end: number
+  name: string
+  exact: boolean
+  validSyntax: boolean
+}
+
+/** Scans routing mentions without consulting project state. */
+function scanRoutingMentions(text: string): RoutingMention[] {
+  const mentions: RoutingMention[] = []
+
+  for (let index = 0; index < text.length - 1; index++) {
+    if (
+      text[index] !== '@' ||
+      text[index + 1] !== '@' ||
+      (index > 0 && !WHITESPACE.test(text[index - 1]))
+    ) {
+      continue
+    }
+
+    const contentStart = index + 2
+    if (text[contentStart] === '{') {
+      let cursor = contentStart + 1
+      let name = ''
+      let closed = false
+      while (cursor < text.length) {
+        const char = text[cursor]
+        if (char === '\\' && cursor + 1 < text.length) {
+          name += text[cursor + 1]
+          cursor += 2
+          continue
+        }
+        if (char === '}') {
+          cursor += 1
+          closed = true
+          break
+        }
+        name += char
+        cursor += 1
+      }
+      mentions.push({
+        start: index,
+        end: cursor,
+        name,
+        exact: true,
+        validSyntax: closed && name.length > 0
+      })
+      index = cursor - 1
+      continue
+    }
+
+    let cursor = contentStart
+    while (cursor < text.length && !WHITESPACE.test(text[cursor])) cursor += 1
+    const name = text.slice(contentStart, cursor)
+    mentions.push({
+      start: index,
+      end: cursor,
+      name,
+      exact: false,
+      validSyntax: name.length > 0
+    })
+    index = cursor - 1
+  }
+
+  return mentions
+}
+
 const FOCUSABLE_SELECTOR = [
   'button:not(:disabled)',
   'textarea:not(:disabled)',
@@ -81,57 +149,25 @@ function resolveAtAt(
   const byName = new Map<string, AgentInstanceViewModel>()
   for (const a of agents) byName.set(a.name.toLowerCase(), a)
 
-  // Ranges [start, end) in `text` already consumed by routing syntax, so a
-  // shorter name cannot re-claim part of a longer name's mention.
   const consumed: Array<[number, number]> = []
-  const overlaps = (start: number, end: number) =>
-    consumed.some(([cs, ce]) => start < ce && end > cs)
-
-  // `@@all` is routing syntax and therefore has priority even when the domain
-  // contains an Agent literally named `all` (which remains manually
-  // selectable). Claim these exact token ranges before matching names.
   let hasAll = false
-  AT_AT_TOKEN.lastIndex = 0
-  let broadcastMatch: RegExpExecArray | null
-  while ((broadcastMatch = AT_AT_TOKEN.exec(text)) !== null) {
-    if (broadcastMatch[1].toLowerCase() !== ALL_TOKEN) continue
-    const leadLen =
-      broadcastMatch[0].length - broadcastMatch[1].length - 2
-    const atStart = broadcastMatch.index + Math.max(0, leadLen)
-    const atEnd = atStart + 2 + broadcastMatch[1].length
-    consumed.push([atStart, atEnd])
-    hasAll = true
-  }
-
-  // Longest names first so `data review` is matched before `data`.
-  const knownNames = [...byName.keys()].sort((a, b) => b.length - a.length)
-  for (const name of knownNames) {
-    // Match `@@<name>` case-insensitively as a complete mention. The trailing
-    // boundary prevents a shorter valid name such as `a` from consuming the
-    // prefix of `@@all`, or `cx_review` from claiming `@@cx_review_extra`.
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(`(^|\\s)(@@${escaped})(?=\\s|$)`, 'gi')
-    let m: RegExpExecArray | null
-    while ((m = re.exec(text)) !== null) {
-      // The `@@` begins right after the captured leading separator.
-      const atStart = m.index + m[1].length
-      const atEnd = atStart + m[2].length
-      if (overlaps(atStart, atEnd)) continue
-      consumed.push([atStart, atEnd])
-      ids.add(byName.get(name)!.agentInstanceId)
+  for (const mention of scanRoutingMentions(text)) {
+    if (!mention.validSyntax) {
+      unresolved.push(mention.name || '@@')
+      continue
     }
-  }
-
-  // Now scan for any remaining `@@token` occurrences not claimed above.
-  AT_AT_TOKEN.lastIndex = 0
-  let t: RegExpExecArray | null
-  while ((t = AT_AT_TOKEN.exec(text)) !== null) {
-    const leadLen = t[0].length - t[1].length - 2 // chars before @@
-    const atStart = t.index + Math.max(0, leadLen)
-    const atEnd = atStart + 2 + t[1].length
-    if (overlaps(atStart, atEnd)) continue
-    const token = t[1]
-    unresolved.push(token)
+    if (!mention.exact && mention.name.toLowerCase() === ALL_TOKEN) {
+      hasAll = true
+      consumed.push([mention.start, mention.end])
+      continue
+    }
+    const agent = byName.get(mention.name.toLowerCase())
+    if (!agent) {
+      unresolved.push(mention.name)
+      continue
+    }
+    ids.add(agent.agentInstanceId)
+    consumed.push([mention.start, mention.end])
   }
 
   // Routing mentions are control syntax, not part of the instruction sent to
@@ -167,8 +203,7 @@ export function DispatchPicker({
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
   )
-  // Explicit names resolve against every project Agent so a blocked longer
-  // name can never fall through to a ready shorter name. Manual selection is
+  // Explicit names resolve against every project Agent. Manual selection is
   // limited to targets that can currently accept a Dispatch.
 
   const [instruction, setInstruction] = useState('')
@@ -416,7 +451,7 @@ export function DispatchPicker({
           指令
           <textarea
             aria-label="指令"
-            placeholder="输入指令，可用 @@<agent-name> 或 @@all…"
+            placeholder="输入指令，可用 @@name、@@{含空格名称} 或 @@all…"
             className="mt-1 min-h-[3rem] w-full resize-none rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
             value={instruction}
             onChange={(e) => {
