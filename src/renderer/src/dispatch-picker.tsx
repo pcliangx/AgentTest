@@ -60,6 +60,21 @@ interface BroadcastConfirmation {
   revision: number
 }
 
+interface DispatchTargetPreview {
+  agentInstanceId: AgentInstanceViewModel['agentInstanceId']
+  name: string
+  blocked: boolean
+  queuePosition: string
+}
+
+interface PendingSubmission {
+  projectId: ProjectViewModel['projectId']
+  targetIds: AgentInstanceViewModel['agentInstanceId'][]
+  targetPreviews: DispatchTargetPreview[]
+  instruction: string
+  resourceScope: string
+}
+
 /** Scans routing mentions without consulting project state. */
 function scanRoutingMentions(text: string): RoutingMention[] {
   const mentions: RoutingMention[] = []
@@ -222,6 +237,8 @@ export function DispatchPicker({
   const [notice, setNotice] = useState<string | null>(null)
   const [broadcastConfirmation, setBroadcastConfirmation] =
     useState<BroadcastConfirmation | null>(null)
+  const [pendingSubmission, setPendingSubmission] =
+    useState<PendingSubmission | null>(null)
   const awaitingBroadcast = broadcastConfirmation !== null
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
@@ -327,6 +344,30 @@ export function DispatchPicker({
         ? '已连接，但未绑定任何资源'
         : '未绑定连接（仅本地资源）'
 
+  const liveTargetPreviews: DispatchTargetPreview[] = selectedTargets.map(
+    (agent) => {
+      const blocked = !isDispatchable(agent)
+      return {
+        agentInstanceId: agent.agentInstanceId,
+        name: agent.name,
+        blocked,
+        queuePosition: blocked ? '不可派发' : queuePositionFor(agent)
+      }
+    }
+  )
+  const displayedTargetPreviews =
+    pendingSubmission?.targetPreviews ?? liveTargetPreviews
+  const displayedTargetIds = pendingSubmission
+    ? new Set(pendingSubmission.targetIds)
+    : targetIds
+  const displayedBlockedTargets = displayedTargetPreviews.filter(
+    (target) => target.blocked
+  )
+  const displayedInstruction =
+    pendingSubmission?.instruction ?? resolved.instruction
+  const displayedResourceScope =
+    pendingSubmission?.resourceScope ?? resourceScope
+
   const confirm = async () => {
     if (submittingRef.current || confirmationBlocked) {
       return
@@ -364,17 +405,30 @@ export function DispatchPicker({
     // A WorkbenchPort event may arrive before its response. Guard with a ref,
     // not only rendered state, so a second activation in the same pending
     // window cannot mint a fresh CommandId for the same logical confirmation.
+    const submission: PendingSubmission = {
+      projectId: broadcastConfirmation?.projectId ?? project.projectId,
+      targetIds:
+        broadcastConfirmation?.targetIds ??
+        targets.map((agent) => agent.agentInstanceId),
+      targetPreviews: targets.map((agent) => ({
+        agentInstanceId: agent.agentInstanceId,
+        name: agent.name,
+        blocked: false,
+        queuePosition: queuePositionFor(agent)
+      })),
+      instruction:
+        broadcastConfirmation?.instruction ?? resolved.instruction,
+      resourceScope
+    }
     submittingRef.current = true
+    setPendingSubmission(submission)
     setSubmitting(true)
     try {
       const result = await sendCommand({
         kind: 'confirm-dispatch',
-        projectId: broadcastConfirmation?.projectId ?? project.projectId,
-        targets:
-          broadcastConfirmation?.targetIds ??
-          targets.map((a) => a.agentInstanceId),
-        instruction:
-          broadcastConfirmation?.instruction ?? resolved.instruction
+        projectId: submission.projectId,
+        targets: submission.targetIds,
+        instruction: submission.instruction
       })
       if (result.ok) {
         onClose()
@@ -384,6 +438,7 @@ export function DispatchPicker({
       }
     } finally {
       submittingRef.current = false
+      setPendingSubmission(null)
       setSubmitting(false)
     }
   }
@@ -469,7 +524,7 @@ export function DispatchPicker({
             {projectAgents.map((a) => {
               const disabled =
                 projectBlocked || submitting || !isDispatchable(a)
-              const selected = targetIds.has(a.agentInstanceId)
+              const selected = displayedTargetIds.has(a.agentInstanceId)
               return (
                 <li key={a.agentInstanceId}>
                   <button
@@ -503,31 +558,32 @@ export function DispatchPicker({
           </p>
         )}
 
-        {selectedTargets.length > 0 && (
+        {displayedTargetPreviews.length > 0 && (
           <div>
             <div className="text-xs text-neutral-400">已选目标</div>
             <ul className="mt-1 flex flex-wrap gap-1">
-              {selectedTargets.map((a) => (
+              {displayedTargetPreviews.map((target) => (
                 <li
-                  key={a.agentInstanceId}
+                  key={target.agentInstanceId}
                   aria-label="已选目标"
                   className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200"
                 >
-                  {a.name}
-                  {!isDispatchable(a) ? '（不可派发）' : ''}
+                  {target.name}
+                  {target.blocked ? '（不可派发）' : ''}
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        {blockedTargets.length > 0 && (
+        {displayedBlockedTargets.length > 0 && (
           <p role="alert" className="text-xs text-amber-400">
-            不可派发的目标：{blockedTargets.map((a) => a.name).join('、')}
+            不可派发的目标：
+            {displayedBlockedTargets.map((target) => target.name).join('、')}
           </p>
         )}
 
-        {resolved.unresolved.length > 0 && (
+        {!pendingSubmission && resolved.unresolved.length > 0 && (
           <p role="alert" className="text-xs text-amber-400">
             未识别的名称：{resolved.unresolved.join(', ')}
           </p>
@@ -535,8 +591,8 @@ export function DispatchPicker({
 
         {resolved.hasAll && (
           <p className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300">
-            @@all 已展开为当前 Project 全部实例（{selectedTargets.length}{' '}
-            个），确认派发前需再次确认广播。
+            @@all 已展开为当前 Project 全部实例（
+            {displayedTargetPreviews.length} 个），确认派发前需再次确认广播。
           </p>
         )}
 
@@ -555,7 +611,8 @@ export function DispatchPicker({
           />
         </label>
 
-        {selectedTargets.length > 0 && resolved.instruction.length > 0 && (
+        {displayedTargetPreviews.length > 0 &&
+          displayedInstruction.length > 0 && (
           <section
             role="region"
             aria-label="派发预览"
@@ -563,23 +620,21 @@ export function DispatchPicker({
           >
             <div>
               <span className="text-neutral-500">目标：</span>
-              {selectedTargets.map((a) => a.name).join('、')}
+              {displayedTargetPreviews.map((target) => target.name).join('、')}
             </div>
             <div>
               <span className="text-neutral-500">指令：</span>
-              {resolved.instruction}
+              {displayedInstruction}
             </div>
             <div>
               <span className="text-neutral-500">资源范围：</span>
-              {resourceScope}
+              {displayedResourceScope}
             </div>
             <div>
               <span className="text-neutral-500">队列位置：</span>
-              {selectedTargets
-                .map((a) =>
-                  isDispatchable(a)
-                    ? `${a.name}: ${queuePositionFor(a)}`
-                    : `${a.name}: 不可派发`
+              {displayedTargetPreviews
+                .map(
+                  (target) => `${target.name}: ${target.queuePosition}`
                 )
                 .join('，')}
             </div>

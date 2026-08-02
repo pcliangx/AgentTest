@@ -122,6 +122,67 @@ class DeferredCommandPort implements WorkbenchPort {
   }
 }
 
+/**
+ * Keeps command responses pending while allowing an authoritative snapshot
+ * event to arrive first, as permitted by the WorkbenchPort ordering contract.
+ */
+class DeferredMutableSnapshotPort implements WorkbenchPort {
+  private snapshot: WorkbenchViewModel
+  private readonly listeners = new Set<(event: WorkbenchEvent) => void>()
+  private readonly pending: Array<{
+    command: WorkbenchCommand
+    resolve: (result: CommandResult) => void
+  }> = []
+  readonly commands: WorkbenchCommand[] = []
+
+  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+    this.snapshot = structuredClone(snapshot)
+  }
+
+  async getSnapshot(): Promise<WorkbenchViewModel> {
+    return structuredClone(this.snapshot)
+  }
+
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return new Promise((resolve) => {
+      this.pending.push({ command, resolve })
+    })
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  publish(mutate: (snapshot: WorkbenchViewModel) => void): void {
+    const next = structuredClone(this.snapshot)
+    mutate(next)
+    next.revision += 1
+    this.snapshot = next
+    const event: WorkbenchEvent = {
+      kind: 'view-model-updated',
+      revision: next.revision,
+      snapshot: structuredClone(next)
+    }
+    for (const listener of [...this.listeners]) listener(event)
+  }
+
+  async resolvePending(): Promise<void> {
+    const pending = this.pending.splice(0)
+    for (const { command, resolve } of pending) {
+      resolve({
+        ok: true,
+        commandId: command.commandId,
+        acceptedRevision: command.expectedRevision + 1
+      })
+    }
+    await Promise.resolve()
+  }
+}
+
 /** Supplies a caller-owned scenario at the WorkbenchPort boundary. */
 class SnapshotRecordingPort implements WorkbenchPort {
   readonly commands: WorkbenchCommand[] = []
@@ -1159,6 +1220,52 @@ describe('Dispatch — idempotency', () => {
       expect(
         port.commands.filter((command) => command.kind === 'confirm-dispatch')
       ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolvePending())
+    }
+  })
+
+  it('keeps the submitted preview immutable when a snapshot event precedes the response', async () => {
+    const user = userEvent.setup()
+    const port = new DeferredMutableSnapshotPort()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'use the confirmed target and scope'
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    )
+
+    try {
+      await act(() =>
+        port.publish((next) => {
+          const project = next.projects[0]
+          project.resourceBindings = []
+          const target = next.agents.find(
+            (agent) => agent.name === 'cx_review'
+          )!
+          target.name = 'renamed_after_submit'
+          target.queueDepth = 4
+        })
+      )
+
+      const chips = within(dialog).getAllByRole('listitem', {
+        name: /已选目标/
+      })
+      expect(chips.map((chip) => chip.textContent)).toEqual(['cx_review'])
+      const preview = within(dialog).getByRole('region', {
+        name: '派发预览'
+      })
+      expect(preview).toHaveTextContent('目标：cx_review')
+      expect(preview).toHaveTextContent('销售团队任务清单')
+      expect(preview).toHaveTextContent('cx_review: 无需排队')
+      expect(preview).not.toHaveTextContent('renamed_after_submit')
+      expect(preview).not.toHaveTextContent('已连接，但未绑定任何资源')
     } finally {
       await act(() => port.resolvePending())
     }
