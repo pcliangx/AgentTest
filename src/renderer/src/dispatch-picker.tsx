@@ -248,7 +248,11 @@ export function DispatchPicker({
   useEffect(() => {
     if (awaitingBroadcast) {
       broadcastWasOpenRef.current = true
-      broadcastDialogRef.current?.focus()
+      const dialog = broadcastDialogRef.current
+      const firstFocusable =
+        dialog?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      const focusTarget = firstFocusable ?? dialog
+      focusTarget?.focus()
     } else if (broadcastWasOpenRef.current) {
       broadcastWasOpenRef.current = false
       broadcastTriggerRef.current?.focus()
@@ -405,12 +409,14 @@ export function DispatchPicker({
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
     const active = document.activeElement
-    if (e.shiftKey && (active === first || !activeDialog.contains(active))) {
+    const activeAtBoundary =
+      active === activeDialog || !activeDialog.contains(active)
+    if (e.shiftKey && (active === first || activeAtBoundary)) {
       e.preventDefault()
       last.focus()
     } else if (
       !e.shiftKey &&
-      (active === last || !activeDialog.contains(active))
+      (active === last || activeAtBoundary)
     ) {
       e.preventDefault()
       first.focus()
@@ -427,7 +433,10 @@ export function DispatchPicker({
       className="absolute inset-0 z-30 flex items-center justify-center bg-black/60"
       onKeyDown={onKeyDown}
     >
-      <div className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 p-4">
+      <div
+        inert={awaitingBroadcast ? true : undefined}
+        className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 p-4"
+      >
         <h3 className="text-sm font-medium text-neutral-100">派发给 Agent</h3>
 
         <div className="space-y-1">
@@ -576,42 +585,43 @@ export function DispatchPicker({
           </button>
         </div>
 
-        {broadcastConfirmation && (
-          <div
-            ref={broadcastDialogRef}
-            role="dialog"
-            aria-label="确认广播派发"
-            aria-modal="true"
-            tabIndex={-1}
-            className="absolute inset-0 z-40 flex items-center justify-center bg-black/70"
-          >
-            <div className="w-72 space-y-3 rounded-lg border border-neutral-600 bg-neutral-900 p-4">
-              <h4 className="text-sm font-medium text-neutral-100">
-                确认广播派发
-              </h4>
-              <p className="text-xs text-neutral-400">
-                本次派发将向 {broadcastConfirmation.targetIds.length}{' '}
-                个实例发送同一指令，每个目标会生成独立的 Dispatch。是否继续？
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-                  onClick={() => setBroadcastConfirmation(null)}
-                >
-                  取消
-                </button>
-                <button
-                  className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
-                  disabled={confirmationBlocked}
-                  onClick={() => void confirm()}
-                >
-                  确认广播
-                </button>
-              </div>
+      </div>
+
+      {broadcastConfirmation && (
+        <div
+          ref={broadcastDialogRef}
+          role="dialog"
+          aria-label="确认广播派发"
+          aria-modal="true"
+          tabIndex={-1}
+          className="absolute inset-0 z-40 flex items-center justify-center bg-black/70"
+        >
+          <div className="w-72 space-y-3 rounded-lg border border-neutral-600 bg-neutral-900 p-4">
+            <h4 className="text-sm font-medium text-neutral-100">
+              确认广播派发
+            </h4>
+            <p className="text-xs text-neutral-400">
+              本次派发将向 {broadcastConfirmation.targetIds.length}{' '}
+              个实例发送同一指令，每个目标会生成独立的 Dispatch。是否继续？
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+                onClick={() => setBroadcastConfirmation(null)}
+              >
+                取消
+              </button>
+              <button
+                className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+                disabled={confirmationBlocked}
+                onClick={() => void confirm()}
+              >
+                确认广播
+              </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -770,6 +770,47 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(confirms[0].targets).toHaveLength(8)
   })
 
+  it('keeps keyboard focus inside the nested broadcast confirmation', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
+      'ready'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const pickerDialog = await openPicker(user)
+
+    await user.type(
+      within(pickerDialog).getByRole('textbox', { name: '指令' }),
+      '@@all inspect focus'
+    )
+    await user.click(
+      within(pickerDialog).getByRole('button', { name: '确认派发' })
+    )
+    const broadcastDialog = await screen.findByRole('dialog', {
+      name: '确认广播派发'
+    })
+    const cancel = within(broadcastDialog).getByRole('button', {
+      name: '取消'
+    })
+    const confirm = within(broadcastDialog).getByRole('button', {
+      name: '确认广播'
+    })
+
+    expect(cancel).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(confirm).toHaveFocus()
+    await user.tab()
+    expect(cancel).toHaveFocus()
+
+    // A programmatic focus move to the dialog container must still be treated
+    // as a focus boundary rather than allowing Shift+Tab into the outer picker.
+    broadcastDialog.focus()
+    await user.tab({ shift: true })
+    expect(confirm).toHaveFocus()
+    expect(port.commands).toHaveLength(0)
+  })
+
   it('cancels broadcast confirmation when the authoritative snapshot changes before the second confirmation', async () => {
     const snapshot = createStandardScenario()
     snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
