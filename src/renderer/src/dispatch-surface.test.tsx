@@ -82,6 +82,48 @@ describe('Dispatch — Agent Tab composer', () => {
       instruction: 'clean the Q2 pipeline'
     })
   })
+
+  it('addresses a busy agent as reply-current-run, not start-or-queue', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+    // cc_data is in the `running` state in the standard scenario.
+    await user.type(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      'follow up'
+    )
+    await user.click(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    )
+    const sent = port.commands.find(
+      (c) => c.kind === 'send-agent-instruction'
+    )!
+    expect(sent).toMatchObject({ mode: 'reply-current-run' })
+  })
+
+  it('addresses an idle agent as start-or-queue', async () => {
+    const { user, port, ...rest } = await gotoAgentsSurface()
+    void rest
+    // cx_review is ready (idle) in the standard scenario — open it first.
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /cx_review/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+    await user.type(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      'kick off'
+    )
+    await user.click(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    )
+    const sent = port.commands.find(
+      (c) => c.kind === 'send-agent-instruction'
+    )!
+    expect(sent).toMatchObject({
+      agentInstanceId: id('inst-cx-review', 'AgentInstanceId'),
+      mode: 'start-or-queue'
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -148,6 +190,23 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     )
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
 
+    expect(
+      port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
+  })
+
+  it('Escape closes the picker without dispatching', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
+    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'draft'
+    )
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
     expect(
       port.commands.filter((c) => c.kind === 'confirm-dispatch')
     ).toHaveLength(0)

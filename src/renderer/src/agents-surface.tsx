@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type {
   AgentInstanceViewModel,
   AgentProviderId,
@@ -921,11 +922,25 @@ function DispatchPicker({
     }
   }
 
+  // Escape dismisses the picker without dispatching. If the broadcast
+  // confirmation overlay is open, Escape only cancels that inner step and
+  // returns the user to the main picker instead of closing everything.
+  const onPickerKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Escape') return
+    e.stopPropagation()
+    if (awaitingBroadcast) {
+      setAwaitingBroadcast(false)
+    } else {
+      onClose()
+    }
+  }
+
   return (
     <div
       role="dialog"
       aria-label="派发给 Agent"
       className="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
+      onKeyDown={onPickerKeyDown}
     >
       <div className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 p-4">
         <h3 className="text-sm font-medium text-neutral-100">派发给 Agent</h3>

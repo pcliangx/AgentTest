@@ -235,7 +235,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         // One stable DispatchId per target — Phase 1 records activity only.
         const now = Date.now()
-        const dispatchIds = targets.map((tid, idx) =>
+        const dispatchIds = targets.map((_, idx) =>
           id(`dispatch-${now}-${idx}`, 'DispatchId')
         )
         const newActivity = targets.map((tid, idx) => {
