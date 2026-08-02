@@ -386,13 +386,27 @@ export function DispatchPicker({
     }
   }
 
+  const cancelPicker = () => {
+    if (submittingRef.current) return
+    onClose()
+  }
+
+  const cancelBroadcast = () => {
+    if (submittingRef.current) return
+    setBroadcastConfirmation(null)
+  }
+
   // Escape dismisses without dispatching. If the broadcast overlay is open,
   // Escape cancels only that inner step and returns to the picker.
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.stopPropagation()
-      if (awaitingBroadcast) setBroadcastConfirmation(null)
-      else onClose()
+      if (submittingRef.current) {
+        e.preventDefault()
+        return
+      }
+      if (awaitingBroadcast) cancelBroadcast()
+      else cancelPicker()
       return
     }
     if (e.key !== 'Tab') return
@@ -573,8 +587,9 @@ export function DispatchPicker({
 
         <div className="flex justify-end gap-2">
           <button
-            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-            onClick={onClose}
+            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+            disabled={submitting}
+            onClick={cancelPicker}
           >
             取消
           </button>
@@ -609,8 +624,9 @@ export function DispatchPicker({
             </p>
             <div className="flex justify-end gap-2">
               <button
-                className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-                onClick={() => setBroadcastConfirmation(null)}
+                className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+                disabled={submitting}
+                onClick={cancelBroadcast}
               >
                 取消
               </button>

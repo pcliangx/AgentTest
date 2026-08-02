@@ -83,14 +83,19 @@ class RecordingPort implements WorkbenchPort {
  * ordering and makes duplicate user activation deterministic.
  */
 class DeferredCommandPort implements WorkbenchPort {
-  private readonly inner = new MockScenarioAdapter()
+  private readonly inner: MockScenarioAdapter
   private readonly pending: Array<{
     result: Promise<CommandResult>
     resolve: (result: CommandResult) => void
   }> = []
   readonly commands: WorkbenchCommand[] = []
 
-  constructor(private readonly deferredKind: WorkbenchCommand['kind']) {}
+  constructor(
+    private readonly deferredKind: WorkbenchCommand['kind'],
+    snapshot: WorkbenchViewModel = createStandardScenario()
+  ) {
+    this.inner = new MockScenarioAdapter(snapshot)
+  }
 
   getSnapshot(): Promise<WorkbenchViewModel> {
     return this.inner.getSnapshot()
@@ -1050,6 +1055,81 @@ describe('Dispatch — idempotency', () => {
     } finally {
       await act(() => port.resolvePending())
     }
+  })
+
+  it('cannot dismiss and reopen the picker while confirmation is pending', async () => {
+    const user = userEvent.setup()
+    const port = new DeferredCommandPort('confirm-dispatch')
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'keep one pending command'
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    )
+
+    try {
+      const cancel = within(dialog).getByRole('button', { name: '取消' })
+      expect(cancel).toBeDisabled()
+      await user.keyboard('{Escape}')
+      await user.click(cancel)
+
+      expect(
+        screen.getByRole('dialog', { name: '派发给 Agent' })
+      ).toBeInTheDocument()
+      expect(
+        port.commands.filter((command) => command.kind === 'confirm-dispatch')
+      ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolvePending())
+    }
+
+    expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
+  })
+
+  it('keeps the nested broadcast confirmation open while its response is pending', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
+      'ready'
+    const user = userEvent.setup()
+    const port = new DeferredCommandPort('confirm-dispatch', snapshot)
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const picker = await openPicker(user)
+
+    await user.type(
+      within(picker).getByRole('textbox', { name: '指令' }),
+      '@@all keep broadcast pending'
+    )
+    await user.click(within(picker).getByRole('button', { name: '确认派发' }))
+    const broadcast = await screen.findByRole('dialog', {
+      name: '确认广播派发'
+    })
+    await user.click(
+      within(broadcast).getByRole('button', { name: '确认广播' })
+    )
+
+    try {
+      expect(
+        within(broadcast).getByRole('button', { name: '取消' })
+      ).toBeDisabled()
+      await user.keyboard('{Escape}')
+      expect(
+        screen.getByRole('dialog', { name: '确认广播派发' })
+      ).toBeInTheDocument()
+      expect(
+        port.commands.filter((command) => command.kind === 'confirm-dispatch')
+      ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolvePending())
+    }
+
+    expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
   })
 
   it('a duplicate confirm-dispatch with the same CommandId does not create a second dispatch set', async () => {
