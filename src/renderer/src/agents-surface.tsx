@@ -10,7 +10,11 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
-import { isAgentBusy } from './workbench/dispatchability'
+import {
+  getProjectDispatchBlockReason,
+  isAgentBusy,
+  isTerminalExecutionSlotOccupied
+} from './workbench/dispatchability'
 
 /**
  * Agents surface — Agent Directory, single-panel workspace with unique
@@ -731,10 +735,12 @@ function ChatState({
 
   const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
+  const projectBlocked = getProjectDispatchBlockReason(project) !== undefined
   // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
-  // Terminal takeover is active the composer is disabled and shows why.
-  const terminalBlocked = agent.terminalState === 'active'
-  const disabled = lifecycleBlocked || terminalBlocked || submitting
+  // Terminal is opening or active the composer is disabled and shows why.
+  const terminalBlocked = isTerminalExecutionSlotOccupied(agent.terminalState)
+  const disabled =
+    projectBlocked || lifecycleBlocked || terminalBlocked || submitting
   const awaitingInput = agent.runtimeState === 'needs-input'
   const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
 
@@ -773,13 +779,19 @@ function ChatState({
         aria-label="对话记录"
         className="min-h-0 flex-1 overflow-auto"
       >
-        {agent.runtimeState === 'unavailable' ? (
+        {projectBlocked ? (
+          <p className="text-neutral-500">
+            Project 已归档；仅可查看历史记录，不能发送新指令。
+          </p>
+        ) : agent.runtimeState === 'unavailable' ? (
           <p className="text-neutral-500">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
           </p>
         ) : terminalBlocked ? (
           <p className="text-neutral-500">
-            Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。
+            {agent.terminalState === 'opening'
+              ? 'Terminal 正在打开或接管中；结构化 Run 与 PTY 互斥，请等待打开完成并结束接管。'
+              : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
           </p>
         ) : awaitingInput ? (
           <p className="text-neutral-500">

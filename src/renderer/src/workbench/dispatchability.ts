@@ -6,9 +6,28 @@
  * dispatch. Duplicating the rule lets one side accept a target the other then
  * rejects, so the predicate lives in the domain layer and is imported by both.
  */
-import type { AgentInstanceViewModel } from './contract'
+import type {
+  AgentInstanceViewModel,
+  ProjectViewModel,
+  TerminalState
+} from './contract'
 
 export type DispatchBlockReason = 'agent-unavailable'
+export type ProjectDispatchBlockReason = 'project-archived'
+
+/** Returns why a Project cannot accept new execution-producing commands. */
+export function getProjectDispatchBlockReason(
+  project: Pick<ProjectViewModel, 'lifecycle'>
+): ProjectDispatchBlockReason | undefined {
+  return project.lifecycle === 'archived' ? 'project-archived' : undefined
+}
+
+/** Opening reserves the PTY slot before the Terminal becomes fully active. */
+export function isTerminalExecutionSlotOccupied(
+  terminalState: TerminalState
+): boolean {
+  return terminalState === 'opening' || terminalState === 'active'
+}
 
 /** Returns the authoritative reason an instance cannot receive a dispatch. */
 export function getDispatchBlockReason(
@@ -37,12 +56,13 @@ export function isDispatchable(a: AgentInstanceViewModel): boolean {
  */
 export function isAgentBusy(a: {
   runtimeState: string
-  terminalState?: string
+  terminalState?: TerminalState
   activeRunId?: unknown
   queueDepth?: number
 }): boolean {
   return (
-    a.terminalState === 'active' ||
+    (a.terminalState !== undefined &&
+      isTerminalExecutionSlotOccupied(a.terminalState)) ||
     a.activeRunId !== undefined ||
     (a.queueDepth ?? 0) > 0 ||
     a.runtimeState === 'running' ||

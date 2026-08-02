@@ -141,6 +141,50 @@ class SnapshotRecordingPort implements WorkbenchPort {
   }
 }
 
+/** Publishes caller-controlled authoritative snapshot updates. */
+class MutableSnapshotRecordingPort implements WorkbenchPort {
+  private snapshot: WorkbenchViewModel
+  private readonly listeners = new Set<(event: WorkbenchEvent) => void>()
+  readonly commands: WorkbenchCommand[] = []
+
+  constructor(snapshot: WorkbenchViewModel) {
+    this.snapshot = structuredClone(snapshot)
+  }
+
+  async getSnapshot(): Promise<WorkbenchViewModel> {
+    return structuredClone(this.snapshot)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return {
+      ok: true,
+      commandId: command.commandId,
+      acceptedRevision: this.snapshot.revision + 1
+    }
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  publish(mutate: (snapshot: WorkbenchViewModel) => void): void {
+    const next = structuredClone(this.snapshot)
+    mutate(next)
+    next.revision += 1
+    this.snapshot = next
+    const event: WorkbenchEvent = {
+      kind: 'view-model-updated',
+      revision: next.revision,
+      snapshot: structuredClone(next)
+    }
+    for (const listener of [...this.listeners]) listener(event)
+  }
+}
+
 /** Renders the shell, navigates to the Agents surface and returns helpers. */
 async function gotoAgentsSurface() {
   const user = userEvent.setup()
@@ -250,6 +294,47 @@ describe('Dispatch — Agent Tab composer', () => {
     expect(
       port.commands.filter((c) => c.kind === 'send-agent-instruction')
     ).toHaveLength(0)
+  })
+
+  it('blocks the composer while Terminal takeover is opening', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].currentSurface = 'agents'
+    snapshot.agents.find((agent) => agent.name === 'cc_data')!.terminalState =
+      'opening'
+    const port = new SnapshotRecordingPort(snapshot)
+    render(<ProjectShell port={port} />)
+
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Terminal 正在打开或接管中')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
+  })
+
+  it('blocks both composer and Picker when the Project is archived', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].lifecycle = 'archived'
+    snapshot.projects[0].currentSurface = 'agents'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Project 已归档')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+
+    const dialog = await openPicker(user)
+    expect(dialog).toHaveTextContent('Project 已归档，不能创建新派发')
+    expect(
+      within(dialog).getByRole('button', { name: /cx_review/ })
+    ).toBeDisabled()
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
   })
 
   it('addresses an idle agent as start-or-queue', async () => {
@@ -667,6 +752,63 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
       instruction: 'stand up'
     })
     expect(confirms[0].targets).toHaveLength(8)
+  })
+
+  it('cancels broadcast confirmation when the authoritative snapshot changes before the second confirmation', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
+      'ready'
+    const port = new MutableSnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@all inspect the project'
+    )
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    expect(
+      await screen.findByRole('dialog', { name: '确认广播派发' })
+    ).toHaveTextContent('8 个实例')
+
+    await act(() =>
+      port.publish((next) => {
+        const template = next.agents.find(
+          (agent) => agent.name === 'cx_review'
+        )!
+        next.agents.push({
+          ...template,
+          agentInstanceId: id('inst-late-agent', 'AgentInstanceId'),
+          name: 'late_agent',
+          queueDepth: 0,
+          activeRunId: undefined
+        })
+      })
+    )
+
+    expect(
+      screen.queryByRole('dialog', { name: '确认广播派发' })
+    ).toBeNull()
+    expect(dialog).toHaveTextContent('派发预览已变化，请重新确认广播')
+    expect(
+      port.commands.filter((command) => command.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    const refreshed = await screen.findByRole('dialog', {
+      name: '确认广播派发'
+    })
+    expect(refreshed).toHaveTextContent('9 个实例')
+    await user.click(
+      within(refreshed).getByRole('button', { name: '确认广播' })
+    )
+    const commands = port.commands.filter(
+      (command) => command.kind === 'confirm-dispatch'
+    )
+    expect(commands).toHaveLength(1)
+    expect(commands[0].targets).toHaveLength(9)
   })
 
   it('excludes unavailable agents from the selectable list', async () => {
@@ -1108,6 +1250,81 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
         (item) => item.agentInstanceId === terminalAgent.agentInstanceId
       )
     ).toBe(true)
+  })
+
+  it('treats Terminal opening as occupied: composer command is rejected while Dispatch is queued', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    const terminalAgent = snapshot.agents.find(
+      (agent) => agent.name === 'cx_anti'
+    )!
+    terminalAgent.terminalState = 'opening'
+    const adapter = new MockScenarioAdapter(snapshot)
+
+    const instructionResult = await adapter.dispatch({
+      commandId: id('cmd-terminal-opening-instruction', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'send-agent-instruction',
+      projectId: project.projectId,
+      agentInstanceId: terminalAgent.agentInstanceId,
+      instruction: 'must not race the PTY',
+      mode: 'start-or-queue'
+    })
+    expect(instructionResult.ok).toBe(false)
+    if (!instructionResult.ok) expect(instructionResult.reason).toBe('busy')
+
+    const dispatchResult = await adapter.dispatch({
+      commandId: id('cmd-terminal-opening-dispatch', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [terminalAgent.agentInstanceId],
+      instruction: 'run after the PTY closes'
+    })
+    expect(dispatchResult.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === terminalAgent.agentInstanceId
+      )!.queueDepth
+    ).toBe(terminalAgent.queueDepth + 1)
+  })
+
+  it('rejects composer and Dispatch commands atomically when the Project is archived', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    project.lifecycle = 'archived'
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    const adapter = new MockScenarioAdapter(snapshot)
+    const before = await adapter.getSnapshot()
+
+    const instructionResult = await adapter.dispatch({
+      commandId: id('cmd-archived-instruction', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'send-agent-instruction',
+      projectId: project.projectId,
+      agentInstanceId: target.agentInstanceId,
+      instruction: 'must not run',
+      mode: 'start-or-queue'
+    })
+    const dispatchResult = await adapter.dispatch({
+      commandId: id('cmd-archived-dispatch', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'must not dispatch'
+    })
+
+    expect(instructionResult.ok).toBe(false)
+    expect(dispatchResult.ok).toBe(false)
+    if (!instructionResult.ok) {
+      expect(instructionResult.reason).toBe('unavailable')
+    }
+    if (!dispatchResult.ok) {
+      expect(dispatchResult.reason).toBe('unavailable')
+    }
+    expect(await adapter.getSnapshot()).toEqual(before)
   })
 })
 

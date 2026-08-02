@@ -14,7 +14,12 @@ import type {
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
-import { getDispatchBlockReason, isAgentBusy } from './dispatchability'
+import {
+  getDispatchBlockReason,
+  getProjectDispatchBlockReason,
+  isAgentBusy,
+  isTerminalExecutionSlotOccupied
+} from './dispatchability'
 
 type PostDispatchEvent = Omit<
   Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
@@ -35,8 +40,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private createdAgentCount = 0
   private createdPanelCount = 0
 
-  constructor() {
-    this.snapshot = createStandardScenario()
+  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+    this.snapshot = structuredClone(snapshot)
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
@@ -193,6 +198,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return this.applyLayoutOperation(command, project)
       }
       case 'send-agent-instruction': {
+        const project = this.snapshot.projects.find(
+          (candidate) => candidate.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        if (getProjectDispatchBlockReason(project)) {
+          return this.reject(
+            command,
+            'unavailable',
+            'Project 已归档，不能发送新指令'
+          )
+        }
         // Composer addresses exactly one instance — no multi-target fan-out.
         const agent = this.snapshot.agents.find(
           (a) =>
@@ -215,11 +233,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // ADR-0007: structured Run and Terminal PTY are mutually exclusive per
         // instance. While Terminal takeover is active the adapter must refuse
         // a structured instruction even if the renderer mistakenly sends one.
-        if (agent.terminalState === 'active') {
+        if (isTerminalExecutionSlotOccupied(agent.terminalState)) {
           return this.reject(
             command,
             'busy',
-            'Terminal 接管期间不能发送结构化指令'
+            'Terminal 正在打开或接管期间，不能发送结构化指令'
           )
         }
         // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
@@ -270,6 +288,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
         )
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        if (getProjectDispatchBlockReason(project)) {
+          return this.reject(
+            command,
+            'unavailable',
+            'Project 已归档，不能创建新派发'
+          )
         }
         // Instruction must be non-empty (#6 P2-5).
         if (

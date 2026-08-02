@@ -7,7 +7,11 @@ import type {
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agents-surface'
-import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
+import {
+  getProjectDispatchBlockReason,
+  isAgentBusy,
+  isDispatchable
+} from './workbench/dispatchability'
 
 /**
  * Unified Dispatch Picker (#6).
@@ -47,6 +51,13 @@ interface RoutingMention {
   name: string
   exact: boolean
   validSyntax: boolean
+}
+
+interface BroadcastConfirmation {
+  projectId: ProjectViewModel['projectId']
+  targetIds: AgentInstanceViewModel['agentInstanceId'][]
+  instruction: string
+  revision: number
 }
 
 /** Scans routing mentions without consulting project state. */
@@ -203,6 +214,7 @@ export function DispatchPicker({
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
   )
+  const projectBlocked = getProjectDispatchBlockReason(project) !== undefined
   // Explicit names resolve against every project Agent. Manual selection is
   // limited to targets that can currently accept a Dispatch.
 
@@ -211,7 +223,9 @@ export function DispatchPicker({
     Set<AgentInstanceViewModel['agentInstanceId']>
   >(new Set())
   const [notice, setNotice] = useState<string | null>(null)
-  const [awaitingBroadcast, setAwaitingBroadcast] = useState(false)
+  const [broadcastConfirmation, setBroadcastConfirmation] =
+    useState<BroadcastConfirmation | null>(null)
+  const awaitingBroadcast = broadcastConfirmation !== null
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const pickerDialogRef = useRef<HTMLDivElement>(null)
@@ -241,6 +255,17 @@ export function DispatchPicker({
     }
   }, [awaitingBroadcast])
 
+  useEffect(() => {
+    if (
+      broadcastConfirmation &&
+      !submitting &&
+      broadcastConfirmation.revision !== snapshot.revision
+    ) {
+      setBroadcastConfirmation(null)
+      setNotice('派发预览已变化，请重新确认广播')
+    }
+  }, [broadcastConfirmation, snapshot.revision, submitting])
+
   const resolved = resolveAtAt(instruction, projectAgents)
   const targetIds = new Set([...manual, ...resolved.ids])
   if (resolved.hasAll) {
@@ -251,6 +276,13 @@ export function DispatchPicker({
   )
   const blockedTargets = selectedTargets.filter((a) => !isDispatchable(a))
   const targets = selectedTargets.filter(isDispatchable)
+  const confirmationBlocked =
+    projectBlocked ||
+    submitting ||
+    targets.length === 0 ||
+    blockedTargets.length > 0 ||
+    resolved.unresolved.length > 0 ||
+    resolved.instruction.length === 0
 
   const toggleManual = (
     agentInstanceId: AgentInstanceViewModel['agentInstanceId']
@@ -287,19 +319,38 @@ export function DispatchPicker({
         : '未绑定连接（仅本地资源）'
 
   const confirm = async () => {
-    if (
-      submittingRef.current ||
-      targets.length === 0 ||
-      blockedTargets.length > 0 ||
-      resolved.unresolved.length > 0 ||
-      resolved.instruction.length === 0
-    ) {
+    if (submittingRef.current || confirmationBlocked) {
       return
     }
     setNotice(null)
-    if (resolved.hasAll && !awaitingBroadcast) {
-      setAwaitingBroadcast(true)
+    if (resolved.hasAll && !broadcastConfirmation) {
+      setBroadcastConfirmation({
+        projectId: project.projectId,
+        targetIds: targets.map((agent) => agent.agentInstanceId),
+        instruction: resolved.instruction,
+        revision: snapshot.revision
+      })
       return
+    }
+    if (broadcastConfirmation) {
+      const currentTargetIds = targets.map((agent) => agent.agentInstanceId)
+      const targetSetChanged =
+        currentTargetIds.length !== broadcastConfirmation.targetIds.length ||
+        currentTargetIds.some(
+          (targetId, index) =>
+            targetId !== broadcastConfirmation.targetIds[index]
+        )
+      if (
+        !resolved.hasAll ||
+        broadcastConfirmation.revision !== snapshot.revision ||
+        broadcastConfirmation.projectId !== project.projectId ||
+        broadcastConfirmation.instruction !== resolved.instruction ||
+        targetSetChanged
+      ) {
+        setBroadcastConfirmation(null)
+        setNotice('派发预览已变化，请重新确认广播')
+        return
+      }
     }
     // A WorkbenchPort event may arrive before its response. Guard with a ref,
     // not only rendered state, so a second activation in the same pending
@@ -309,14 +360,17 @@ export function DispatchPicker({
     try {
       const result = await sendCommand({
         kind: 'confirm-dispatch',
-        projectId: project.projectId,
-        targets: targets.map((a) => a.agentInstanceId),
-        instruction: resolved.instruction
+        projectId: broadcastConfirmation?.projectId ?? project.projectId,
+        targets:
+          broadcastConfirmation?.targetIds ??
+          targets.map((a) => a.agentInstanceId),
+        instruction:
+          broadcastConfirmation?.instruction ?? resolved.instruction
       })
       if (result.ok) {
         onClose()
       } else {
-        setAwaitingBroadcast(false)
+        setBroadcastConfirmation(null)
         setNotice(result.message)
       }
     } finally {
@@ -330,7 +384,7 @@ export function DispatchPicker({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.stopPropagation()
-      if (awaitingBroadcast) setAwaitingBroadcast(false)
+      if (awaitingBroadcast) setBroadcastConfirmation(null)
       else onClose()
       return
     }
@@ -385,7 +439,7 @@ export function DispatchPicker({
             className="max-h-40 space-y-0.5 overflow-auto"
           >
             {projectAgents.map((a) => {
-              const disabled = !isDispatchable(a)
+              const disabled = projectBlocked || !isDispatchable(a)
               const selected = targetIds.has(a.agentInstanceId)
               return (
                 <li key={a.agentInstanceId}>
@@ -409,6 +463,12 @@ export function DispatchPicker({
             })}
           </ul>
         </div>
+
+        {projectBlocked && (
+          <p role="alert" className="text-xs text-amber-400">
+            Project 已归档，不能创建新派发。
+          </p>
+        )}
 
         {selectedTargets.length > 0 && (
           <div>
@@ -454,9 +514,10 @@ export function DispatchPicker({
             placeholder="输入指令，可用 @@name、@@{含空格名称} 或 @@all…"
             className="mt-1 min-h-[3rem] w-full resize-none rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
             value={instruction}
+            disabled={projectBlocked || submitting}
             onChange={(e) => {
               setInstruction(e.target.value)
-              setAwaitingBroadcast(false)
+              setBroadcastConfirmation(null)
             }}
           />
         </label>
@@ -508,20 +569,14 @@ export function DispatchPicker({
           <button
             ref={broadcastTriggerRef}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
-            disabled={
-              submitting ||
-              targets.length === 0 ||
-              blockedTargets.length > 0 ||
-              resolved.unresolved.length > 0 ||
-              resolved.instruction.length === 0
-            }
+            disabled={confirmationBlocked}
             onClick={() => void confirm()}
           >
             {awaitingBroadcast ? '确认广播' : '确认派发'}
           </button>
         </div>
 
-        {awaitingBroadcast && (
+        {broadcastConfirmation && (
           <div
             ref={broadcastDialogRef}
             role="dialog"
@@ -535,19 +590,19 @@ export function DispatchPicker({
                 确认广播派发
               </h4>
               <p className="text-xs text-neutral-400">
-                本次派发将向 {targets.length} 个实例发送同一指令，每个目标会生成独立的
-                Dispatch。是否继续？
+                本次派发将向 {broadcastConfirmation.targetIds.length}{' '}
+                个实例发送同一指令，每个目标会生成独立的 Dispatch。是否继续？
               </p>
               <div className="flex justify-end gap-2">
                 <button
                   className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-                  onClick={() => setAwaitingBroadcast(false)}
+                  onClick={() => setBroadcastConfirmation(null)}
                 >
                   取消
                 </button>
                 <button
                   className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
-                  disabled={submitting}
+                  disabled={confirmationBlocked}
                   onClick={() => void confirm()}
                 >
                   确认广播

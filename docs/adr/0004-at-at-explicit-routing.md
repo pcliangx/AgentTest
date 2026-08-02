@@ -25,6 +25,10 @@
 - Agent Tab composer 已由当前 `AgentInstanceId` 明确限定唯一目标，可以直接发送；
 - Overview、Task、Handoff 和命令面板等无单一上下文入口，必须通过
   Agent Picker、可见目标 chips 或 `@@<agent-name>` 明确目标；
+- 无空格名称使用 `@@name`，并以空白字符作为边界；含空格或与控制词冲突的合法名称
+  使用 `@@{完整 Agent Name}` 精确定界，花括号内反斜杠转义下一字符；
+- 裸 `@@all` 固定为广播语法；若 Agent Name 本身为 `all`，使用 `@@{all}` 或 Picker
+  中的可见条目定向选择，不能靠最长名称猜测目标；
 - `@@all` 展开当前 Project 的具体实例列表并再次确认，不再表示固定三家
   Provider；
 - assistant 输出中的 `@@` 永不触发派发。
