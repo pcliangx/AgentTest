@@ -567,6 +567,35 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     })
   })
 
+  it('recognizes an @@ target after punctuation without requiring left whitespace', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const target = (await port.getSnapshot()).agents.find(
+      (agent) => agent.name === 'cx_review'
+    )!
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'dispatch:@@cx_review inspect'
+    )
+
+    expect(
+      within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    ).toHaveLength(1)
+    expect(
+      within(dialog).getByRole('region', { name: '派发预览' })
+    ).toHaveTextContent('指令：dispatch: inspect')
+
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    )
+    expect(port.commands.find((c) => c.kind === 'confirm-dispatch')).toMatchObject({
+      kind: 'confirm-dispatch',
+      targets: [target.agentInstanceId],
+      instruction: 'dispatch: inspect'
+    })
+  })
+
   it('does not allow a routing marker to be the entire instruction', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)

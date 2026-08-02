@@ -65,11 +65,7 @@ function scanRoutingMentions(text: string): RoutingMention[] {
   const mentions: RoutingMention[] = []
 
   for (let index = 0; index < text.length - 1; index++) {
-    if (
-      text[index] !== '@' ||
-      text[index + 1] !== '@' ||
-      (index > 0 && !WHITESPACE.test(text[index - 1]))
-    ) {
+    if (text[index] !== '@' || text[index + 1] !== '@') {
       continue
     }
 
