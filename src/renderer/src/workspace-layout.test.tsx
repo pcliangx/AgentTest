@@ -6,7 +6,9 @@ import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { id } from './workbench/contract'
 import type {
+  AgentInstanceId,
   CommandResult,
+  PanelId,
   SplitNodeId,
   WorkbenchCommand,
   WorkbenchPort
@@ -115,6 +117,32 @@ async function directResize(
     projectId: id('proj-sales', 'ProjectId'),
     operation: { kind: 'resize-split', splitNodeId, ratio }
   })
+}
+
+/** Applies an authoritative tab move straight through the port (see above). */
+async function directMoveTab(
+  port: WorkbenchPort,
+  agentInstanceId: AgentInstanceId,
+  targetPanelId: PanelId
+): Promise<CommandResult> {
+  const snap = await port.getSnapshot()
+  return port.dispatch({
+    kind: 'change-layout',
+    commandId: id('cmd-direct-move', 'CommandId'),
+    expectedRevision: snap.revision,
+    projectId: id('proj-sales', 'ProjectId'),
+    operation: { kind: 'move-tab', agentInstanceId, targetPanelId }
+  })
+}
+
+/** Raw drop dispatch with a dataTransfer payload (no act — see above). */
+function dispatchDropRaw(el: Element, dataTransfer: unknown) {
+  const event = new window.MouseEvent('drop', {
+    bubbles: true,
+    cancelable: true
+  })
+  Object.assign(event, { dataTransfer })
+  el.dispatchEvent(event)
 }
 
 /** Drags a tab and drops it onto the named drop zone of a panel. */
@@ -528,5 +556,56 @@ describe('Workspace layout — rejection recovery', () => {
     // Nothing opened: no new panel, no tab.
     expect(panels()).toHaveLength(1)
     expect(screen.queryByRole('tab', { name: /cc_sql/ })).toBeNull()
+  })
+
+  it('rejects a tab drop whose drag started before an authoritative move', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    // Tree: [ main(cc_data, cc_sql) | sibling(empty) ].
+    const snap = await port.getSnapshot()
+    const siblingId = Object.keys(snap.projects[0].layout.panels).find(
+      (p) => p !== 'panel-main'
+    )!
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      setData(type: string, value: string) {
+        this.data[type] = value
+      },
+      getData(type: string) {
+        return this.data[type]
+      }
+    }
+    fireEvent.dragStart(screen.getByRole('tab', { name: /cc_sql/ }), {
+      dataTransfer
+    })
+    // The authoritative move lands before React re-renders; the stale
+    // drag then drops onto the old sibling's edge zone.
+    await directMoveTab(
+      port,
+      id('inst-cc-sql', 'AgentInstanceId'),
+      id(siblingId, 'PanelId')
+    )
+    dispatchDropRaw(
+      within(panels()[1]).getByLabelText('拖到右侧分屏'),
+      dataTransfer
+    )
+    fireEvent.dragEnd(screen.getByRole('tab', { name: /cc_sql/ }), {
+      dataTransfer
+    })
+
+    // The stale drop must be rejected: recoverable notice, no third
+    // panel, and the tab stays where the authoritative move put it.
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+    expect(
+      within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+    ).toBeDefined()
   })
 })

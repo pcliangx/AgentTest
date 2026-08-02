@@ -223,6 +223,39 @@ describe('layout-reducer — open-tab-in-new-panel', () => {
       activeTabId: A('a')
     })
   })
+
+  it('never duplicates the tab when panel IDs are integer-like', () => {
+    // JavaScript enumerates integer-like keys first (ascending), before
+    // string keys — independent of insertion order. The reducer must not
+    // let the freshly created panel masquerade as the tab's former owner.
+    let n = 0
+    const integerLikeIds: LayoutIdGenerator = {
+      newPanelId: () => id(String(++n), 'PanelId'),
+      newSplitNodeId: () => id(`split-new-${n}`, 'SplitNodeId')
+    }
+    const existing = id('2', 'PanelId')
+    const layout: WorkspaceLayoutViewModel = {
+      root: { kind: 'panel', panelId: existing },
+      panels: {
+        [existing]: { tabs: [A('a')], activeTabId: A('a') }
+      },
+      focusedPanelId: existing
+    }
+
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'open-tab-in-new-panel', agentInstanceId: A('a'), direction: 'horizontal' },
+      integerLikeIds
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const owners = Object.values(result.layout.panels).filter((p) =>
+      p.tabs.includes(A('a'))
+    )
+    expect(owners).toHaveLength(1)
+    expect(result.layout.panels[existing].tabs).toEqual([])
+    assertLayoutInvariants(result.layout)
+  })
 })
 
 // ---------------------------------------------------------------------------

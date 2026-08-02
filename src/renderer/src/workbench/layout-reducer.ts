@@ -294,6 +294,11 @@ export function applyLayoutOperation(
       if (!state.panels[base]) {
         return reject('invalid-target', 'Panel 不存在')
       }
+      // Capture the current owner BEFORE the new panel receives the tab:
+      // integer-like panel IDs enumerate first in JS regardless of
+      // insertion order, so a lookup after insertion could mistake the
+      // fresh panel for the owner and leave a duplicate behind.
+      const previousOwner = findTabOwner(state, operation.agentInstanceId)
       const newPanelId = ids.newPanelId()
       const splitNodeId = ids.newSplitNodeId()
       const baseNode: LayoutNode = { kind: 'panel', panelId: base }
@@ -313,11 +318,13 @@ export function applyLayoutOperation(
       // Move semantics: a tab already open elsewhere leaves its old panel —
       // never a copy. An emptied former owner (other than the split base)
       // is pruned; the base itself may intentionally stay empty.
-      const owner = findTabOwner(state, operation.agentInstanceId)
-      if (owner && owner !== newPanelId) {
-        removeTabFromPanel(state, owner, operation.agentInstanceId)
-        if (owner !== base && state.panels[owner].tabs.length === 0) {
-          prunePanel(state, owner)
+      if (previousOwner) {
+        removeTabFromPanel(state, previousOwner, operation.agentInstanceId)
+        if (
+          previousOwner !== base &&
+          state.panels[previousOwner].tabs.length === 0
+        ) {
+          prunePanel(state, previousOwner)
         }
       }
       state.focusedPanelId = newPanelId

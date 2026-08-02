@@ -44,7 +44,7 @@ interface LayoutRenderContext {
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
   previewRatios: Partial<Record<string, number>>
-  draggingTab: AgentInstanceId | null
+  draggingTab: { tabId: AgentInstanceId; startRevision: number } | null
   panelCount: number
   layoutRevision: number
   sendLayout: (
@@ -82,7 +82,10 @@ export function WorkspaceArea({
   ) => Promise<CommandResult>
 }) {
   const layout = project.layout
-  const [draggingTab, setDraggingTab] = useState<AgentInstanceId | null>(null)
+  const [draggingTab, setDraggingTab] = useState<{
+    tabId: AgentInstanceId
+    startRevision: number
+  } | null>(null)
   const [previewRatios, setPreviewRatios] = useState<
     Partial<Record<string, number>>
   >({})
@@ -159,7 +162,11 @@ export function WorkspaceArea({
         delete next[splitNodeId]
         return next
       }),
-    onDragTabStart: (tab) => setDraggingTab(tab),
+    onDragTabStart: (tab) =>
+      // The drag's baseline revision: a drop dispatches against it, so a
+      // drop that lands after an authoritative layout change stale-rejects
+      // instead of overwriting it.
+      setDraggingTab({ tabId: tab, startRevision: snapshot.revision }),
     onDragTabEnd: () => setDraggingTab(null),
     onRequestClosePanel: requestClosePanel
   }
@@ -430,8 +437,12 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       onDrop={(e) => {
         e.preventDefault()
         const tabId = (e.dataTransfer.getData('text/plain') ||
-          ctx.draggingTab) as AgentInstanceId | null
-        if (tabId) void sendLayout(dropOperation(zone, tabId))
+          ctx.draggingTab?.tabId) as AgentInstanceId | null
+        if (tabId) {
+          // Dispatch against the revision captured at drag start — a drop
+          // landing after an authoritative layout change stale-rejects.
+          void sendLayout(dropOperation(zone, tabId), ctx.draggingTab?.startRevision)
+        }
       }}
     />
   )
