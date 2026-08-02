@@ -8,6 +8,7 @@ import { id } from './workbench/contract'
 import type {
   AgentInstanceId,
   CommandResult,
+  LayoutOperation,
   PanelId,
   SplitNodeId,
   WorkbenchCommand,
@@ -100,38 +101,23 @@ function dispatchPointerRaw(
 }
 
 /**
- * Applies an authoritative resize straight through the port, bypassing the
- * UI. The mock adapter dispatches synchronously, so the subscribed shell
- * updates its revision ref immediately while React stays on the old render.
+ * Applies an authoritative layout change straight through the port,
+ * bypassing the UI. The mock adapter dispatches synchronously, so the
+ * subscribed shell updates its revision ref immediately while React stays
+ * on the old render.
  */
-async function directResize(
+let directCommandCount = 0
+async function directLayout(
   port: WorkbenchPort,
-  splitNodeId: SplitNodeId,
-  ratio: number
+  operation: LayoutOperation
 ): Promise<CommandResult> {
   const snap = await port.getSnapshot()
   return port.dispatch({
     kind: 'change-layout',
-    commandId: id(`cmd-direct-resize-${ratio}`, 'CommandId'),
+    commandId: id(`cmd-direct-${++directCommandCount}`, 'CommandId'),
     expectedRevision: snap.revision,
     projectId: id('proj-sales', 'ProjectId'),
-    operation: { kind: 'resize-split', splitNodeId, ratio }
-  })
-}
-
-/** Applies an authoritative tab move straight through the port (see above). */
-async function directMoveTab(
-  port: WorkbenchPort,
-  agentInstanceId: AgentInstanceId,
-  targetPanelId: PanelId
-): Promise<CommandResult> {
-  const snap = await port.getSnapshot()
-  return port.dispatch({
-    kind: 'change-layout',
-    commandId: id('cmd-direct-move', 'CommandId'),
-    expectedRevision: snap.revision,
-    projectId: id('proj-sales', 'ProjectId'),
-    operation: { kind: 'move-tab', agentInstanceId, targetPanelId }
+    operation
   })
 }
 
@@ -143,6 +129,13 @@ function dispatchDropRaw(el: Element, dataTransfer: unknown) {
   })
   Object.assign(event, { dataTransfer })
   el.dispatchEvent(event)
+}
+
+/** Raw mouse click without act (same-batch race reproduction). */
+function dispatchClickRaw(el: Element) {
+  el.dispatchEvent(
+    new window.MouseEvent('click', { bubbles: true, cancelable: true })
+  )
 }
 
 /** Drags a tab and drops it onto the named drop zone of a panel. */
@@ -221,6 +214,37 @@ describe('Workspace layout — drag and drop', () => {
       within(panels()[1]).getByRole('tab', { name: /cc_data/ })
     ).toBeDefined()
     expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+  })
+
+  it('clears the drag state after a successful drop, even when the old source node is gone', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    // Save the source tab node BEFORE the drop — the accepted move
+    // unmounts it, and a dragend dispatched to a detached node can never
+    // bubble up to the React root.
+    const sourceTab = screen.getByRole('tab', { name: /cc_data/ })
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      setData(type: string, value: string) {
+        this.data[type] = value
+      },
+      getData(type: string) {
+        return this.data[type]
+      }
+    }
+    fireEvent.dragStart(sourceTab, { dataTransfer })
+    fireEvent.drop(within(panels()[1]).getByLabelText('移动到该 Panel'), {
+      dataTransfer
+    })
+
+    expect(sourceTab.isConnected).toBe(false)
+    fireEvent.dragEnd(sourceTab, { dataTransfer })
+    // Drop zones must be gone anyway — no ghost overlay intercepting
+    // subsequent panel interactions.
+    expect(screen.queryByLabelText('移动到该 Panel')).toBeNull()
+    expect(screen.queryByLabelText('拖到右侧分屏')).toBeNull()
   })
 })
 
@@ -354,7 +378,11 @@ describe('Workspace layout — divider', () => {
       // The authoritative event updates the shell's revision ref
       // synchronously, but React has not re-rendered yet — the gesture
       // ends on the stale render, inside the same batch.
-      await directResize(port, root.splitNodeId, 0.8)
+      await directLayout(port, {
+        kind: 'resize-split',
+        splitNodeId: root.splitNodeId,
+        ratio: 0.8
+      })
       dispatchPointerRaw(separator, 'pointermove', 600)
       dispatchPointerRaw(separator, 'pointerup', 600)
 
@@ -377,7 +405,11 @@ describe('Workspace layout — divider', () => {
     const root = (await port.getSnapshot()).projects[0].layout.root
     if (root?.kind !== 'split') throw new Error('expected split root')
 
-    await directResize(port, root.splitNodeId, 0.8)
+    await directLayout(port, {
+      kind: 'resize-split',
+      splitNodeId: root.splitNodeId,
+      ratio: 0.8
+    })
     // Raw dispatch: the keydown handler still sees the pre-event render.
     separator.dispatchEvent(
       new window.KeyboardEvent('keydown', {
@@ -586,11 +618,11 @@ describe('Workspace layout — rejection recovery', () => {
     })
     // The authoritative move lands before React re-renders; the stale
     // drag then drops onto the old sibling's edge zone.
-    await directMoveTab(
-      port,
-      id('inst-cc-sql', 'AgentInstanceId'),
-      id(siblingId, 'PanelId')
-    )
+    await directLayout(port, {
+      kind: 'move-tab',
+      agentInstanceId: id('inst-cc-sql', 'AgentInstanceId'),
+      targetPanelId: id(siblingId, 'PanelId')
+    })
     dispatchDropRaw(
       within(panels()[1]).getByLabelText('拖到右侧分屏'),
       dataTransfer
@@ -607,5 +639,66 @@ describe('Workspace layout — rejection recovery', () => {
     expect(
       within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
     ).toBeDefined()
+  })
+
+  it('rejects a stale close-panel confirmation when a tab landed meanwhile', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '关闭 Panel' })
+    )
+    const dialog = await screen.findByRole('dialog', { name: '关闭 Panel' })
+
+    // A new tab authoritatively lands in the to-be-closed panel while the
+    // user is looking at the stale dialog.
+    await directLayout(port, {
+      kind: 'open-tab',
+      panelId: id('panel-main', 'PanelId'),
+      agentInstanceId: id('inst-cc-etl', 'AgentInstanceId')
+    })
+    dispatchClickRaw(
+      within(dialog).getByRole('button', { name: '迁移并关闭' })
+    )
+
+    // The stale confirmation must not dispose of the unseen tab: it is
+    // rejected, the authoritative layout is restored and a notice shows.
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+    expect(panels()).toHaveLength(2)
+    expect(
+      within(panels()[0]).getByRole('tab', { name: /cc_etl/ })
+    ).toBeDefined()
+  })
+
+  it('rejects a discrete layout command issued from a stale render', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    const root = (await port.getSnapshot()).projects[0].layout.root
+    if (root?.kind !== 'split') throw new Error('expected split root')
+
+    // cc_data is the inactive tab; the click handler belongs to the
+    // pre-event render.
+    const staleTab = screen.getByRole('tab', { name: /cc_data/ })
+    await directLayout(port, {
+      kind: 'resize-split',
+      splitNodeId: root.splitNodeId,
+      ratio: 0.8
+    })
+    dispatchClickRaw(staleTab)
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+    expect(screen.getByRole('tab', { name: /cc_data/ })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
   })
 })

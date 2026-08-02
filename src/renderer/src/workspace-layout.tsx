@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -89,8 +90,18 @@ export function WorkspaceArea({
   const [previewRatios, setPreviewRatios] = useState<
     Partial<Record<string, number>>
   >({})
-  const [closingPanelId, setClosingPanelId] = useState<PanelId | null>(null)
+  const [closingPanel, setClosingPanel] = useState<{
+    panelId: PanelId
+    startRevision: number
+  } | null>(null)
   const [migrateTarget, setMigrateTarget] = useState('')
+
+  // Backstop: an authoritative layout change invalidates any in-flight
+  // drag — its drop would stale-reject anyway, so hide the zones now
+  // instead of leaving a ghost overlay behind.
+  useEffect(() => {
+    setDraggingTab(null)
+  }, [snapshot.revision])
 
   /**
    * All layout commands go through the surface-level handler, which shows
@@ -131,7 +142,10 @@ export function WorkspaceArea({
     const firstOther = treePanelOrder(layout.root).find((p) => p !== panelId)
     if (!firstOther) return
     setMigrateTarget(firstOther)
-    setClosingPanelId(panelId)
+    // The confirmation's baseline revision: the user confirms the tab list
+    // they SAW. If the panel authoritatively gains or loses tabs meanwhile,
+    // the stale confirmation must not dispose of tabs the user never saw.
+    setClosingPanel({ panelId, startRevision: snapshot.revision })
   }
 
   const ctx: LayoutRenderContext = {
@@ -171,29 +185,43 @@ export function WorkspaceArea({
     onRequestClosePanel: requestClosePanel
   }
 
-  const closingPanel = closingPanelId ? layout.panels[closingPanelId] : null
+  const closingPanelRecord = closingPanel
+    ? layout.panels[closingPanel.panelId]
+    : null
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1">
         <LayoutNodeView node={layout.root} ctx={ctx} />
       </div>
-      {closingPanelId && closingPanel && (
+      {closingPanel && closingPanelRecord && (
         <ClosePanelDialog
           layout={layout}
-          closingPanelId={closingPanelId}
+          closingPanelId={closingPanel.panelId}
           snapshot={snapshot}
           migrateTarget={migrateTarget}
           onSelectTarget={setMigrateTarget}
-          onCancel={() => setClosingPanelId(null)}
+          onCancel={() => setClosingPanel(null)}
           onConfirm={() => {
             if (!migrateTarget) return
-            void sendLayout({
-              kind: 'close-panel',
-              panelId: closingPanelId,
-              migrateToPanelId: id(migrateTarget, 'PanelId')
-            }).then((result) => {
-              if (result.ok) setClosingPanelId(null)
+            void sendLayout(
+              {
+                kind: 'close-panel',
+                panelId: closingPanel.panelId,
+                migrateToPanelId: id(migrateTarget, 'PanelId')
+              },
+              closingPanel.startRevision
+            ).then((result) => {
+              if (result.ok) {
+                setClosingPanel(null)
+              } else {
+                // Re-baseline onto the authoritative snapshot the shell
+                // just restored, so the user re-confirms what they
+                // actually see now instead of being stuck on a stale one.
+                setClosingPanel((prev) =>
+                  prev ? { ...prev, startRevision: result.latestRevision } : null
+                )
+              }
             })
           }}
         />
@@ -438,10 +466,16 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
         e.preventDefault()
         const tabId = (e.dataTransfer.getData('text/plain') ||
           ctx.draggingTab?.tabId) as AgentInstanceId | null
+        // Dispatch against the revision captured at drag start — a drop
+        // landing after an authoritative layout change stale-rejects.
+        const baseline = ctx.draggingTab?.startRevision
+        // The gesture is over once a drop lands — clear it synchronously.
+        // After a successful structural drop the source tab node is
+        // unmounted, and a dragend dispatched to a detached node never
+        // reaches the React root, so onDragEnd alone cannot be relied on.
+        ctx.onDragTabEnd()
         if (tabId) {
-          // Dispatch against the revision captured at drag start — a drop
-          // landing after an authoritative layout change stale-rejects.
-          void sendLayout(dropOperation(zone, tabId), ctx.draggingTab?.startRevision)
+          void sendLayout(dropOperation(zone, tabId), baseline)
         }
       }}
     />

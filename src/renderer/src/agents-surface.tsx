@@ -58,6 +58,13 @@ export function AgentsSurface({
    * the directory or from the workspace — goes through here, so a
    * rejection always restores the authoritative layout and surfaces a
    * recoverable notice (Issue #4 AC4) instead of being dropped silently.
+   *
+   * Commands bind to the revision of the render the user acted on:
+   * discrete actions use that render's revision by default, while
+   * multi-event gestures (divider drags, tab drops, dialog confirmations)
+   * pass the baseline they captured when the gesture started. A command
+   * issued from a stale render stale-rejects instead of silently
+   * overwriting a newer authoritative layout.
    */
   const sendLayout = async (
     operation: LayoutOperation,
@@ -69,7 +76,7 @@ export function AgentsSurface({
         projectId: project.projectId,
         operation
       },
-      expectedRevision
+      expectedRevision ?? snapshot.revision
     )
     if (!result.ok) {
       setLayoutNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
