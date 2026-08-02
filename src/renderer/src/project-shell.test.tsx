@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
@@ -257,5 +257,385 @@ describe('ProjectShell — command ID uniqueness', () => {
     expect(
       await screen.findByRole('region', { name: '活动' })
     ).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Global surfaces
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — global surfaces', () => {
+  it('shows global navigation entries in project view', async () => {
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    expect(screen.getByRole('button', { name: '连接' })).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Provider 健康' })
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: '全局设置' })).toBeVisible()
+  })
+
+  it('navigates to Connections showing multiple connections', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    const region = await screen.findByRole('region', { name: '全局连接' })
+    expect(region).toHaveTextContent('飞书 · 销售团队')
+    expect(region).toHaveTextContent('已连接')
+    expect(region).toHaveTextContent('飞书 · 产品团队')
+    expect(region).toHaveTextContent('未连接')
+    expect(region).toHaveTextContent('GitHub')
+    expect(region).toHaveTextContent('错误')
+  })
+
+  it('navigates to Provider Health showing blocked provider', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    const region = await screen.findByRole('region', {
+      name: 'Provider 健康'
+    })
+    expect(region).toHaveTextContent('Claude Code')
+    expect(region).toHaveTextContent('可用')
+    expect(region).toHaveTextContent('Kimi Code')
+    expect(region).toHaveTextContent('已阻断')
+  })
+
+  it('returns to project from global view preserving the surface', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    // Navigate to tasks first, then go to global, then return
+    await user.click(screen.getByRole('button', { name: '任务' }))
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    // Should return to tasks surface, not overview
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Confirmation host
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — confirmation host', () => {
+  it('shows confirmation modal with all fields when deleting a connection', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    const deleteButtons = screen.getAllByRole('button', { name: '删除' })
+    await user.click(deleteButtons[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('删除连接')
+    expect(dialog).toHaveTextContent('飞书 · 销售团队')
+    expect(dialog).toHaveTextContent('不可恢复')
+    expect(dialog).toHaveTextContent('二次确认')
+  })
+
+  it('confirms dangerous action and closes modal', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('cancels confirmation via cancel button', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('dismisses confirmation via Escape key', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// No side effects — extended
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — no side effects (global + confirmation)', () => {
+  it('does not call window.api during global navigation and confirmation', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    expect(apiSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Empty project — global surfaces still accessible
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — empty project', () => {
+  it('allows navigating between global surfaces with no projects', async () => {
+    const inner = new MockScenarioAdapter()
+    const strip = (snap: WorkbenchViewModel): WorkbenchViewModel => {
+      const s = structuredClone(snap)
+      s.projects = []
+      s.activeProjectId = undefined
+      return s
+    }
+    const emptyPort: WorkbenchPort = {
+      async getSnapshot() {
+        return strip(await inner.getSnapshot())
+      },
+      dispatch: (cmd) => inner.dispatch(cmd),
+      subscribe(fn) {
+        return inner.subscribe((event) => {
+          if (event.kind === 'view-model-updated') {
+            fn({ ...event, snapshot: strip(event.snapshot) })
+          }
+        })
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={emptyPort} />)
+    await screen.findByText('没有可用的 Project')
+    // Navigate to Connections
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    // Global nav must still be visible in global view
+    expect(screen.getByRole('button', { name: 'Provider 健康' })).toBeVisible()
+    // Navigate to Provider Health
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    expect(
+      await screen.findByRole('region', { name: 'Provider 健康' })
+    ).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Confirmation result — connection disappears
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — confirmation result', () => {
+  it('removes the connection after confirming deletion', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    expect(screen.getByText('飞书 · 销售团队')).toBeVisible()
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByText('飞书 · 销售团队')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Provider recovery
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — provider recovery', () => {
+  it('recovers a blocked provider via the recovery button', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    const region = await screen.findByRole('region', {
+      name: 'Provider 健康'
+    })
+    expect(region).toHaveTextContent('已阻断')
+    await user.click(screen.getByRole('button', { name: '恢复' }))
+    await waitFor(() => {
+      expect(screen.queryByText('已阻断')).not.toBeInTheDocument()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Focus restoration
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — focus restoration', () => {
+  it('restores focus to the trigger after cancel', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    const deleteButton = screen.getAllByRole('button', { name: '删除' })[0]
+    deleteButton.focus()
+    expect(deleteButton).toHaveFocus()
+    await user.click(deleteButton)
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(deleteButton).toHaveFocus()
+  })
+
+  it('keeps focus in content area, not header, after confirming deletion', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Focus must NOT land on the header nav button
+    const headerConnButton = screen.getByRole('button', { name: '连接' })
+    expect(document.activeElement).not.toBe(headerConnButton)
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('marks the active global surface button with aria-current', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    expect(
+      screen.getByRole('button', { name: '连接' })
+    ).toHaveAttribute('aria-current', 'page')
+    expect(
+      screen.getByRole('button', { name: 'Provider 健康' })
+    ).not.toHaveAttribute('aria-current')
+  })
+
+  it('clears stale rejection error when opening a new confirmation', async () => {
+    // Port that rejects all confirm-dangerous-action commands
+    const inner = new MockScenarioAdapter()
+    const port: WorkbenchPort = {
+      async getSnapshot() {
+        return inner.getSnapshot()
+      },
+      dispatch(cmd) {
+        if (cmd.kind === 'confirm-dangerous-action') {
+          return Promise.resolve({
+            ok: false,
+            commandId: cmd.commandId,
+            reason: 'invalid-target' as const,
+            latestRevision: 0,
+            message: '确认 ID 已过期'
+          })
+        }
+        return inner.dispatch(cmd)
+      },
+      subscribe(fn) {
+        return inner.subscribe(fn)
+      }
+    }
+
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+
+    // Open confirmation and confirm — fails
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.getByText('确认 ID 已过期')).toBeVisible()
+
+    // Cancel and open a new confirmation
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+
+    // Stale error from previous confirmation must NOT appear
+    expect(screen.queryByText('确认 ID 已过期')).not.toBeInTheDocument()
+  })
+
+  it('keeps focus on the surface after deleting the last connection', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+
+    // Delete all connections one by one
+    for (let i = 0; i < 3; i++) {
+      const buttons = screen.queryAllByRole('button', { name: '删除' })
+      if (buttons.length === 0) break
+      await user.click(buttons[0])
+      await screen.findByRole('dialog')
+      await user.click(screen.getByRole('button', { name: '确认' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    }
+
+    // All connections deleted
+    expect(screen.getByText('暂无连接')).toBeVisible()
+    // Focus must not be on body — section heading (tabIndex=-1) receives it
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('only shows the latest confirm attempt error', async () => {
+    const inner = new MockScenarioAdapter()
+    let confirmCount = 0
+    const port: WorkbenchPort = {
+      async getSnapshot() {
+        return inner.getSnapshot()
+      },
+      dispatch(cmd) {
+        if (cmd.kind === 'confirm-dangerous-action') {
+          confirmCount++
+          return Promise.resolve({
+            ok: false,
+            commandId: cmd.commandId,
+            reason: 'invalid-target' as const,
+            latestRevision: 0,
+            message: `attempt ${confirmCount}`
+          })
+        }
+        return inner.dispatch(cmd)
+      },
+      subscribe(fn) {
+        return inner.subscribe(fn)
+      }
+    }
+
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+
+    // Click confirm twice — only the latest attempt's error should show
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.getByText('attempt 2')).toBeVisible()
+    expect(screen.queryByText('attempt 1')).not.toBeInTheDocument()
   })
 })

@@ -1,6 +1,6 @@
 # Agent Squad HQ v0.2 UI/UX 设计说明
 
-> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 #1 已完成，#2–#16 待推进
+> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 #1–#2 已完成，#3–#16 待推进
 >
 > 更新日期：2026-08-02
 >
