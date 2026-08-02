@@ -20,27 +20,31 @@ function useWorkbench(port: WorkbenchPort) {
   const revisionRef = useRef<number>(-1)
   const cmdCounter = useRef(0)
 
-  useEffect(() => {
-    let active = true
-    void port.getSnapshot().then((snap) => {
-      if (!active) return
+  // Shared updater — only accepts snapshots with strictly higher revision.
+  // Prevents a stale getSnapshot response from overwriting a newer event.
+  const applySnapshot = useCallback((snap: WorkbenchViewModel) => {
+    if (snap.revision > revisionRef.current) {
       revisionRef.current = snap.revision
       setSnapshot(snap)
-    })
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    // Subscribe FIRST so events arriving during the initial load aren't missed.
     const unsubscribe = port.subscribe((event) => {
-      if (
-        event.kind === 'view-model-updated' &&
-        event.revision > revisionRef.current
-      ) {
-        revisionRef.current = event.revision
-        setSnapshot(event.snapshot)
+      if (event.kind === 'view-model-updated') {
+        applySnapshot(event.snapshot)
       }
+    })
+    void port.getSnapshot().then((snap) => {
+      if (active) applySnapshot(snap)
     })
     return () => {
       active = false
       unsubscribe()
     }
-  }, [port])
+  }, [port, applySnapshot])
 
   const navigate = useCallback(
     (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> => {
@@ -55,15 +59,12 @@ function useWorkbench(port: WorkbenchPort) {
       const result = port.dispatch(command)
       void result.then((r) => {
         if (!r.ok && r.reason === 'stale-revision') {
-          void port.getSnapshot().then((snap) => {
-            revisionRef.current = snap.revision
-            setSnapshot(snap)
-          })
+          void port.getSnapshot().then(applySnapshot)
         }
       })
       return result
     },
-    [port]
+    [port, applySnapshot]
   )
 
   return { snapshot, navigate }
@@ -91,6 +92,13 @@ const ROOT_LABEL: Record<string, string> = {
 const GIT_LABEL: Record<string, string> = {
   ready: '已就绪',
   'not-ready': '未就绪'
+}
+
+const ACTIVITY_KIND_LABEL: Record<string, string> = {
+  'run-started': '运行开始',
+  'run-completed': '运行完成',
+  'configuration-applied': '配置已应用',
+  'permission-decided': '权限已决定'
 }
 
 // ---------------------------------------------------------------------------
@@ -150,9 +158,23 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             <div className="text-[10px] uppercase tracking-wide text-neutral-600">
               当前项目
             </div>
-            <div className="mt-0.5 truncate text-sm text-neutral-200">
-              {project.name}
-            </div>
+            <select
+              aria-label="切换项目"
+              className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
+              value={project.projectId}
+              onChange={(e) =>
+                void navigate(
+                  id(e.target.value, 'ProjectId'),
+                  project.currentSurface
+                )
+              }
+            >
+              {snapshot.projects.map((p) => (
+                <option key={p.projectId} value={p.projectId}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="space-y-0.5">
@@ -279,7 +301,9 @@ function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
               className="border-b border-neutral-800 pb-2 text-sm"
             >
               <div className="text-neutral-300">{entry.summary}</div>
-              <div className="mt-0.5 text-xs text-neutral-600">{entry.kind}</div>
+              <div className="mt-0.5 text-xs text-neutral-600">
+                {ACTIVITY_KIND_LABEL[entry.kind] ?? entry.kind}
+              </div>
             </li>
           ))}
         </ul>

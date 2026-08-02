@@ -39,10 +39,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
       return this.reject(command, 'stale-revision', 'revision 已过期')
     }
 
-    // 3. Command-specific handling.
-    if (!this.applyCommand(command)) {
-      return this.reject(command, 'scenario-read-only', '此命令尚未实现')
-    }
+    // 3. Command-specific handling — returns a rejection or null (success).
+    const rejection = this.tryApply(command)
+    if (rejection) return rejection
 
     // 4. Success — bump revision, emit, cache.
     this.snapshot.revision++
@@ -71,27 +70,30 @@ export class MockScenarioAdapter implements WorkbenchPort {
   // -- internals ---------------------------------------------------------
 
   /**
-   * Mutates the internal snapshot for handled command kinds.
-   * Returns false for commands not yet implemented in this tracer bullet.
+   * Applies a command to the internal snapshot.
+   * Returns a rejection result for invalid targets or unimplemented commands,
+   * or null to signal success (caller bumps revision and emits).
    */
-  private applyCommand(command: WorkbenchCommand): boolean {
+  private tryApply(command: WorkbenchCommand): CommandResult | null {
     switch (command.kind) {
       case 'navigate': {
         const project = this.snapshot.projects.find(
           (p) => p.projectId === command.projectId
         )
-        if (!project) return false
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
         project.currentSurface = command.surface
         this.snapshot.activeProjectId = command.projectId
         this.snapshot.activeGlobalSurface = undefined
-        return true
+        return null
       }
       case 'navigate-global': {
         this.snapshot.activeGlobalSurface = command.surface
-        return true
+        return null
       }
       default:
-        return false
+        return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
   }
 

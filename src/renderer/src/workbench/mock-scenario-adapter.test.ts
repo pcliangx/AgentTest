@@ -213,3 +213,35 @@ describe('MockScenarioAdapter — unimplemented commands', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Invalid target
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — invalid target', () => {
+  it('rejects navigate to a non-existent project with invalid-target', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch(
+      navigate(cmdId(1), snap.revision, 'overview', id('proj-nonexistent', 'ProjectId'))
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid-target')
+    }
+  })
+
+  it('navigates between existing projects', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const researchId = snap.projects[1].projectId
+    const result = await adapter.dispatch(
+      navigate(cmdId(1), snap.revision, 'agents', researchId)
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.activeProjectId).toEqual(researchId)
+    expect(
+      after.projects.find((p) => p.projectId === researchId)!.currentSurface
+    ).toBe('agents')
+  })
+})

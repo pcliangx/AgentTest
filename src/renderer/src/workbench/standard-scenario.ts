@@ -2,19 +2,23 @@ import { id } from './contract'
 import type { WorkbenchViewModel } from './contract'
 
 /**
- * Standard mock scenario: a single active project with multiple named agents,
+ * Standard mock scenario: two active projects with multiple named agents,
  * connection summary and recent activity. Used by MockScenarioAdapter as the
  * initial ViewModel snapshot.
  */
 export function createStandardScenario(): WorkbenchViewModel {
   const projectId = id('proj-sales', 'ProjectId')
+  const researchId = id('proj-research', 'ProjectId')
   const connId = id('conn-feishu-primary', 'ConnectionId')
   const panelId = id('panel-main', 'PanelId')
+  const panelId2 = id('panel-research', 'PanelId')
 
   const ccData = id('inst-cc-data', 'AgentInstanceId')
   const ccSql = id('inst-cc-sql', 'AgentInstanceId')
   const cxAnti = id('inst-cx-anti', 'AgentInstanceId')
   const kimiViz = id('inst-kimi-viz', 'AgentInstanceId')
+  const ccReport = id('inst-cc-report', 'AgentInstanceId')
+  const cxSurvey = id('inst-cx-survey', 'AgentInstanceId')
 
   return {
     schemaVersion: 1,
@@ -42,6 +46,28 @@ export function createStandardScenario(): WorkbenchViewModel {
             }
           },
           focusedPanelId: panelId
+        }
+      },
+      {
+        projectId: researchId,
+        name: '用户研究',
+        lifecycle: 'active',
+        rootAvailability: 'available',
+        repositoryReadiness: 'ready',
+        activity: 'idle',
+        activeRunCount: 0,
+        queuedRunCount: 0,
+        attentionCount: 0,
+        currentSurface: 'overview',
+        layout: {
+          root: { kind: 'panel', panelId: panelId2 },
+          panels: {
+            [panelId2]: {
+              tabs: [ccReport],
+              activeTabId: ccReport
+            }
+          },
+          focusedPanelId: panelId2
         }
       }
     ],
@@ -82,6 +108,26 @@ export function createStandardScenario(): WorkbenchViewModel {
         projectId,
         name: 'kimi_visual',
         providerId: id('kimi-code', 'AgentProviderId'),
+        runtimeState: 'ready',
+        terminalState: 'closed',
+        queueDepth: 0,
+        doctor: 'ready'
+      },
+      {
+        agentInstanceId: ccReport,
+        projectId: researchId,
+        name: 'cc_report',
+        providerId: id('claude-code', 'AgentProviderId'),
+        runtimeState: 'ready',
+        terminalState: 'closed',
+        queueDepth: 0,
+        doctor: 'ready'
+      },
+      {
+        agentInstanceId: cxSurvey,
+        projectId: researchId,
+        name: 'cx_survey',
+        providerId: id('codex', 'AgentProviderId'),
         runtimeState: 'ready',
         terminalState: 'closed',
         queueDepth: 0,
@@ -128,6 +174,14 @@ export function createStandardScenario(): WorkbenchViewModel {
         timestamp: Date.now() - 600_000,
         kind: 'configuration-applied',
         summary: 'cc_data 的模型配置已更新'
+      },
+      {
+        activityId: id('act-004', 'ActivityId'),
+        projectId: researchId,
+        agentInstanceId: ccReport,
+        timestamp: Date.now() - 120_000,
+        kind: 'run-completed',
+        summary: 'cc_report 完成了用户访谈摘要'
       }
     ],
     global: {
