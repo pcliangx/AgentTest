@@ -1,23 +1,16 @@
 /**
- * Shared Agent Name syntax rules (#6).
+ * Shared Agent Name rules for creation and `@@` routing (#6).
  *
- * Both agent creation (adapter) and `@@<agent-name>` routing (renderer) must
- * agree on what a valid, routable Agent Name looks like, otherwise a name the
- * UI accepts (`data review`, `all`, `name!`) cannot be reliably targeted.
+ * CONTEXT.md only mandates that Agent Names be project-unique and
+ * case-insensitive; it imposes no character-set restriction. This module
+ * therefore does NOT tighten name syntax (rejecting spaces, punctuation or
+ * non-ASCII would be an unauthorised change to the create-agent contract).
  *
- * The rule is intentionally strict and stable across create + parse:
- *   - non-empty
- *   - only letters, digits, underscore and hyphen
- *   - not the reserved broadcast word `all` (any case)
- *
- * CONTEXT.md only mandates project-unique, case-insensitive names; this module
- * tightens the *syntax* so `@@` routing is deterministic. Real Agent Names are
- * matched exactly (longest-match is unnecessary because names cannot contain
- * whitespace or `@@`).
+ * The single shared rule relevant to #6 routing is the reserved broadcast
+ * word `all`: a name literally called `all` would collide with the `@@all`
+ * expansion token. Reserving it keeps routing unambiguous without narrowing
+ * what names users may otherwise choose.
  */
-
-/** Characters allowed in an Agent Name. */
-export const AGENT_NAME_PATTERN = /^[A-Za-z0-9_-]+$/
 
 /** Reserved broadcast token — never a valid Agent Name. */
 export const RESERVED_NAME_ALL = 'all'
@@ -27,17 +20,14 @@ export interface NameValidation {
   reason?: string
 }
 
-/** Validates a candidate Agent Name against the shared syntax. */
+/**
+ * Validates a candidate Agent Name. Mirrors the original create-agent checks
+ * (non-empty, project-unique is verified by the caller) plus the `all`
+ * reservation that `@@` routing requires.
+ */
 export function validateAgentName(raw: string): NameValidation {
   const name = raw.trim()
   if (!name) return { ok: false, reason: 'Agent 名称不能为空' }
-  if (!AGENT_NAME_PATTERN.test(name)) {
-    return {
-      ok: false,
-      reason:
-        'Agent 名称只能包含字母、数字、下划线和连字符，不能含空格或标点'
-    }
-  }
   if (name.toLowerCase() === RESERVED_NAME_ALL) {
     return { ok: false, reason: `Agent 名称不能使用保留词 "${name}"` }
   }

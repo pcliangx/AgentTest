@@ -2,13 +2,11 @@ import { useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type {
   AgentInstanceViewModel,
-  AgentRuntimeState,
   ProjectViewModel,
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agents-surface'
-import { AGENT_NAME_PATTERN } from './workbench/agent-name'
 
 /**
  * Unified Dispatch Picker (#6).
@@ -35,18 +33,28 @@ import { AGENT_NAME_PATTERN } from './workbench/agent-name'
  */
 const AT_AT_ALL = /(?:^|\s)@@all(?=\s|$)/
 /**
- * `@@<name>` captures the longest run of characters allowed in an Agent Name
- * (letters, digits, `_`, `-`). This MUST stay in sync with the create-agent
- * syntax in `agent-name.ts`, otherwise a name accepted at creation could not
- * be routed via `@@`. Punctuation and whitespace terminate the name.
+ * `@@<name>` captures the run of non-whitespace characters after `@@`. Names
+ * are then resolved by exact, case-insensitive match against the project's
+ * known agent names (see resolveAtAt). This keeps routing open to whatever
+ * names the contract allows — including spaces-free CJK or punctuated names —
+ * without duplicating or tightening the create-agent syntax.
  */
-const AT_AT_NAME = /(?:^|\s)@@([A-Za-z0-9_-]+)/g
+const AT_AT_NAME = /(?:^|\s)@@(\S+)/g
 
-/** States that cannot receive a dispatch (Provider down, archived, …). */
-const NON_DISPATCHABLE: ReadonlySet<AgentRuntimeState> = new Set([
-  'unavailable',
-  'archived'
-])
+/**
+ * A single dispatchability predicate shared by manual selection, `@@all`
+ * expansion and the adapter's acceptance check (#6 P1-1). An instance is
+ * dispatchable when it is not Provider-down, not archived, and not holding a
+ * Terminal takeover (ADR-0007 structured/PTY mutex). The UI and the port MUST
+ * agree, otherwise `@@all` could select a target the adapter then rejects.
+ */
+function isDispatchable(a: AgentInstanceViewModel): boolean {
+  return (
+    a.runtimeState !== 'unavailable' &&
+    a.runtimeState !== 'archived' &&
+    a.terminalState !== 'active'
+  )
+}
 
 const RESOURCE_TYPE_LABEL: Record<
   'task-list' | 'knowledge-space' | 'document' | 'other',
@@ -114,12 +122,11 @@ export function DispatchPicker({
   sendCommand: SendCommand
   onClose: () => void
 }) {
-  // Only dispatchable instances are selectable — unavailable/archived are
-  // shown as disabled so the user understands why they are excluded.
+  // Only dispatchable instances are selectable. isDispatchable is the single
+  // source of truth shared with the adapter, so @@all and manual selection
+  // never include a target the port would then reject (#6 P1-1).
   const dispatchable = snapshot.agents.filter(
-    (a) =>
-      a.projectId === project.projectId &&
-      !NON_DISPATCHABLE.has(a.runtimeState)
+    (a) => a.projectId === project.projectId && isDispatchable(a)
   )
 
   const [instruction, setInstruction] = useState('')
@@ -218,7 +225,7 @@ export function DispatchPicker({
             {snapshot.agents
               .filter((a) => a.projectId === project.projectId)
               .map((a) => {
-                const disabled = NON_DISPATCHABLE.has(a.runtimeState)
+                const disabled = !isDispatchable(a)
                 const selected = targetIds.has(a.agentInstanceId)
                 return (
                   <li key={a.agentInstanceId}>

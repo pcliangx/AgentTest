@@ -301,14 +301,19 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     // any dispatch happens.
     expect(dialog).toHaveTextContent('已展开为全部可派发实例')
 
-    // The standard sales project has 8 instances but kimi_docs is
-    // unavailable, so only 7 are dispatchable.
+    // The standard sales project has 8 instances; kimi_docs is unavailable
+    // and cx_anti holds a Terminal takeover, so only 6 are dispatchable.
+    // Terminal-active targets must be excluded so the broadcast can actually
+    // succeed instead of being rejected by the adapter (#6 P1-1).
     const expansion = within(dialog).getAllByRole('listitem', {
       name: /已选目标/
     })
-    expect(expansion.length).toBe(7)
+    expect(expansion.length).toBe(6)
     expect(
       expansion.some((c) => c.textContent?.includes('kimi_docs'))
+    ).toBe(false)
+    expect(
+      expansion.some((c) => c.textContent?.includes('cx_anti'))
     ).toBe(false)
 
     // Confirm once → must still ask for explicit confirmation of the broadcast.
@@ -537,10 +542,22 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       targets: [ccData.agentInstanceId],
       instruction: 'first'
     })
-    const mid = (await adapter.getSnapshot()).agents.find(
+    const midSnap = await adapter.getSnapshot()
+    const mid = midSnap.agents.find(
       (a) => a.agentInstanceId === ccData.agentInstanceId
     )!.queueDepth
     expect(mid).toBe(before + 1)
+    // Queue projection must stay consistent across all views (#6 P1-2):
+    // per-instance depth, the QueueItem list, Project summary and global
+    // summary all advance together, not just queueDepth in isolation.
+    const midProject = midSnap.projects[0]
+    expect(midProject.queuedRunCount).toBe(snap.projects[0].queuedRunCount + 1)
+    expect(midSnap.global.concurrency.queuedGlobal).toBe(
+      snap.global.concurrency.queuedGlobal + 1
+    )
+    expect(
+      midSnap.queue.filter((q) => q.agentInstanceId === ccData.agentInstanceId)
+    ).toHaveLength(1)
 
     // A second dispatch to the same busy agent must advance the queue again,
     // so the next preview shows a progressing position (#6 P2-4).
@@ -553,10 +570,46 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
       targets: [ccData.agentInstanceId],
       instruction: 'second'
     })
-    const after = (await adapter.getSnapshot()).agents.find(
+    const afterSnap = await adapter.getSnapshot()
+    const after = afterSnap.agents.find(
       (a) => a.agentInstanceId === ccData.agentInstanceId
     )!.queueDepth
     expect(after).toBe(mid + 1)
+    expect(afterSnap.projects[0].queuedRunCount).toBe(midProject.queuedRunCount + 1)
+    expect(afterSnap.global.concurrency.queuedGlobal).toBe(
+      midSnap.global.concurrency.queuedGlobal + 1
+    )
+  })
+
+  it('composer start-or-queue to a busy agent enters the observable queue', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const ccData = snap.agents.find((a) => a.name === 'cc_data')!
+    const beforeDepth = snap.agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!.queueDepth
+    const beforeQueuedGlobal = snap.global.concurrency.queuedGlobal
+
+    await adapter.dispatch({
+      commandId: id('cmd-comp', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'send-agent-instruction',
+      projectId: ccData.projectId,
+      agentInstanceId: ccData.agentInstanceId,
+      instruction: 'from composer',
+      mode: 'start-or-queue'
+    })
+    const after = await adapter.getSnapshot()
+    const afterAgent = after.agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!
+    // The composer's queued instruction must land in the same queue state as
+    // a dispatch — not be silently dropped (#6 P1-2).
+    expect(afterAgent.queueDepth).toBe(beforeDepth + 1)
+    expect(after.global.concurrency.queuedGlobal).toBe(beforeQueuedGlobal + 1)
+    expect(
+      after.queue.some((q) => q.agentInstanceId === ccData.agentInstanceId)
+    ).toBe(true)
   })
 
   it('does not advance the queue for an idle agent', async () => {
@@ -580,21 +633,35 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
 })
 
 describe('Dispatch — Agent Name syntax contracts (#6 review round 2)', () => {
-  it('create-agent rejects names with spaces, punctuation, or the reserved "all"', async () => {
+  it('create-agent accepts names with spaces or punctuation (only "all" is reserved)', async () => {
     const { user, port } = await gotoAgentsSurface()
-    const bad = ['data review', 'all', 'name!', 'a b']
-    for (const name of bad) {
+    // CONTEXT.md mandates only project-unique, case-insensitive names — no
+    // ASCII-only restriction. Names like "data review" or "name!" must be
+    // accepted so the create-agent contract is not narrowed (#6 P2-3).
+    const accepted = ['data review', 'name!']
+    for (const name of accepted) {
       await user.click(screen.getByRole('button', { name: '新建 Agent' }))
       await user.type(
         await screen.findByRole('textbox', { name: 'Agent 名称' }),
         name
       )
       await user.click(screen.getByRole('button', { name: '创建 Agent' }))
-      expect(await screen.findByRole('alert')).toBeInTheDocument()
-      await user.click(screen.getByRole('button', { name: '取消' }))
+      // No alert → accepted.
+      expect(screen.queryByRole('alert')).toBeNull()
     }
     expect(
-      port.commands.filter((c) => c.kind === 'create-agent' && true).length
-    ).toBeGreaterThanOrEqual(bad.length)
+      port.commands.filter((c) => c.kind === 'create-agent').length
+    ).toBeGreaterThanOrEqual(accepted.length)
+  })
+
+  it('create-agent rejects only the reserved broadcast word "all"', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Agent 名称' }),
+      'all'
+    )
+    await user.click(screen.getByRole('button', { name: '创建 Agent' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/保留词/)
   })
 })

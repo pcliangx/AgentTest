@@ -258,6 +258,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
           ...this.snapshot.activity
         ]
         agent.lastActivityAt = Date.now()
+        // start-or-queue to a busy agent must enter the same observable queue
+        // as a dispatch — otherwise the composer would silently drop work
+        // (#6 P1-2).
+        if (command.mode === 'start-or-queue' && this.isAgentBusy(agent)) {
+          this.enqueue(agent)
+        }
         return null
       }
       case 'confirm-dispatch': {
@@ -352,19 +358,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
         for (const a of targets) {
           a.lastActivityAt = now
-          // Authoritative queue projection (#6 P2-4): a dispatch to an agent
-          // that already holds an active Run/PTY must queue behind it, so the
-          // next preview shows an advancing position. Idle agents stay at 0.
-          if (
-            a.activeRunId ||
-            a.runtimeState === 'running' ||
-            a.runtimeState === 'starting' ||
-            a.runtimeState === 'finishing' ||
-            a.runtimeState === 'needs-input' ||
-            a.runtimeState === 'permission-requested'
-          ) {
-            a.queueDepth += 1
-          }
+          // Authoritative queue projection (#6 P1-2): a dispatch to a busy
+          // agent enqueues through one shared transition that keeps the
+          // per-instance depth, the QueueItem list and the Project/global
+          // summaries consistent. Idle agents start immediately (no queue).
+          if (this.isAgentBusy(a)) this.enqueue(a)
         }
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
@@ -502,6 +500,53 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ? globalThis.crypto.randomUUID()
         : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
     return id(uuid, name)
+  }
+
+  /**
+   * True when an instance already holds an active structured Run (or is about
+   * to / finishing one, or awaiting input/permission), so a further dispatch
+   * must queue rather than start immediately.
+   */
+  private isAgentBusy(agent: { runtimeState: string; activeRunId?: unknown }): boolean {
+    return (
+      agent.activeRunId !== undefined ||
+      agent.runtimeState === 'running' ||
+      agent.runtimeState === 'starting' ||
+      agent.runtimeState === 'finishing' ||
+      agent.runtimeState === 'needs-input' ||
+      agent.runtimeState === 'permission-requested'
+    )
+  }
+
+  /**
+   * Single atomic enqueue transition used by both dispatch and composer
+   * (#6 P1-2). Updates the per-instance queueDepth, appends a visible
+   * QueueItem, and keeps the Project / global queue summaries consistent so
+   * Overview, Picker and any queue view observe the same facts.
+   */
+  private enqueue(
+    agent: WorkbenchViewModel['agents'][number],
+    priority: 'low' | 'normal' | 'high' = 'normal'
+  ): void {
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === agent.projectId
+    )
+    if (!project) return
+    agent.queueDepth += 1
+    // Position within this agent's own queue = its new depth.
+    const position = agent.queueDepth
+    const queueItemId = this.freshId('QueueItemId')
+    this.snapshot.queue.push({
+      queueItemId,
+      projectId: agent.projectId,
+      agentInstanceId: agent.agentInstanceId,
+      position,
+      priority
+    })
+    project.queuedRunCount = this.snapshot.queue.filter(
+      (q) => q.projectId === project.projectId
+    ).length
+    this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
   }
 
   private reject(
