@@ -232,6 +232,21 @@ describe('MockScenarioAdapter — subscribe', () => {
       expect(created?.revision).toBe(outerResult.acceptedRevision)
     }
     expect(created?.dispatchIds).toHaveLength(1)
+    const revisions = received.map((event) => event.revision)
+    expect(revisions).toEqual([...revisions].sort((a, b) => a - b))
+    expect(
+      received.findIndex(
+        (event) =>
+          event.kind === 'dispatch-created' &&
+          event.correlationId === outerCommandId
+      )
+    ).toBeLessThan(
+      received.findIndex(
+        (event) =>
+          event.kind === 'view-model-updated' &&
+          event.correlationId === innerCommandId
+      )
+    )
   })
 })
 

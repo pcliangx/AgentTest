@@ -337,6 +337,22 @@ describe('Dispatch — Agent Tab composer', () => {
     expect(port.commands).toHaveLength(0)
   })
 
+  it('explains why the composer is disabled for an archived Agent', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].currentSurface = 'agents'
+    snapshot.agents.find((agent) => agent.name === 'cc_data')!.runtimeState =
+      'archived'
+    const port = new SnapshotRecordingPort(snapshot)
+    render(<ProjectShell port={port} />)
+
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    expect(view).toHaveTextContent('Agent 已归档')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
+  })
+
   it('addresses an idle agent as start-or-queue', async () => {
     const { user, port, ...rest } = await gotoAgentsSurface()
     void rest

@@ -37,6 +37,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private snapshot: WorkbenchViewModel
   private listeners = new Set<(event: WorkbenchEvent) => void>()
   private resultsByCommandId = new Map<CommandId, CommandResult>()
+  private eventQueue: WorkbenchEvent[] = []
+  private emittingEvents = false
   private createdAgentCount = 0
   private createdPanelCount = 0
 
@@ -65,7 +67,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
     const rejection = this.tryApply(command, postEvents)
     if (rejection) return rejection
 
-    // 4. Success — bump revision, emit, cache.
+    // 4. Success — bump revision, cache and emit the complete event batch.
     const acceptedRevision = ++this.snapshot.revision
     const result: CommandResult = {
       ok: true,
@@ -73,18 +75,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
       acceptedRevision
     }
     this.resultsByCommandId.set(command.commandId, result)
-    this.emit({
-      kind: 'view-model-updated',
-      revision: acceptedRevision,
-      correlationId: command.commandId,
-      snapshot: structuredClone(this.snapshot)
-    })
-    // Emit any command-specific follow-up events (e.g. dispatch-created) at
-    // the same authoritative revision. They are skipped on duplicate dispatch
-    // because the cached result short-circuits before reaching here.
-    for (const partial of postEvents) {
-      this.emit({ ...partial, revision: acceptedRevision })
-    }
+    const events: WorkbenchEvent[] = [
+      {
+        kind: 'view-model-updated',
+        revision: acceptedRevision,
+        correlationId: command.commandId,
+        snapshot: structuredClone(this.snapshot)
+      },
+      ...postEvents.map((partial) => ({
+        ...partial,
+        revision: acceptedRevision
+      }))
+    ]
+    // Queue the whole batch before notifying subscribers. A subscriber may
+    // dispatch reentrantly; its newer-revision events must follow every event
+    // belonging to this accepted revision.
+    this.emit(...events)
     return result
   }
 
@@ -563,9 +569,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
     return result
   }
 
-  private emit(event: WorkbenchEvent): void {
-    for (const listener of this.listeners) {
-      listener(event)
+  private emit(...events: WorkbenchEvent[]): void {
+    this.eventQueue.push(...events)
+    if (this.emittingEvents) return
+
+    this.emittingEvents = true
+    try {
+      while (this.eventQueue.length > 0) {
+        const event = this.eventQueue.shift()!
+        for (const listener of [...this.listeners]) {
+          listener(event)
+        }
+      }
+    } finally {
+      this.emittingEvents = false
     }
   }
 }

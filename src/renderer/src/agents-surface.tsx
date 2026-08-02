@@ -787,6 +787,10 @@ function ChatState({
           <p className="text-neutral-500">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
           </p>
+        ) : agent.runtimeState === 'archived' ? (
+          <p className="text-neutral-500">
+            Agent 已归档；仅可查看历史记录，不能发送新指令。
+          </p>
         ) : terminalBlocked ? (
           <p className="text-neutral-500">
             {agent.terminalState === 'opening'
