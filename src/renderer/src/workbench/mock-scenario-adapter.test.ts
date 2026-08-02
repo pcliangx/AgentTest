@@ -398,6 +398,62 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     const after = await adapter.getSnapshot()
     expect(after.pendingConfirmation).toBeUndefined()
   })
+
+  it('clears primaryConnectionId on affected projects after deletion', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const connId = snap.global.connections[0].connectionId
+    const affectedProject = snap.projects.find(
+      (p) => p.primaryConnectionId === connId
+    )
+    expect(affectedProject).toBeDefined()
+
+    await adapter.dispatch(requestDeletion(cmdId(1), snap.revision, connId))
+    const snap2 = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: snap2.revision,
+      confirmationId: snap2.pendingConfirmation!.confirmationId
+    })
+    const after = await adapter.getSnapshot()
+    const updated = after.projects.find(
+      (p) => p.projectId === affectedProject!.projectId
+    )!
+    expect(updated.primaryConnectionId).toBeUndefined()
+  })
+
+  it('produces unique ActivityIds across multiple confirmations', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+
+    // First deletion
+    const conn1 = snap.global.connections[0].connectionId
+    await adapter.dispatch(requestDeletion(cmdId(1), snap.revision, conn1))
+    let s = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: s.revision,
+      confirmationId: s.pendingConfirmation!.confirmationId
+    })
+
+    // Second deletion
+    s = await adapter.getSnapshot()
+    const conn2 = s.global.connections[0].connectionId
+    await adapter.dispatch(requestDeletion(cmdId(3), s.revision, conn2))
+    s = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(4),
+      expectedRevision: s.revision,
+      confirmationId: s.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    const ids = after.activity.slice(0, 2).map((a) => a.activityId)
+    expect(ids[0]).not.toBe(ids[1])
+  })
 })
 
 // ---------------------------------------------------------------------------

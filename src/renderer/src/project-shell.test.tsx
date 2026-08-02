@@ -403,28 +403,39 @@ describe('ProjectShell — no side effects (global + confirmation)', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProjectShell — empty project', () => {
-  it('shows global nav entries and empty message when no projects exist', async () => {
+  it('allows navigating between global surfaces with no projects', async () => {
+    const inner = new MockScenarioAdapter()
+    const strip = (snap: WorkbenchViewModel): WorkbenchViewModel => {
+      const s = structuredClone(snap)
+      s.projects = []
+      s.activeProjectId = undefined
+      return s
+    }
     const emptyPort: WorkbenchPort = {
       async getSnapshot() {
-        const snap = createStandardScenario()
-        snap.projects = []
-        snap.activeProjectId = undefined
-        return snap
+        return strip(await inner.getSnapshot())
       },
-      async dispatch(cmd) {
-        return {
-          ok: true,
-          commandId: cmd.commandId,
-          acceptedRevision: 0
-        }
-      },
-      subscribe() {
-        return () => {}
+      dispatch: (cmd) => inner.dispatch(cmd),
+      subscribe(fn) {
+        return inner.subscribe((event) => {
+          if (event.kind === 'view-model-updated') {
+            fn({ ...event, snapshot: strip(event.snapshot) })
+          }
+        })
       }
     }
+    const user = userEvent.setup()
     render(<ProjectShell port={emptyPort} />)
-    expect(await screen.findByRole('button', { name: '连接' })).toBeVisible()
-    expect(screen.getByText('没有可用的 Project')).toBeVisible()
+    await screen.findByText('没有可用的 Project')
+    // Navigate to Connections
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    // Global nav must still be visible in global view
+    expect(screen.getByRole('button', { name: 'Provider 健康' })).toBeVisible()
+    // Navigate to Provider Health
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    expect(
+      await screen.findByRole('region', { name: 'Provider 健康' })
+    ).toBeVisible()
   })
 })
 
@@ -473,7 +484,7 @@ describe('ProjectShell — provider recovery', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProjectShell — focus restoration', () => {
-  it('restores focus to the trigger after closing confirmation', async () => {
+  it('restores focus to the trigger after cancel', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
@@ -486,5 +497,19 @@ describe('ProjectShell — focus restoration', () => {
     await screen.findByRole('dialog')
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(deleteButton).toHaveFocus()
+  })
+
+  it('moves focus to a valid element after confirming deletion', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Trigger button was removed; focus must land on a valid element, not body
+    expect(document.activeElement).not.toBe(document.body)
   })
 })

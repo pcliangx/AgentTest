@@ -84,8 +84,10 @@ function useWorkbench(port: WorkbenchPort) {
   )
 
   const requestConnectionDeletion = useCallback(
-    (connectionId: ConnectionId) =>
-      send({ kind: 'request-connection-deletion', connectionId }),
+    (connectionId: ConnectionId) => {
+      setConfirmationError(null)
+      return send({ kind: 'request-connection-deletion', connectionId })
+    },
     [send]
   )
 
@@ -95,16 +97,30 @@ function useWorkbench(port: WorkbenchPort) {
     [send]
   )
 
+  const [confirmationError, setConfirmationError] = useState<string | null>(
+    null
+  )
+
   const confirmDangerousAction = useCallback(
-    (confirmationId: ConfirmationId) =>
-      send({ kind: 'confirm-dangerous-action', confirmationId }),
+    (confirmationId: ConfirmationId) => {
+      const result = send({
+        kind: 'confirm-dangerous-action',
+        confirmationId
+      })
+      void result.then((r) => {
+        if (!r.ok && r.reason !== 'stale-revision') {
+          setConfirmationError(r.message)
+        }
+      })
+      return result
+    },
     [send]
   )
 
-  const dismissConfirmation = useCallback(
-    () => send({ kind: 'dismiss-confirmation' }),
-    [send]
-  )
+  const dismissConfirmation = useCallback(() => {
+    setConfirmationError(null)
+    return send({ kind: 'dismiss-confirmation' })
+  }, [send])
 
   return {
     snapshot,
@@ -113,7 +129,8 @@ function useWorkbench(port: WorkbenchPort) {
     requestConnectionDeletion,
     requestProviderRecovery,
     confirmDangerousAction,
-    dismissConfirmation
+    dismissConfirmation,
+    confirmationError
   }
 }
 
@@ -174,7 +191,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     requestConnectionDeletion,
     requestProviderRecovery,
     confirmDangerousAction,
-    dismissConfirmation
+    dismissConfirmation,
+    confirmationError
   } = useWorkbench(port)
 
   if (!snapshot) {
@@ -210,29 +228,30 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
         <div className="flex items-center gap-3">
           <span className="font-medium">Agent Squad HQ</span>
-          {inGlobalView ? (
-            project && (
+          <div className="flex items-center gap-1">
+            {GLOBAL_ENTRIES.map(({ surface, label }) => (
               <button
-                className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
-                onClick={() =>
-                  void navigate(project.projectId, project.currentSurface)
-                }
+                key={surface}
+                className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                  inGlobalView && snapshot.activeGlobalSurface === surface
+                    ? 'bg-neutral-700 text-neutral-100'
+                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                }`}
+                onClick={() => void navigateGlobal(surface)}
               >
-                ← 返回项目
+                {label}
               </button>
-            )
-          ) : (
-            <div className="flex items-center gap-1">
-              {GLOBAL_ENTRIES.map(({ surface, label }) => (
-                <button
-                  key={surface}
-                  className="rounded px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
-                  onClick={() => void navigateGlobal(surface)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            ))}
+          </div>
+          {inGlobalView && project && (
+            <button
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+              onClick={() =>
+                void navigate(project.projectId, project.currentSurface)
+              }
+            >
+              ← 返回项目
+            </button>
           )}
         </div>
         {!inGlobalView && connection && (
@@ -338,6 +357,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       {snapshot.pendingConfirmation && (
         <ConfirmationModal
           confirmation={snapshot.pendingConfirmation}
+          error={confirmationError}
           onConfirm={() =>
             void confirmDangerousAction(
               snapshot.pendingConfirmation!.confirmationId
@@ -562,10 +582,12 @@ function GlobalSettingsSurface() {
 
 function ConfirmationModal({
   confirmation,
+  error,
   onConfirm,
   onCancel
 }: {
   confirmation: WorkbenchViewModel['pendingConfirmation']
+  error: string | null
   onConfirm: () => void
   onCancel: () => void
 }) {
@@ -576,7 +598,16 @@ function ConfirmationModal({
     const opener = document.activeElement as HTMLElement | null
     confirmRef.current?.focus()
     return () => {
-      opener?.focus()
+      if (opener && document.body.contains(opener)) {
+        opener.focus()
+      } else {
+        // Opener was removed (e.g., connection row deleted) — fall back to
+        // the first remaining delete button in the Connections surface.
+        const fallback = document.querySelector<HTMLButtonElement>(
+          'button:not([disabled])'
+        )
+        fallback?.focus()
+      }
     }
   }, [])
 
@@ -619,6 +650,11 @@ function ConfirmationModal({
             </dd>
           </div>
         </dl>
+        {error && (
+          <div className="rounded bg-red-950/60 px-3 py-1.5 text-xs text-red-300">
+            {error}
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"

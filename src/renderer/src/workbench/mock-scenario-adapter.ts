@@ -139,11 +139,17 @@ export class MockScenarioAdapter implements WorkbenchPort {
             this.snapshot.global.connections.filter(
               (c) => c.connectionId !== this.pendingConnectionId
             )
+          // Clear dangling primaryConnectionId references on affected projects.
+          for (const proj of this.snapshot.projects) {
+            if (proj.primaryConnectionId === this.pendingConnectionId) {
+              proj.primaryConnectionId = undefined
+            }
+          }
           this.pendingConnectionId = null
         }
         // Record as a global activity — no projectId attribution.
         this.snapshot.activity.unshift({
-          activityId: id(`act-${Date.now()}`, 'ActivityId'),
+          activityId: id(crypto.randomUUID(), 'ActivityId'),
           timestamp: Date.now(),
           kind: 'dangerous-action-confirmed',
           summary: `已确认: ${action}（${target}）`
