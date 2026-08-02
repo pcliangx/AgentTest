@@ -103,6 +103,7 @@ export function AgentsSurface({
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
         sendLayout={sendLayout}
+        sendCommand={sendCommand}
       />
       {layoutNotice && (
         <div

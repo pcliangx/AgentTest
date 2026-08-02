@@ -1167,3 +1167,142 @@ describe('MockScenarioAdapter — provider recovery', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Agent changes — worktree diff, drift, validation and safe merge (#8)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — agent changes', () => {
+  it('provides changes data for agents in the snapshot', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    expect(snap.changes.length).toBeGreaterThan(0)
+    const first = snap.changes[0]
+    expect(first.agentInstanceId).toBeDefined()
+    expect(first.baseCommit).toBeTruthy()
+    expect(first.files).toBeDefined()
+    expect(first.validation).toBeDefined()
+    expect(first.drift).toBeDefined()
+  })
+
+  it('includes at least one clean agent (no drift, validation pass)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const clean = snap.changes.find(
+      (c) => c.drift === 'none' && c.validation.status === 'pass'
+    )
+    expect(clean).toBeDefined()
+  })
+
+  it('includes at least one drifted agent for needs-rebase testing', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const drifted = snap.changes.find((c) => c.drift === 'behind')
+    expect(drifted).toBeDefined()
+  })
+})
+
+describe('MockScenarioAdapter — merge-agent-changes', () => {
+  it('rejects merge when drift is behind', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const drifted = snap.changes.find((c) => c.drift === 'behind')!
+    const result = await adapter.dispatch({
+      kind: 'merge-agent-changes',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      agentInstanceId: drifted.agentInstanceId
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('unavailable')
+      expect(result.message).toContain('rebase')
+    }
+  })
+
+  it('rejects merge when validation fails', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const failed = snap.changes.find(
+      (c) => c.validation.status === 'fail'
+    )
+    if (failed) {
+      const result = await adapter.dispatch({
+        kind: 'merge-agent-changes',
+        commandId: cmdId(1),
+        expectedRevision: snap.revision,
+        agentInstanceId: failed.agentInstanceId
+      })
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('unavailable')
+      }
+    }
+  })
+
+  it('triggers confirmation when clean (no drift, validation pass)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const clean = snap.changes.find(
+      (c) => c.drift === 'none' && c.validation.status === 'pass'
+    )!
+    const result = await adapter.dispatch({
+      kind: 'merge-agent-changes',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      agentInstanceId: clean.agentInstanceId
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeDefined()
+    expect(after.pendingConfirmation!.action).toContain('合并')
+  })
+
+  it('confirming merge clears changes and records activity', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const clean = snap.changes.find(
+      (c) => c.drift === 'none' && c.validation.status === 'pass'
+    )!
+    const agentInstanceId = clean.agentInstanceId
+    await adapter.dispatch({
+      kind: 'merge-agent-changes',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      agentInstanceId
+    })
+    const snap2 = await adapter.getSnapshot()
+    const confId = snap2.pendingConfirmation!.confirmationId
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: snap2.revision,
+      confirmationId: confId
+    })
+    const after = await adapter.getSnapshot()
+    // Changes cleared for this agent
+    expect(
+      after.changes.find((c) => c.agentInstanceId === agentInstanceId)
+    ).toBeUndefined()
+    // Activity recorded
+    expect(after.activity[0].summary).toContain('合并')
+  })
+})
+
+describe('MockScenarioAdapter — discard-agent-changes', () => {
+  it('triggers confirmation for discard', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const dirty = snap.changes[0]
+    const result = await adapter.dispatch({
+      kind: 'discard-agent-changes',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      agentInstanceId: dirty.agentInstanceId
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeDefined()
+    expect(after.pendingConfirmation!.action).toContain('丢弃')
+  })
+})

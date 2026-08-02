@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
@@ -254,9 +254,11 @@ describe('Agents surface — Agent View', () => {
     await user.click(within(view).getByRole('button', { name: '活动' }))
     expect(view).toHaveTextContent(/cc_data 开始清洗/)
 
-    // Changes empty state.
+    // Changes sub-view shows port-driven worktree changes.
     await user.click(within(view).getByRole('button', { name: '改动' }))
-    expect(view).toHaveTextContent('暂无改动')
+    expect(view).toHaveTextContent('src/clean.ts')
+    expect(view).toHaveTextContent('验证：通过')
+    expect(view).toHaveTextContent('ff-only 合并')
 
     // Terminal takeover state from the port.
     await user.click(within(view).getByRole('button', { name: 'Terminal' }))
@@ -352,5 +354,123 @@ describe('Agents surface — per-project filter isolation (#20)', () => {
       within(researchDirectory).getByRole('textbox', { name: '搜索 Agent' })
     ).toHaveValue('')
     expect(directoryNames(researchDirectory)).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Changes sub-view — safe merge, drift, validation and confirmation (#8)
+// ---------------------------------------------------------------------------
+
+describe('Agents surface — Changes sub-view', () => {
+  /** Renders the shell, navigates to the Agents surface, opens cc_data's
+   *  Agent View and switches to the Changes sub-view. */
+  async function gotoChanges() {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    // Click on cc_data agent to open Agent View
+    await user.click(screen.getByRole('button', { name: /^cc_data/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    return { user, view }
+  }
+
+  it('shows files, validation status and base commit for cc_data', async () => {
+    const { view } = await gotoChanges()
+    expect(view).toHaveTextContent('src/clean.ts')
+    expect(view).toHaveTextContent('src/types.ts')
+    expect(view).toHaveTextContent('验证：通过')
+    expect(view).toHaveTextContent('a1b2c3d')
+  })
+
+  it('shows ff-only merge and discard buttons for a clean agent', async () => {
+    const { view } = await gotoChanges()
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).not.toBeDisabled()
+    expect(
+      within(view).getByRole('button', { name: '丢弃改动' })
+    ).toBeVisible()
+  })
+
+  it('merge on clean agent triggers confirmation dialog', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('合并')
+    expect(dialog).toHaveTextContent('cc_data')
+  })
+
+  it('confirming merge clears changes and closes dialog', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Changes cleared — empty state now shows
+    expect(view).toHaveTextContent('暂无改动')
+  })
+
+  it('canceling merge via cancel button keeps changes', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Changes still present
+    expect(view).toHaveTextContent('src/clean.ts')
+  })
+
+  it('discard triggers confirmation with discard action text', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: '丢弃改动' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('丢弃')
+  })
+
+  it('shows needs-rebase notice for drifted agent (cc_sql)', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    await user.click(screen.getByRole('button', { name: /^cc_sql/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    expect(view).toHaveTextContent('需要 rebase')
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).toBeDisabled()
+  })
+
+  it('shows validation failure for cx_anti', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    await user.click(screen.getByRole('button', { name: /^cx_anti/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    expect(view).toHaveTextContent('验证：失败')
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).toBeDisabled()
+  })
+
+  it('does not call window.api during changes interactions', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(apiSpy).not.toHaveBeenCalled()
   })
 })
