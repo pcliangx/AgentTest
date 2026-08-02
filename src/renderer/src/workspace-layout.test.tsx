@@ -25,6 +25,56 @@ function panels(): HTMLElement[] {
   return screen.getAllByRole('group', { name: 'Agent 面板' })
 }
 
+/** jsdom has no layout; give every element a measurable size for drag math. */
+function stubLayoutRects() {
+  const original = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function () {
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 1000,
+      bottom: 100,
+      width: 1000,
+      height: 100,
+      toJSON: () => ({})
+    } as DOMRect
+  }
+  return () => {
+    Element.prototype.getBoundingClientRect = original
+  }
+}
+
+/** Flex-basis of the first child next to the named separator. */
+function firstChildBasis(index = 0): string {
+  const separator = screen.getAllByRole('separator', {
+    name: '调整分割比例'
+  })[index]
+  return (separator.parentElement!.firstElementChild as HTMLElement).style
+    .flexBasis
+}
+
+/**
+ * jsdom has no PointerEvent constructor and fireEvent drops clientX for
+ * generic pointer events — dispatch a MouseEvent of the pointer type so
+ * coordinates and pointerId reach the handlers.
+ */
+function firePointer(
+  el: Element,
+  type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
+  clientX: number,
+  pointerId = 1
+) {
+  const event = new window.MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX
+  })
+  Object.assign(event, { pointerId })
+  fireEvent(el, event)
+}
+
 /** Drags a tab and drops it onto the named drop zone of a panel. */
 function dragTabTo(tabName: RegExp, panel: HTMLElement, zoneName: string) {
   const dataTransfer = {
@@ -167,20 +217,92 @@ describe('Workspace layout — divider', () => {
     ).toBe('50%')
     expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
   })
+
+  it('clears the preview without committing when a divider drag is cancelled', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    const separator = screen.getByRole('separator', { name: '调整分割比例' })
+
+    const restore = stubLayoutRects()
+    try {
+      firePointer(separator, 'pointerdown', 500)
+      firePointer(separator, 'pointermove', 600)
+      expect(firstChildBasis()).toBe('60%')
+
+      firePointer(separator, 'pointercancel', 600)
+      // Preview discarded, authoritative ratio kept, nothing committed.
+      expect(firstChildBasis()).toBe('50%')
+    } finally {
+      restore()
+    }
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('cancels an in-flight divider drag when the authoritative revision changes', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    const separator = screen.getByRole('separator', { name: '调整分割比例' })
+
+    const restore = stubLayoutRects()
+    try {
+      firePointer(separator, 'pointerdown', 500)
+      // An authoritative layout change arrives mid-gesture.
+      await user.click(
+        within(panels()[1]).getByRole('button', { name: '向下分割' })
+      )
+      const rootSeparator = screen.getAllByRole('separator', {
+        name: '调整分割比例'
+      })[0]
+      firePointer(rootSeparator, 'pointermove', 600)
+      firePointer(rootSeparator, 'pointerup', 600)
+      // The stale-baseline drag must not commit over the newer snapshot:
+      // the original split keeps its authoritative 50% ratio.
+      expect(firstChildBasis()).toBe('50%')
+    } finally {
+      restore()
+    }
+    expect(screen.queryByRole('status')).toBeNull()
+  })
 })
 
 describe('Workspace layout — pruning and panel close', () => {
-  it('prunes the panel when its last tab closes', async () => {
+  it('prunes an emptied panel while other tabs remain', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    expect(panels()).toHaveLength(2)
+    dragTabTo(/cc_sql/, panels()[1], '移动到该 Panel')
+
+    // Closing cc_sql empties its panel: it is pruned and cc_data's panel
+    // fills the space; other tabs keep the workspace alive.
+    await user.click(screen.getByRole('button', { name: '关闭标签 cc_sql' }))
+    expect(panels()).toHaveLength(1)
+    expect(
+      within(panels()[0]).getByRole('tab', { name: /cc_data/ })
+    ).toBeDefined()
+  })
+
+  it('shows the empty workspace when the globally last tab closes', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(
       within(panels()[0]).getByRole('button', { name: '向右分割' })
     )
     expect(panels()).toHaveLength(2)
 
+    // UX-v0.2 §7.2(5) / ADR-0009: all tabs closed → empty workspace,
+    // no orphaned empty panel left behind.
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
-    expect(panels()).toHaveLength(1)
-    // The remaining panel is the split-created empty one.
-    expect(screen.getByText('未选择 Agent')).toBeVisible()
+    expect(
+      screen.queryAllByRole('group', { name: 'Agent 面板' })
+    ).toHaveLength(0)
+    expect(await screen.findByText(/尚未打开任何 Agent/)).toBeVisible()
   })
 
   it('closes an empty panel directly', async () => {
@@ -218,6 +340,39 @@ describe('Workspace layout — pruning and panel close', () => {
     expect(screen.getByRole('tab', { name: /cc_data/ })).toBeDefined()
     expect(screen.getByRole('tab', { name: /cc_sql/ })).toBeDefined()
   })
+
+  it('labels duplicate empty migration targets distinctly', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    // Two splits of the original panel → two empty sibling panels.
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    expect(panels()).toHaveLength(3)
+
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '关闭 Panel' })
+    )
+    const dialog = await screen.findByRole('dialog', { name: '关闭 Panel' })
+    const options = within(dialog)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+    expect(options).toEqual(['空 Panel（1）', '空 Panel（2）'])
+
+    await user.selectOptions(
+      within(dialog).getByRole('combobox', { name: '迁移目标 Panel' }),
+      '空 Panel（2）'
+    )
+    await user.click(within(dialog).getByRole('button', { name: '迁移并关闭' }))
+
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+  })
 })
 
 describe('Workspace layout — no lifecycle side effects', () => {
@@ -233,5 +388,49 @@ describe('Workspace layout — no lifecycle side effects', () => {
     expect(
       within(directory).getByRole('button', { name: /^cc_data/ })
     ).toHaveTextContent('运行中')
+  })
+})
+
+describe('Workspace layout — rejection recovery', () => {
+  it('shows a recoverable notice when opening in a new panel is rejected', async () => {
+    // A port that rejects the first open-tab-in-new-panel as stale.
+    class StaleOpenPort implements WorkbenchPort {
+      private inner = new MockScenarioAdapter()
+      private rejected = false
+      getSnapshot() {
+        return this.inner.getSnapshot()
+      }
+      subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
+        return this.inner.subscribe(listener)
+      }
+      async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+        if (
+          command.kind === 'change-layout' &&
+          command.operation.kind === 'open-tab-in-new-panel' &&
+          !this.rejected
+        ) {
+          this.rejected = true
+          const latest = await this.inner.getSnapshot()
+          return {
+            ok: false,
+            commandId: command.commandId,
+            reason: 'stale-revision',
+            latestRevision: latest.revision,
+            message: 'revision 已过期'
+          }
+        }
+        return this.inner.dispatch(command)
+      }
+    }
+
+    const { user } = await gotoAgentsSurface(new StaleOpenPort())
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+    // Nothing opened: no new panel, no tab.
+    expect(panels()).toHaveLength(1)
+    expect(screen.queryByRole('tab', { name: /cc_sql/ })).toBeNull()
   })
 })

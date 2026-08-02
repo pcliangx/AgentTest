@@ -214,6 +214,16 @@ export function applyLayoutOperation(
       }
       const state = cloneLayout(layout)
       removeTabFromPanel(state, operation.panelId, operation.agentInstanceId)
+      // UX-v0.2 §7.2(5) / ADR-0009: when ALL tabs are closed the workspace
+      // returns to the empty state — no orphaned empty panel (e.g. a
+      // split-created sibling) may outlive the last tab.
+      const remainingTabs = Object.values(state.panels).reduce(
+        (count, p) => count + p.tabs.length,
+        0
+      )
+      if (remainingTabs === 0) {
+        return ok({ root: null, panels: {} })
+      }
       if (state.panels[operation.panelId].tabs.length === 0) {
         prunePanel(state, operation.panelId)
       }

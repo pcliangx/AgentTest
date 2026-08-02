@@ -3,6 +3,7 @@ import type {
   AgentInstanceViewModel,
   AgentRuntimeState,
   CommandResult,
+  LayoutOperation,
   ProjectViewModel,
   WorkbenchCommandBody,
   WorkbenchViewModel
@@ -47,12 +48,33 @@ export function AgentsSurface({
     }
     return set
   }, [snapshot.attentionItems])
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(null)
+
+  /**
+   * The surface's single layout-command path: every layout mutation — from
+   * the directory or from the workspace — goes through here, so a
+   * rejection always restores the authoritative layout and surfaces a
+   * recoverable notice (Issue #4 AC4) instead of being dropped silently.
+   */
+  const sendLayout = async (
+    operation: LayoutOperation
+  ): Promise<CommandResult> => {
+    const result = await sendCommand({
+      kind: 'change-layout',
+      projectId: project.projectId,
+      operation
+    })
+    if (!result.ok) {
+      setLayoutNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
+    }
+    return result
+  }
 
   return (
     <section
       role="region"
       aria-label="Agent 工作区"
-      className="flex h-full min-h-0"
+      className="relative flex h-full min-h-0"
     >
       <AgentDirectory
         project={project}
@@ -60,13 +82,29 @@ export function AgentsSurface({
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
         sendCommand={sendCommand}
+        sendLayout={sendLayout}
       />
       <WorkspaceArea
         project={project}
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
-        sendCommand={sendCommand}
+        sendLayout={sendLayout}
       />
+      {layoutNotice && (
+        <div
+          role="status"
+          className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded border border-amber-700 bg-neutral-900 px-3 py-1.5 text-xs text-amber-300"
+        >
+          <span>{layoutNotice}</span>
+          <button
+            aria-label="关闭提示"
+            className="rounded px-1 text-amber-300 hover:bg-neutral-800"
+            onClick={() => setLayoutNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -82,13 +120,15 @@ function AgentDirectory({
   agents,
   snapshot,
   openAttentionTargets,
-  sendCommand
+  sendCommand,
+  sendLayout
 }: {
   project: ProjectViewModel
   agents: AgentInstanceViewModel[]
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
   sendCommand: SendCommand
+  sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
 }) {
   const [query, setQuery] = useState('')
   const [providerFilter, setProviderFilter] = useState<'all' | string>('all')
@@ -152,28 +192,20 @@ function AgentDirectory({
       (Object.keys(layout.panels)[0] as string | undefined) ??
       // Empty workspace: the layout owner allocates a fresh panel.
       'panel-fallback'
-    void sendCommand({
-      kind: 'change-layout',
-      projectId: project.projectId,
-      operation: {
-        kind: 'open-tab',
-        panelId: id(panelId, 'PanelId'),
-        agentInstanceId
-      }
+    void sendLayout({
+      kind: 'open-tab',
+      panelId: id(panelId, 'PanelId'),
+      agentInstanceId
     })
   }
 
   const openAgentInNewPanel = (
     agentInstanceId: AgentInstanceViewModel['agentInstanceId']
   ) => {
-    void sendCommand({
-      kind: 'change-layout',
-      projectId: project.projectId,
-      operation: {
-        kind: 'open-tab-in-new-panel',
-        agentInstanceId,
-        direction: 'horizontal'
-      }
+    void sendLayout({
+      kind: 'open-tab-in-new-panel',
+      agentInstanceId,
+      direction: 'horizontal'
     })
   }
 

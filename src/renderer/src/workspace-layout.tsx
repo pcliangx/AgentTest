@@ -23,7 +23,6 @@ import {
   RUNTIME_STATE_LABEL,
   TERMINAL_STATE_LABEL
 } from './agent-display'
-import type { SendCommand } from './agents-surface'
 
 /**
  * Workspace — the free split tree of Agent Panels (#4).
@@ -47,9 +46,11 @@ interface LayoutRenderContext {
   previewRatios: Partial<Record<string, number>>
   draggingTab: AgentInstanceId | null
   panelCount: number
+  layoutRevision: number
   sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
   onPreviewRatio: (splitNodeId: SplitNodeId, ratio: number) => void
   onCommitRatio: (splitNodeId: SplitNodeId, ratio: number) => void
+  onCancelRatio: (splitNodeId: SplitNodeId) => void
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
   onRequestClosePanel: (panelId: PanelId) => void
@@ -63,39 +64,33 @@ export function WorkspaceArea({
   project,
   snapshot,
   openAttentionTargets,
-  sendCommand
+  sendLayout: sendLayoutCommand
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
-  sendCommand: SendCommand
+  sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
 }) {
   const layout = project.layout
   const [draggingTab, setDraggingTab] = useState<AgentInstanceId | null>(null)
   const [previewRatios, setPreviewRatios] = useState<
     Partial<Record<string, number>>
   >({})
-  const [notice, setNotice] = useState<string | null>(null)
   const [closingPanelId, setClosingPanelId] = useState<PanelId | null>(null)
   const [migrateTarget, setMigrateTarget] = useState('')
 
   /**
-   * All layout commands go through here. A rejection never mutates the
-   * snapshot (rejection purity), so local previews are dropped and the user
-   * gets a recoverable notice — the tree simply keeps showing the
-   * authoritative layout.
+   * All layout commands go through the surface-level handler, which shows
+   * a recoverable notice on rejection. A rejection never mutates the
+   * snapshot (rejection purity), so local previews are simply dropped and
+   * the tree keeps showing the authoritative layout.
    */
   const sendLayout = async (
     operation: LayoutOperation
   ): Promise<CommandResult> => {
-    const result = await sendCommand({
-      kind: 'change-layout',
-      projectId: project.projectId,
-      operation
-    })
+    const result = await sendLayoutCommand(operation)
     if (!result.ok) {
       setPreviewRatios({})
-      setNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
     }
     return result
   }
@@ -119,7 +114,7 @@ export function WorkspaceArea({
       void sendLayout({ kind: 'close-panel', panelId })
       return
     }
-    const firstOther = Object.keys(layout.panels).find((p) => p !== panelId)
+    const firstOther = treePanelOrder(layout.root).find((p) => p !== panelId)
     if (!firstOther) return
     setMigrateTarget(firstOther)
     setClosingPanelId(panelId)
@@ -132,6 +127,7 @@ export function WorkspaceArea({
     previewRatios,
     draggingTab,
     panelCount: Object.keys(layout.panels).length,
+    layoutRevision: snapshot.revision,
     sendLayout,
     onPreviewRatio: (splitNodeId, ratio) =>
       setPreviewRatios((prev) => ({ ...prev, [splitNodeId]: ratio })),
@@ -143,6 +139,12 @@ export function WorkspaceArea({
       })
       void sendLayout({ kind: 'resize-split', splitNodeId, ratio })
     },
+    onCancelRatio: (splitNodeId) =>
+      setPreviewRatios((prev) => {
+        const next = { ...prev }
+        delete next[splitNodeId]
+        return next
+      }),
     onDragTabStart: (tab) => setDraggingTab(tab),
     onDragTabEnd: () => setDraggingTab(null),
     onRequestClosePanel: requestClosePanel
@@ -152,21 +154,6 @@ export function WorkspaceArea({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {notice && (
-        <div
-          role="status"
-          className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded border border-amber-700 bg-neutral-900 px-3 py-1.5 text-xs text-amber-300"
-        >
-          <span>{notice}</span>
-          <button
-            aria-label="关闭提示"
-            className="rounded px-1 text-amber-300 hover:bg-neutral-800"
-            onClick={() => setNotice(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
       <div className="flex min-h-0 flex-1">
         <LayoutNodeView node={layout.root} ctx={ctx} />
       </div>
@@ -198,6 +185,13 @@ export function WorkspaceArea({
 // Recursive split-tree rendering
 // ---------------------------------------------------------------------------
 
+/** Panel IDs in depth-first tree order — the rendered left-to-right order. */
+function treePanelOrder(node: LayoutNode | null): PanelId[] {
+  if (!node) return []
+  if (node.kind === 'panel') return [node.panelId]
+  return [...treePanelOrder(node.first), ...treePanelOrder(node.second)]
+}
+
 function LayoutNodeView({
   node,
   ctx
@@ -225,8 +219,10 @@ function LayoutNodeView({
         direction={node.direction}
         splitNodeId={node.splitNodeId}
         ratio={ratio}
+        layoutRevision={ctx.layoutRevision}
         onPreview={ctx.onPreviewRatio}
         onCommit={ctx.onCommitRatio}
+        onCancel={ctx.onCancelRatio}
       />
       <div className="flex min-h-0 min-w-0 flex-1">
         <LayoutNodeView node={node.second} ctx={ctx} />
@@ -245,20 +241,37 @@ function Divider({
   direction,
   splitNodeId,
   ratio,
+  layoutRevision,
   onPreview,
-  onCommit
+  onCommit,
+  onCancel
 }: {
   direction: 'horizontal' | 'vertical'
   splitNodeId: SplitNodeId
   ratio: number
+  layoutRevision: number
   onPreview: (splitNodeId: SplitNodeId, ratio: number) => void
   onCommit: (splitNodeId: SplitNodeId, ratio: number) => void
+  onCancel: (splitNodeId: SplitNodeId) => void
 }) {
   const dragRef = useRef<{
     startPos: number
     startRatio: number
     lastRatio: number
+    startRevision: number
   } | null>(null)
+
+  /**
+   * Drops the in-flight gesture WITHOUT committing: the pointer was
+   * cancelled, capture was lost, or the authoritative layout moved on
+   * mid-gesture. The preview is cleared so the tree falls back to the
+   * authoritative ratio.
+   */
+  const cancelDrag = () => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    onCancel(splitNodeId)
+  }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const grow = direction === 'horizontal' ? 'ArrowRight' : 'ArrowDown'
@@ -275,16 +288,24 @@ function Divider({
   const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.currentTarget.setPointerCapture?.(e.pointerId)
+    // The gesture's baseline: both the starting ratio and the revision it
+    // was read from. Committing against a newer revision would silently
+    // overwrite whatever the newer snapshot changed.
     dragRef.current = {
       startPos: direction === 'horizontal' ? e.clientX : e.clientY,
       startRatio: ratio,
-      lastRatio: ratio
+      lastRatio: ratio,
+      startRevision: layoutRevision
     }
   }
 
   const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
     if (!drag) return
+    if (drag.startRevision !== layoutRevision) {
+      cancelDrag()
+      return
+    }
     const parent = e.currentTarget.parentElement
     if (!parent) return
     const rect = parent.getBoundingClientRect()
@@ -300,6 +321,10 @@ function Divider({
   const handlePointerUp = (e: PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
     if (!drag) return
+    if (drag.startRevision !== layoutRevision) {
+      cancelDrag()
+      return
+    }
     dragRef.current = null
     e.currentTarget.releasePointerCapture?.(e.pointerId)
     if (drag.lastRatio !== drag.startRatio) {
@@ -325,6 +350,8 @@ function Divider({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={cancelDrag}
+      onLostPointerCapture={cancelDrag}
     />
   )
 }
@@ -558,16 +585,31 @@ function ClosePanelDialog({
   onCancel: () => void
   onConfirm: () => void
 }) {
-  const others = Object.entries(layout.panels).filter(
-    ([panelId]) => panelId !== closingPanelId
+  // Migration candidates in rendered (tree) order, so the option labels
+  // can point at a distinguishable position even when several panels are
+  // empty. Non-empty panels are identified by their first tab's name —
+  // agent names are unique within a project.
+  const candidates = treePanelOrder(layout.root).filter(
+    (panelId) => panelId !== closingPanelId
   )
-  const optionLabel = (panel: { tabs: AgentInstanceId[] }): string => {
-    if (panel.tabs.length === 0) return '空 Panel'
+  const emptyTotal = candidates.filter(
+    (panelId) => layout.panels[panelId].tabs.length === 0
+  ).length
+  let emptySeen = 0
+  const options = candidates.map((panelId) => {
+    const panel = layout.panels[panelId]
+    if (panel.tabs.length === 0) {
+      emptySeen += 1
+      return {
+        panelId,
+        label: emptyTotal > 1 ? `空 Panel（${emptySeen}）` : '空 Panel'
+      }
+    }
     const first = snapshot.agents.find(
       (a) => a.agentInstanceId === panel.tabs[0]
     )
-    return `${first?.name ?? 'Agent'} 的 Panel`
-  }
+    return { panelId, label: `${first?.name ?? 'Agent'} 的 Panel` }
+  })
 
   return (
     <div
@@ -588,9 +630,9 @@ function ClosePanelDialog({
             value={migrateTarget}
             onChange={(e) => onSelectTarget(e.target.value)}
           >
-            {others.map(([panelId, panel]) => (
-              <option key={panelId} value={panelId}>
-                {optionLabel(panel)}
+            {options.map((option) => (
+              <option key={option.panelId} value={option.panelId}>
+                {option.label}
               </option>
             ))}
           </select>

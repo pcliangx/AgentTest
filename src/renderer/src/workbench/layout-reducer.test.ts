@@ -360,6 +360,32 @@ describe('layout-reducer — close-tab and close-panel', () => {
     expect(result.layout.focusedPanelId).toBeUndefined()
   })
 
+  // UX-v0.2 §7.2(5) / ADR-0009: when ALL tabs are closed the workspace
+  // returns to the empty state — no orphaned empty panel may remain,
+  // even one created by an earlier split.
+  it('closing the globally last tab clears the whole tree, including empty siblings', () => {
+    const ids = makeIds()
+    const split = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      { kind: 'split-panel', panelId: P(1), direction: 'horizontal' },
+      ids
+    )
+    expect(split.ok).toBe(true)
+    if (!split.ok) return
+
+    const result = applyLayoutOperation(
+      split.layout,
+      { kind: 'close-tab', panelId: P(1), agentInstanceId: A('a') },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.root).toBeNull()
+    expect(result.layout.panels).toEqual({})
+    expect(result.layout.focusedPanelId).toBeUndefined()
+    assertLayoutInvariants(result.layout)
+  })
+
   it('close-panel requires a migration target when the panel has tabs', () => {
     const layout = singlePanelLayout(P(1), [A('a'), A('b')])
     const result = applyLayoutOperation(
