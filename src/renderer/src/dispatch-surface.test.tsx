@@ -868,6 +868,49 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(commands[0].targets).toHaveLength(9)
   })
 
+  it('keeps focus in the picker when an update disables the broadcast trigger', async () => {
+    const snapshot = createStandardScenario()
+    const project = snapshot.projects[0]
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
+      'ready'
+    const port = new MutableSnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const pickerDialog = await openPicker(user)
+
+    await user.type(
+      within(pickerDialog).getByRole('textbox', { name: '指令' }),
+      '@@all invalidate focus target'
+    )
+    await user.click(
+      within(pickerDialog).getByRole('button', { name: '确认派发' })
+    )
+    expect(
+      await screen.findByRole('dialog', { name: '确认广播派发' })
+    ).toBeInTheDocument()
+
+    await act(() =>
+      port.publish((next) => {
+        next.projects.find(
+          (candidate) => candidate.projectId === project.projectId
+        )!.lifecycle = 'archived'
+      })
+    )
+
+    expect(
+      screen.queryByRole('dialog', { name: '确认广播派发' })
+    ).toBeNull()
+    expect(
+      within(pickerDialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(pickerDialog).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
+    expect(port.commands).toHaveLength(0)
+  })
+
   it('excludes unavailable agents from the selectable list', async () => {
     const { user } = await gotoAgentsSurface()
     const dialog = await openPicker(user)

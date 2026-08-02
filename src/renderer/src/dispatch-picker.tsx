@@ -255,7 +255,14 @@ export function DispatchPicker({
       focusTarget?.focus()
     } else if (broadcastWasOpenRef.current) {
       broadcastWasOpenRef.current = false
-      broadcastTriggerRef.current?.focus()
+      const trigger = broadcastTriggerRef.current
+      if (trigger && !trigger.disabled) trigger.focus()
+      // Snapshot changes can invalidate the preview and disable its trigger
+      // while the nested dialog is closing. Keep focus inside the surviving
+      // modal when restoring the trigger is no longer possible.
+      if (trigger?.disabled || document.activeElement !== trigger) {
+        pickerDialogRef.current?.focus()
+      }
     }
   }, [awaitingBroadcast])
 
