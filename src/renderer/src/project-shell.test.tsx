@@ -150,6 +150,32 @@ describe('ProjectShell — project switcher', () => {
       await screen.findByRole('heading', { name: '用户研究', level: 2 })
     ).toBeVisible()
   })
+
+  it('preserves the target project surface when switching', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+
+    // Navigate sales project to tasks
+    await user.click(screen.getByRole('button', { name: '任务' }))
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+
+    // Switch to 用户研究 — should show its own overview, not tasks
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '切换项目' }),
+      '用户研究'
+    )
+    expect(
+      await screen.findByRole('region', { name: '项目概览' })
+    ).toBeVisible()
+
+    // Switch back to sales — should still show tasks
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '切换项目' }),
+      '销售数据分析'
+    )
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+  })
 })
 
 describe('ProjectShell — stale snapshot safety', () => {
@@ -207,5 +233,27 @@ describe('ProjectShell — stale snapshot safety', () => {
     // The renderer must keep revision 1's state (agents surface), not
     // overwrite it with the stale revision 0 (overview surface).
     expect(await screen.findByText(/尚未实现/)).toBeVisible()
+  })
+})
+
+describe('ProjectShell — command ID uniqueness', () => {
+  it('generates unique command IDs across remounts with the same adapter', async () => {
+    const adapter = new MockScenarioAdapter()
+    const user = userEvent.setup()
+
+    const { unmount } = render(<ProjectShell port={adapter} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '任务' }))
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    unmount()
+
+    // Remount with the same adapter — new mount must not reuse old
+    // command IDs from the idempotency cache.
+    render(<ProjectShell port={adapter} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '活动' }))
+    expect(
+      await screen.findByRole('region', { name: '活动' })
+    ).toBeVisible()
   })
 })

@@ -72,7 +72,7 @@ linked worktree 使用。
 1. 本文档。
 2. [领域词汇表](../CONTEXT.md)。
 3. [PLAN-v0.2](./PLAN-v0.2.md)。
-4. [UX-v0.2](./UX-v0.2.md)；设计基线已冻结，Phase 1 尚未启动。
+4. [UX-v0.2](./UX-v0.2.md)；设计基线已冻结；Phase 1 #1 已完成，其余 tickets 尚未启动。
 5. [ADR-0008](./adr/0008-project-first-agent-instances.md)。
 6. [ADR-0009](./adr/0009-command-center-workspace-lifecycle.md)。
 7. [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md)。

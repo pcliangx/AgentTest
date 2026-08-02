@@ -18,7 +18,6 @@ import { id } from './workbench/contract'
 function useWorkbench(port: WorkbenchPort) {
   const [snapshot, setSnapshot] = useState<WorkbenchViewModel | null>(null)
   const revisionRef = useRef<number>(-1)
-  const cmdCounter = useRef(0)
 
   // Shared updater — only accepts snapshots with strictly higher revision.
   // Prevents a stale getSnapshot response from overwriting a newer event.
@@ -48,10 +47,9 @@ function useWorkbench(port: WorkbenchPort) {
 
   const navigate = useCallback(
     (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> => {
-      cmdCounter.current++
       const command: WorkbenchCommand = {
         kind: 'navigate',
-        commandId: id(`nav-${cmdCounter.current}`, 'CommandId'),
+        commandId: id(crypto.randomUUID(), 'CommandId'),
         expectedRevision: revisionRef.current,
         projectId,
         surface
@@ -162,12 +160,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               aria-label="切换项目"
               className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
               value={project.projectId}
-              onChange={(e) =>
-                void navigate(
-                  id(e.target.value, 'ProjectId'),
-                  project.currentSurface
+              onChange={(e) => {
+                const targetId = id(e.target.value, 'ProjectId')
+                const target = snapshot.projects.find(
+                  (p) => p.projectId === targetId
                 )
-              }
+                void navigate(targetId, target?.currentSurface ?? 'overview')
+              }}
             >
               {snapshot.projects.map((p) => (
                 <option key={p.projectId} value={p.projectId}>
