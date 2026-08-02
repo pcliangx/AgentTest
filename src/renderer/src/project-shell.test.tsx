@@ -573,4 +573,67 @@ describe('ProjectShell — focus restoration', () => {
     // Stale error from previous confirmation must NOT appear
     expect(screen.queryByText('确认 ID 已过期')).not.toBeInTheDocument()
   })
+
+  it('keeps focus on the surface after deleting the last connection', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+
+    // Delete all connections one by one
+    for (let i = 0; i < 3; i++) {
+      const buttons = screen.queryAllByRole('button', { name: '删除' })
+      if (buttons.length === 0) break
+      await user.click(buttons[0])
+      await screen.findByRole('dialog')
+      await user.click(screen.getByRole('button', { name: '确认' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    }
+
+    // All connections deleted
+    expect(screen.getByText('暂无连接')).toBeVisible()
+    // Focus must not be on body — section heading (tabIndex=-1) receives it
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('only shows the latest confirm attempt error', async () => {
+    const inner = new MockScenarioAdapter()
+    let confirmCount = 0
+    const port: WorkbenchPort = {
+      async getSnapshot() {
+        return inner.getSnapshot()
+      },
+      dispatch(cmd) {
+        if (cmd.kind === 'confirm-dangerous-action') {
+          confirmCount++
+          return Promise.resolve({
+            ok: false,
+            commandId: cmd.commandId,
+            reason: 'invalid-target' as const,
+            latestRevision: 0,
+            message: `attempt ${confirmCount}`
+          })
+        }
+        return inner.dispatch(cmd)
+      },
+      subscribe(fn) {
+        return inner.subscribe(fn)
+      }
+    }
+
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+
+    // Click confirm twice — only the latest attempt's error should show
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.getByText('attempt 2')).toBeVisible()
+    expect(screen.queryByText('attempt 1')).not.toBeInTheDocument()
+  })
 })

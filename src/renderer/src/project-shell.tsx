@@ -86,6 +86,7 @@ function useWorkbench(port: WorkbenchPort) {
   const requestConnectionDeletion = useCallback(
     (connectionId: ConnectionId) => {
       setConfirmationError(null)
+      confirmAttemptRef.current++ // invalidate any in-flight confirm
       return send({ kind: 'request-connection-deletion', connectionId })
     },
     [send]
@@ -101,14 +102,18 @@ function useWorkbench(port: WorkbenchPort) {
     id: ConfirmationId
     message: string
   } | null>(null)
+  const confirmAttemptRef = useRef(0)
 
   const confirmDangerousAction = useCallback(
     (confirmationId: ConfirmationId) => {
+      confirmAttemptRef.current++
+      const attempt = confirmAttemptRef.current
       const result = send({
         kind: 'confirm-dangerous-action',
         confirmationId
       })
       void result.then((r) => {
+        if (attempt !== confirmAttemptRef.current) return // stale attempt
         if (!r.ok && r.reason !== 'stale-revision') {
           setConfirmationError({ id: confirmationId, message: r.message })
         }
@@ -120,6 +125,7 @@ function useWorkbench(port: WorkbenchPort) {
 
   const dismissConfirmation = useCallback(() => {
     setConfirmationError(null)
+    confirmAttemptRef.current++ // invalidate any in-flight confirm
     return send({ kind: 'dismiss-confirmation' })
   }, [send])
 
@@ -506,7 +512,7 @@ function ConnectionsSurface({
   onDelete: (connectionId: ConnectionId) => void
 }) {
   return (
-    <section role="region" aria-label="全局连接" className="space-y-3">
+    <section role="region" aria-label="全局连接" tabIndex={-1} className="space-y-3">
       <h2 className="text-lg font-medium text-neutral-100">连接</h2>
       {connections.length === 0 ? (
         <p className="text-sm text-neutral-500">暂无连接</p>
@@ -613,14 +619,18 @@ function ConfirmationModal({
         opener.focus()
       } else {
         // Opener was removed (e.g., connection row deleted) — fall back to
-        // the first remaining button scoped to the main content area, not
-        // the header navigation.
+        // the first remaining button in the content area; if none remain
+        // (all connections deleted), focus the section heading.
         const mainEl = document.querySelector('main')
-        const fallback =
-          mainEl?.querySelector<HTMLButtonElement>(
-            'button:not([disabled])'
-          ) ?? null
-        fallback?.focus()
+        const btn = mainEl?.querySelector<HTMLButtonElement>(
+          'button:not([disabled])'
+        )
+        if (btn) {
+          btn.focus()
+        } else {
+          const section = mainEl?.querySelector('[aria-label="全局连接"]')
+          if (section instanceof HTMLElement) section.focus()
+        }
       }
     }
   }, [])
