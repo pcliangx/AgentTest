@@ -211,17 +211,13 @@ export function WorkspaceArea({
                 migrateToPanelId: id(migrateTarget, 'PanelId')
               },
               closingPanel.startRevision
-            ).then((result) => {
-              if (result.ok) {
-                setClosingPanel(null)
-              } else {
-                // Re-baseline onto the authoritative snapshot the shell
-                // just restored, so the user re-confirms what they
-                // actually see now instead of being stuck on a stale one.
-                setClosingPanel((prev) =>
-                  prev ? { ...prev, startRevision: result.latestRevision } : null
-                )
-              }
+            ).then(() => {
+              // Close after EVERY decision. A stale rejection response may
+              // arrive before the refreshed snapshot is rendered — keeping
+              // the dialog open would let the user re-confirm against a
+              // revision they have never seen. Re-opening rebuilds the
+              // candidates from the latest rendered layout instead.
+              setClosingPanel(null)
             })
           }}
         />

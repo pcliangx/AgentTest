@@ -674,6 +674,41 @@ describe('Workspace layout — rejection recovery', () => {
     ).toBeDefined()
   })
 
+  it('closes the stale confirmation instead of re-baselining onto an unrendered revision', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '关闭 Panel' })
+    )
+    const dialog = await screen.findByRole('dialog', { name: '关闭 Panel' })
+
+    await directLayout(port, {
+      kind: 'open-tab',
+      panelId: id('panel-main', 'PanelId'),
+      agentInstanceId: id('inst-cc-etl', 'AgentInstanceId')
+    })
+    dispatchClickRaw(
+      within(dialog).getByRole('button', { name: '迁移并关闭' })
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent(/已恢复/)
+
+    // After a stale rejection the dialog must be gone: the rejection
+    // response may arrive BEFORE the refreshed snapshot is rendered, so a
+    // still-open dialog could be re-confirmed against a revision the user
+    // has never seen. Re-opening rebuilds candidates from the latest
+    // rendered layout instead.
+    expect(screen.queryByRole('dialog', { name: '关闭 Panel' })).toBeNull()
+    expect(panels()).toHaveLength(2)
+    expect(
+      within(panels()[0]).getByRole('tab', { name: /cc_etl/ })
+    ).toBeDefined()
+  })
+
   it('rejects a discrete layout command issued from a stale render', async () => {
     const port = new MockScenarioAdapter()
     const { user } = await gotoAgentsSurface(port)
