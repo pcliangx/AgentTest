@@ -16,6 +16,11 @@ import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
 import { getDispatchBlockReason, isAgentBusy } from './dispatchability'
 
+type PostDispatchEvent = Omit<
+  Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
+  'revision'
+>
+
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
  *
@@ -29,13 +34,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private createdAgentCount = 0
   private createdPanelCount = 0
-  /**
-   * Follow-up events (without revision) queued by tryApply to be emitted after
-   * the success revision bump. Cleared on rejection and after each dispatch.
-   */
-  private pendingPostEvents: Array<
-    Omit<Extract<WorkbenchEvent, { kind: 'dispatch-created' }>, 'revision'>
-  > = []
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -56,36 +54,32 @@ export class MockScenarioAdapter implements WorkbenchPort {
     }
 
     // 3. Command-specific handling — returns a rejection or null (success).
-    //    On success, tryApply may push follow-up events (e.g. dispatch-created)
-    //    onto pendingPostEvents to be emitted after the revision bump.
-    this.pendingPostEvents = []
-    const rejection = this.tryApply(command)
-    if (rejection) {
-      this.pendingPostEvents = []
-      return rejection
-    }
+    //    Follow-up events belong to this dispatch invocation. Keeping them
+    //    local prevents a reentrant subscriber command from replacing them.
+    const postEvents: PostDispatchEvent[] = []
+    const rejection = this.tryApply(command, postEvents)
+    if (rejection) return rejection
 
     // 4. Success — bump revision, emit, cache.
-    this.snapshot.revision++
+    const acceptedRevision = ++this.snapshot.revision
     const result: CommandResult = {
       ok: true,
       commandId: command.commandId,
-      acceptedRevision: this.snapshot.revision
+      acceptedRevision
     }
     this.resultsByCommandId.set(command.commandId, result)
     this.emit({
       kind: 'view-model-updated',
-      revision: this.snapshot.revision,
+      revision: acceptedRevision,
       correlationId: command.commandId,
       snapshot: structuredClone(this.snapshot)
     })
     // Emit any command-specific follow-up events (e.g. dispatch-created) at
     // the same authoritative revision. They are skipped on duplicate dispatch
     // because the cached result short-circuits before reaching here.
-    for (const partial of this.pendingPostEvents) {
-      this.emit({ ...partial, revision: this.snapshot.revision })
+    for (const partial of postEvents) {
+      this.emit({ ...partial, revision: acceptedRevision })
     }
-    this.pendingPostEvents = []
     return result
   }
 
@@ -103,7 +97,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
    * Returns a rejection result for invalid targets or unimplemented commands,
    * or null to signal success (caller bumps revision and emits).
    */
-  private tryApply(command: WorkbenchCommand): CommandResult | null {
+  private tryApply(
+    command: WorkbenchCommand,
+    postEvents: PostDispatchEvent[]
+  ): CommandResult | null {
     switch (command.kind) {
       case 'navigate': {
         const project = this.snapshot.projects.find(
@@ -365,7 +362,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
         // CommandId never reaches here (cached result short-circuits).
-        this.pendingPostEvents.push({
+        postEvents.push({
           kind: 'dispatch-created',
           correlationId: command.commandId,
           dispatchIds

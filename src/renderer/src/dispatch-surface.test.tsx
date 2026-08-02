@@ -11,6 +11,7 @@ import type {
 } from './workbench/contract'
 import { id } from './workbench/contract'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { createStandardScenario } from './workbench/standard-scenario'
 import { ProjectShell } from './project-shell'
 
 afterEach(() => cleanup())
@@ -77,6 +78,64 @@ class DeferredConfirmPort implements WorkbenchPort {
     const results = await Promise.all(pending.map((item) => item.result))
     pending.forEach((item, index) => item.resolve(results[index]))
     await Promise.resolve()
+  }
+}
+
+/** Keeps composer responses pending after the adapter has accepted them. */
+class DeferredInstructionPort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private readonly pending: Array<{
+    result: Promise<CommandResult>
+    resolve: (result: CommandResult) => void
+  }> = []
+  readonly commands: WorkbenchCommand[] = []
+
+  getSnapshot(): Promise<WorkbenchViewModel> {
+    return this.inner.getSnapshot()
+  }
+
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    const result = this.inner.dispatch(command)
+    if (command.kind !== 'send-agent-instruction') return result
+    return new Promise((resolve) => {
+      this.pending.push({ result, resolve })
+    })
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    return this.inner.subscribe(listener)
+  }
+
+  async resolveInstructions(): Promise<void> {
+    const pending = this.pending.splice(0)
+    const results = await Promise.all(pending.map((item) => item.result))
+    pending.forEach((item, index) => item.resolve(results[index]))
+    await Promise.resolve()
+  }
+}
+
+/** Supplies a caller-owned scenario at the WorkbenchPort boundary. */
+class SnapshotRecordingPort implements WorkbenchPort {
+  readonly commands: WorkbenchCommand[] = []
+
+  constructor(private readonly snapshot: WorkbenchViewModel) {}
+
+  async getSnapshot(): Promise<WorkbenchViewModel> {
+    return structuredClone(this.snapshot)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return {
+      ok: true,
+      commandId: command.commandId,
+      acceptedRevision: this.snapshot.revision + 1
+    }
+  }
+
+  subscribe(): () => void {
+    return () => {}
   }
 }
 
@@ -214,6 +273,50 @@ describe('Dispatch — Agent Tab composer', () => {
       mode: 'start-or-queue'
     })
   })
+
+  it('submits only once while an instruction response is pending', async () => {
+    const user = userEvent.setup()
+    const port = new DeferredInstructionPort()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+    await user.type(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      'enqueue once'
+    )
+    const send = within(view).getByRole('button', {
+      name: '发送给当前 Agent'
+    })
+
+    await user.click(send)
+    await user.click(send)
+
+    try {
+      expect(
+        port.commands.filter(
+          (command) => command.kind === 'send-agent-instruction'
+        )
+      ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolveInstructions())
+    }
+  })
+
+  it('shows the next queue position for an already-queued agent', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(
+      within(directory).getByRole('button', { name: /cx_forecast/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+
+    expect(
+      within(view).getByRole('log', { name: '对话记录' })
+    ).toHaveTextContent('当前已有 1 项排队；新指令将进入第 2 位。')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -311,6 +414,26 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
     expect(
       port.commands.filter((c) => c.kind === 'confirm-dispatch')
+    ).toHaveLength(0)
+  })
+
+  it('moves focus into the picker and restores its opener after immediate Escape', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const opener = screen.getAllByRole('button', {
+      name: '派发给 Agent'
+    })[0]
+    await user.click(opener)
+    const dialog = await screen.findByRole('dialog', {
+      name: '派发给 Agent'
+    })
+
+    expect(dialog).toHaveFocus()
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '派发给 Agent' })).toBeNull()
+    expect(opener).toHaveFocus()
+    expect(
+      port.commands.filter((command) => command.kind === 'confirm-dispatch')
     ).toHaveLength(0)
   })
 
@@ -428,6 +551,36 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     const kimiDocs = within(dialog).getByRole('button', { name: /kimi_docs/ })
     expect(kimiDocs).toBeDisabled()
     expect(kimiDocs).toHaveTextContent('不可派发')
+  })
+
+  it('keeps an unavailable longer name from resolving to a ready shorter target', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.agents.find((agent) => agent.name === 'cx_review')!.name = 'data'
+    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.name =
+      'data review'
+    const port = new SnapshotRecordingPort(snapshot)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'ask @@data review'
+    )
+
+    const chips = within(dialog).getAllByRole('listitem', {
+      name: /已选目标/
+    })
+    expect(chips.map((chip) => chip.textContent)).toContain(
+      'data review（不可派发）'
+    )
+    expect(chips.map((chip) => chip.textContent)).not.toContain('data')
+    expect(dialog).toHaveTextContent('不可派发的目标：data review')
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+    expect(port.commands).toHaveLength(0)
   })
 
   it('does not treat @@ typed into the composer as a multi-target dispatch', async () => {

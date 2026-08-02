@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type {
   AgentInstanceViewModel,
   AgentProviderId,
@@ -10,6 +10,7 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { isAgentBusy } from './workbench/dispatchability'
 
 /**
  * Agents surface — Agent Directory, single-panel workspace with unique
@@ -714,14 +715,6 @@ function AgentView({
 // Chat sub-view — state text driven only by port-judged facts (#20)
 // ---------------------------------------------------------------------------
 
-const ACTIVE_RUN_STATES: ReadonlySet<AgentRuntimeState> = new Set([
-  'starting',
-  'running',
-  'finishing',
-  'needs-input',
-  'permission-requested'
-])
-
 function ChatState({
   project,
   agent,
@@ -733,33 +726,43 @@ function ChatState({
 }) {
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  const submittingRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
   // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
   // Terminal takeover is active the composer is disabled and shows why.
   const terminalBlocked = agent.terminalState === 'active'
-  const disabled = lifecycleBlocked || terminalBlocked
+  const disabled = lifecycleBlocked || terminalBlocked || submitting
   const awaitingInput = agent.runtimeState === 'needs-input'
+  const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
 
   const submit = async () => {
     const instruction = draft.trim()
-    if (!instruction || disabled) return
+    if (!instruction || disabled || submittingRef.current) return
+    submittingRef.current = true
+    setSubmitting(true)
     setNotice(null)
-    const result = await sendCommand({
-      kind: 'send-agent-instruction',
-      projectId: project.projectId,
-      agentInstanceId: agent.agentInstanceId,
-      instruction,
-      // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
-      // Any other active state enqueues as the next Run instead of being
-      // mistaken for a reply to the current Run.
-      mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
-    })
-    if (result.ok) {
-      setDraft('')
-    } else {
-      setNotice(result.message)
+    try {
+      const result = await sendCommand({
+        kind: 'send-agent-instruction',
+        projectId: project.projectId,
+        agentInstanceId: agent.agentInstanceId,
+        instruction,
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // Any other active state enqueues as the next Run instead of being
+        // mistaken for a reply to the current Run.
+        mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
+      })
+      if (result.ok) {
+        setDraft('')
+      } else {
+        setNotice(result.message)
+      }
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
     }
   }
 
@@ -782,7 +785,16 @@ function ChatState({
           <p className="text-neutral-500">
             当前 Run 正在等待输入，可直接回复。
           </p>
-        ) : ACTIVE_RUN_STATES.has(agent.runtimeState) || agent.activeRunId ? (
+        ) : hasQueuedWork && agent.queueDepth > 0 ? (
+          <p className="text-neutral-500">
+            当前已有 {agent.queueDepth} 项排队；新指令将进入第{' '}
+            {agent.queueDepth + 1} 位。
+          </p>
+        ) : hasQueuedWork ? (
+          <p className="text-neutral-500">
+            当前 Agent 已在排队；新指令将继续加入下一 Run 队列。
+          </p>
+        ) : isAgentBusy(agent) ? (
           <p className="text-neutral-500">
             当前有进行中的 Run；新指令将进入下一 Run 队列。
           </p>

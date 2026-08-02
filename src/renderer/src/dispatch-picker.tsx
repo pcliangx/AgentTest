@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type {
   AgentInstanceViewModel,
@@ -42,6 +42,14 @@ import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
  */
 const AT_AT_TOKEN = /(?:^|\s)@@(\S+)/g
 const ALL_TOKEN = 'all'
+const FOCUSABLE_SELECTOR = [
+  'button:not(:disabled)',
+  'textarea:not(:disabled)',
+  'input:not(:disabled)',
+  'select:not(:disabled)',
+  'a[href]',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',')
 
 const RESOURCE_TYPE_LABEL: Record<
   'task-list' | 'knowledge-space' | 'document' | 'other',
@@ -59,7 +67,7 @@ const RESOURCE_OP_LABEL: Record<'read' | 'create' | 'update', string> = {
   update: '更新'
 }
 
-/** Resolves @@ tokens against dispatchable agents of the project. */
+/** Resolves explicit @@ names against every known agent in the project. */
 function resolveAtAt(
   text: string,
   agents: AgentInstanceViewModel[]
@@ -115,9 +123,6 @@ function resolveAtAt(
     }
   }
 
-  if (hasAll) {
-    for (const a of agents) ids.add(a.agentInstanceId)
-  }
   return { ids, unresolved, hasAll }
 }
 
@@ -136,12 +141,13 @@ export function DispatchPicker({
   sendCommand: SendCommand
   onClose: () => void
 }) {
-  // Only dispatchable instances are selectable. isDispatchable is the single
-  // source of truth shared with the adapter, so @@all and manual selection
-  // never include a target the port would then reject (#6 P1-1).
-  const dispatchable = snapshot.agents.filter(
-    (a) => a.projectId === project.projectId && isDispatchable(a)
+  const projectAgents = snapshot.agents.filter(
+    (a) => a.projectId === project.projectId
   )
+  // Only dispatchable instances are manually selectable or included by
+  // @@all. Explicit names are still resolved against every project Agent so a
+  // blocked longer name can never fall through to a ready shorter name.
+  const dispatchable = projectAgents.filter(isDispatchable)
 
   const [instruction, setInstruction] = useState('')
   const [manual, setManual] = useState<
@@ -151,10 +157,43 @@ export function DispatchPicker({
   const [awaitingBroadcast, setAwaitingBroadcast] = useState(false)
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
+  const pickerDialogRef = useRef<HTMLDivElement>(null)
+  const broadcastDialogRef = useRef<HTMLDivElement>(null)
+  const broadcastTriggerRef = useRef<HTMLButtonElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const broadcastWasOpenRef = useRef(false)
 
-  const resolved = resolveAtAt(instruction, dispatchable)
+  useEffect(() => {
+    openerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    pickerDialogRef.current?.focus()
+    return () => {
+      if (openerRef.current?.isConnected) openerRef.current.focus()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (awaitingBroadcast) {
+      broadcastWasOpenRef.current = true
+      broadcastDialogRef.current?.focus()
+    } else if (broadcastWasOpenRef.current) {
+      broadcastWasOpenRef.current = false
+      broadcastTriggerRef.current?.focus()
+    }
+  }, [awaitingBroadcast])
+
+  const resolved = resolveAtAt(instruction, projectAgents)
   const targetIds = new Set([...manual, ...resolved.ids])
-  const targets = dispatchable.filter((a) => targetIds.has(a.agentInstanceId))
+  if (resolved.hasAll) {
+    for (const agent of dispatchable) targetIds.add(agent.agentInstanceId)
+  }
+  const selectedTargets = projectAgents.filter((a) =>
+    targetIds.has(a.agentInstanceId)
+  )
+  const blockedTargets = selectedTargets.filter((a) => !isDispatchable(a))
+  const targets = selectedTargets.filter(isDispatchable)
 
   const toggleManual = (
     agentInstanceId: AgentInstanceViewModel['agentInstanceId']
@@ -194,6 +233,7 @@ export function DispatchPicker({
     if (
       submittingRef.current ||
       targets.length === 0 ||
+      blockedTargets.length > 0 ||
       instruction.trim().length === 0
     ) {
       return
@@ -230,16 +270,48 @@ export function DispatchPicker({
   // Escape dismisses without dispatching. If the broadcast overlay is open,
   // Escape cancels only that inner step and returns to the picker.
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Escape') return
-    e.stopPropagation()
-    if (awaitingBroadcast) setAwaitingBroadcast(false)
-    else onClose()
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      if (awaitingBroadcast) setAwaitingBroadcast(false)
+      else onClose()
+      return
+    }
+    if (e.key !== 'Tab') return
+
+    const activeDialog = awaitingBroadcast
+      ? broadcastDialogRef.current
+      : pickerDialogRef.current
+    if (!activeDialog) return
+    const focusable = Array.from(
+      activeDialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+    )
+    if (focusable.length === 0) {
+      e.preventDefault()
+      activeDialog.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const active = document.activeElement
+    if (e.shiftKey && (active === first || !activeDialog.contains(active))) {
+      e.preventDefault()
+      last.focus()
+    } else if (
+      !e.shiftKey &&
+      (active === last || !activeDialog.contains(active))
+    ) {
+      e.preventDefault()
+      first.focus()
+    }
   }
 
   return (
     <div
+      ref={pickerDialogRef}
       role="dialog"
       aria-label="派发给 Agent"
+      aria-modal="true"
+      tabIndex={-1}
       className="absolute inset-0 z-30 flex items-center justify-center bg-black/60"
       onKeyDown={onKeyDown}
     >
@@ -254,49 +326,54 @@ export function DispatchPicker({
             aria-label="可选 Agent"
             className="max-h-40 space-y-0.5 overflow-auto"
           >
-            {snapshot.agents
-              .filter((a) => a.projectId === project.projectId)
-              .map((a) => {
-                const disabled = !isDispatchable(a)
-                const selected = targetIds.has(a.agentInstanceId)
-                return (
-                  <li key={a.agentInstanceId}>
-                    <button
-                      className={`block w-full rounded px-2 py-1 text-left text-sm ${
-                        disabled
-                          ? 'cursor-not-allowed text-neutral-600'
-                          : selected
-                            ? 'bg-neutral-700 text-neutral-100'
-                            : 'text-neutral-300 hover:bg-neutral-800'
-                      }`}
-                      aria-pressed={selected}
-                      disabled={disabled}
-                      onClick={() => toggleManual(a.agentInstanceId)}
-                    >
-                      {a.name} · {RUNTIME_STATE_LABEL[a.runtimeState]}
-                      {disabled ? '（不可派发）' : ''}
-                    </button>
-                  </li>
-                )
-              })}
+            {projectAgents.map((a) => {
+              const disabled = !isDispatchable(a)
+              const selected = targetIds.has(a.agentInstanceId)
+              return (
+                <li key={a.agentInstanceId}>
+                  <button
+                    className={`block w-full rounded px-2 py-1 text-left text-sm ${
+                      disabled
+                        ? 'cursor-not-allowed text-neutral-600'
+                        : selected
+                          ? 'bg-neutral-700 text-neutral-100'
+                          : 'text-neutral-300 hover:bg-neutral-800'
+                    }`}
+                    aria-pressed={selected}
+                    disabled={disabled}
+                    onClick={() => toggleManual(a.agentInstanceId)}
+                  >
+                    {a.name} · {RUNTIME_STATE_LABEL[a.runtimeState]}
+                    {disabled ? '（不可派发）' : ''}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </div>
 
-        {targets.length > 0 && (
+        {selectedTargets.length > 0 && (
           <div>
             <div className="text-xs text-neutral-400">已选目标</div>
             <ul className="mt-1 flex flex-wrap gap-1">
-              {targets.map((a) => (
+              {selectedTargets.map((a) => (
                 <li
                   key={a.agentInstanceId}
                   aria-label="已选目标"
                   className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200"
                 >
                   {a.name}
+                  {!isDispatchable(a) ? '（不可派发）' : ''}
                 </li>
               ))}
             </ul>
           </div>
+        )}
+
+        {blockedTargets.length > 0 && (
+          <p role="alert" className="text-xs text-amber-400">
+            不可派发的目标：{blockedTargets.map((a) => a.name).join('、')}
+          </p>
         )}
 
         {resolved.unresolved.length > 0 && (
@@ -325,7 +402,7 @@ export function DispatchPicker({
           />
         </label>
 
-        {targets.length > 0 && instruction.trim().length > 0 && (
+        {selectedTargets.length > 0 && instruction.trim().length > 0 && (
           <section
             role="region"
             aria-label="派发预览"
@@ -333,7 +410,7 @@ export function DispatchPicker({
           >
             <div>
               <span className="text-neutral-500">目标：</span>
-              {targets.map((a) => a.name).join('、')}
+              {selectedTargets.map((a) => a.name).join('、')}
             </div>
             <div>
               <span className="text-neutral-500">指令：</span>
@@ -345,7 +422,13 @@ export function DispatchPicker({
             </div>
             <div>
               <span className="text-neutral-500">队列位置：</span>
-              {targets.map((a) => `${a.name}: ${queuePositionFor(a)}`).join('，')}
+              {selectedTargets
+                .map((a) =>
+                  isDispatchable(a)
+                    ? `${a.name}: ${queuePositionFor(a)}`
+                    : `${a.name}: 不可派发`
+                )
+                .join('，')}
             </div>
           </section>
         )}
@@ -364,10 +447,12 @@ export function DispatchPicker({
             取消
           </button>
           <button
+            ref={broadcastTriggerRef}
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
             disabled={
               submitting ||
               targets.length === 0 ||
+              blockedTargets.length > 0 ||
               instruction.trim().length === 0
             }
             onClick={() => void confirm()}
@@ -378,10 +463,12 @@ export function DispatchPicker({
 
         {awaitingBroadcast && (
           <div
+            ref={broadcastDialogRef}
             role="dialog"
             aria-label="确认广播派发"
+            aria-modal="true"
+            tabIndex={-1}
             className="absolute inset-0 z-40 flex items-center justify-center bg-black/70"
-            onKeyDown={onKeyDown}
           >
             <div className="w-72 space-y-3 rounded-lg border border-neutral-600 bg-neutral-900 p-4">
               <h4 className="text-sm font-medium text-neutral-100">

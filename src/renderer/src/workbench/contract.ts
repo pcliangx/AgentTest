@@ -20,6 +20,7 @@ export type RunId = Brand<string, 'RunId'>
 export type DispatchId = Brand<string, 'DispatchId'>
 export type HandoffId = Brand<string, 'HandoffId'>
 export type ConnectionId = Brand<string, 'ConnectionId'>
+export type ResourceBindingId = Brand<string, 'ResourceBindingId'>
 export type PanelId = Brand<string, 'PanelId'>
 export type SplitNodeId = Brand<string, 'SplitNodeId'>
 export type AttentionItemId = Brand<string, 'AttentionItemId'>
@@ -106,7 +107,7 @@ export interface WorkspaceLayoutViewModel {
 }
 
 export interface ResourceBindingViewModel {
-  bindingId: string
+  bindingId: ResourceBindingId
   connectionId: ConnectionId
   resourceType: 'task-list' | 'knowledge-space' | 'document' | 'other'
   label: string

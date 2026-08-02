@@ -74,14 +74,14 @@ export function createStandardScenario(): WorkbenchViewModel {
         primaryConnectionId: connId,
         resourceBindings: [
           {
-            bindingId: 'binding-sales-tasks',
+            bindingId: id('binding-sales-tasks', 'ResourceBindingId'),
             connectionId: connId,
             resourceType: 'task-list',
             label: '销售团队任务清单',
             allowedOperations: ['read', 'create', 'update']
           },
           {
-            bindingId: 'binding-sales-wiki',
+            bindingId: id('binding-sales-wiki', 'ResourceBindingId'),
             connectionId: connId,
             resourceType: 'knowledge-space',
             label: '销售知识库',

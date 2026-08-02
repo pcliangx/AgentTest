@@ -188,6 +188,51 @@ describe('MockScenarioAdapter — subscribe', () => {
     await adapter.dispatch(navigate(cmdId(1), snap.revision, 'agents'))
     expect(received).toHaveLength(0)
   })
+
+  it('keeps dispatch-created correlated when a listener dispatches reentrantly', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snapshot = await adapter.getSnapshot()
+    const project = snapshot.projects[0]
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    const outerCommandId = id('cmd-reentrant-dispatch', 'CommandId')
+    const innerCommandId = id('cmd-reentrant-navigate', 'CommandId')
+    const received: WorkbenchEvent[] = []
+    let innerResult: ReturnType<MockScenarioAdapter['dispatch']> | undefined
+
+    adapter.subscribe((event) => {
+      received.push(event)
+      if (
+        event.kind === 'view-model-updated' &&
+        event.correlationId === outerCommandId
+      ) {
+        innerResult = adapter.dispatch(
+          navigate(innerCommandId, event.revision, 'agents')
+        )
+      }
+    })
+
+    const outerResult = await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: outerCommandId,
+      expectedRevision: snapshot.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'preserve correlation'
+    })
+    await innerResult
+
+    expect(outerResult.ok).toBe(true)
+    const created = received.find(
+      (event): event is Extract<WorkbenchEvent, { kind: 'dispatch-created' }> =>
+        event.kind === 'dispatch-created' &&
+        event.correlationId === outerCommandId
+    )
+    expect(created).toBeDefined()
+    if (outerResult.ok) {
+      expect(created?.revision).toBe(outerResult.acceptedRevision)
+    }
+    expect(created?.dispatchIds).toHaveLength(1)
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -151,7 +151,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
+      <header
+        inert={showPicker ? true : undefined}
+        className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm"
+      >
         <span className="font-medium">Agent Squad HQ</span>
         <div className="flex items-center gap-2">
           <button
@@ -168,7 +171,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <div
+        inert={showPicker ? true : undefined}
+        className="flex min-h-0 flex-1"
+      >
         <nav
           className="w-48 shrink-0 border-r border-neutral-800 p-2"
           aria-label="主导航"
