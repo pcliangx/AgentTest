@@ -8,6 +8,7 @@ import type {
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agents-surface'
+import { AGENT_NAME_PATTERN } from './workbench/agent-name'
 
 /**
  * Unified Dispatch Picker (#6).
@@ -34,17 +35,34 @@ import { RUNTIME_STATE_LABEL } from './agents-surface'
  */
 const AT_AT_ALL = /(?:^|\s)@@all(?=\s|$)/
 /**
- * `@@<name>` captures the longest run of name characters after `@@`. We match
- * greedily then compare against the project's agent names, so names containing
- * `-` (e.g. `cx_review`) resolve correctly.
+ * `@@<name>` captures the longest run of characters allowed in an Agent Name
+ * (letters, digits, `_`, `-`). This MUST stay in sync with the create-agent
+ * syntax in `agent-name.ts`, otherwise a name accepted at creation could not
+ * be routed via `@@`. Punctuation and whitespace terminate the name.
  */
-const AT_AT_NAME = /(?:^|\s)@@([^\s@@]+)/g
+const AT_AT_NAME = /(?:^|\s)@@([A-Za-z0-9_-]+)/g
 
 /** States that cannot receive a dispatch (Provider down, archived, …). */
 const NON_DISPATCHABLE: ReadonlySet<AgentRuntimeState> = new Set([
   'unavailable',
   'archived'
 ])
+
+const RESOURCE_TYPE_LABEL: Record<
+  'task-list' | 'knowledge-space' | 'document' | 'other',
+  string
+> = {
+  'task-list': '任务清单',
+  'knowledge-space': '知识空间',
+  document: '文档',
+  other: '资源'
+}
+
+const RESOURCE_OP_LABEL: Record<'read' | 'create' | 'update', string> = {
+  read: '读取',
+  create: '创建',
+  update: '更新'
+}
 
 /** Resolves @@ tokens against dispatchable agents of the project. */
 function resolveAtAt(
@@ -131,13 +149,23 @@ export function DispatchPicker({
   const queuePositionFor = (a: AgentInstanceViewModel): number =>
     a.queueDepth + 1
 
-  // Resource scope reflects the real binding state: a project with no primary
-  // connection is honestly shown as unbound, not "bound resources".
-  const resourceScope = project.primaryConnectionId
-    ? snapshot.global.connections.find(
-        (c) => c.connectionId === project.primaryConnectionId
-      )?.label ?? '已绑定连接'
-    : '未绑定连接（仅本地资源）'
+  // Authoritative resource scope comes from the port's Resource Bindings, not
+  // from the connection label (#6 P2-3). External Connection and Resource
+  // Binding are distinct domain objects (CONTEXT.md); the preview must show
+  // what is actually bound (resource type + allowed operations).
+  const resourceScope =
+    project.resourceBindings.length > 0
+      ? project.resourceBindings
+          .map(
+            (b) =>
+              `${b.label}（${RESOURCE_TYPE_LABEL[b.resourceType]}：${b.allowedOperations
+                .map((o) => RESOURCE_OP_LABEL[o])
+                .join('、')}）`
+          )
+          .join('；')
+      : project.primaryConnectionId
+        ? '已连接，但未绑定任何资源'
+        : '未绑定连接（仅本地资源）'
 
   const confirm = async () => {
     if (targets.length === 0 || instruction.trim().length === 0) return

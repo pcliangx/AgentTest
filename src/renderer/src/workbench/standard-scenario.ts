@@ -72,6 +72,22 @@ export function createStandardScenario(): WorkbenchViewModel {
         queuedRunCount: 1,
         attentionCount: 2,
         primaryConnectionId: connId,
+        resourceBindings: [
+          {
+            bindingId: 'binding-sales-tasks',
+            connectionId: connId,
+            resourceType: 'task-list',
+            label: '销售团队任务清单',
+            allowedOperations: ['read', 'create', 'update']
+          },
+          {
+            bindingId: 'binding-sales-wiki',
+            connectionId: connId,
+            resourceType: 'knowledge-space',
+            label: '销售知识库',
+            allowedOperations: ['read', 'update']
+          }
+        ],
         currentSurface: 'overview',
         layout: {
           root: { kind: 'panel', panelId },
@@ -94,6 +110,9 @@ export function createStandardScenario(): WorkbenchViewModel {
         activeRunCount: 0,
         queuedRunCount: 0,
         attentionCount: 0,
+        // No primary connection and no resource bindings — exercises the
+        // "unbound" preview path (#6).
+        resourceBindings: [],
         currentSurface: 'overview',
         layout: {
           root: { kind: 'panel', panelId: panelId2 },

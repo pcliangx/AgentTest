@@ -96,11 +96,13 @@ describe('Dispatch — Agent Tab composer', () => {
     })
   })
 
-  it('addresses a busy agent as reply-current-run, not start-or-queue', async () => {
+  it('enqueues a running agent as start-or-queue (not reply-current-run)', async () => {
     const { user, port } = await gotoAgentsSurface()
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
-    // cc_data is in the `running` state in the standard scenario.
+    // cc_data is in the `running` state in the standard scenario. Per
+    // UX-v0.2 §6.3 only a needs-input Run may be replied to; a running agent
+    // must enqueue as the next Run.
     await user.type(
       within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
       'follow up'
@@ -111,7 +113,44 @@ describe('Dispatch — Agent Tab composer', () => {
     const sent = port.commands.find(
       (c) => c.kind === 'send-agent-instruction'
     )!
+    expect(sent).toMatchObject({ mode: 'start-or-queue' })
+  })
+
+  it('replies to a needs-input agent as reply-current-run', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    // cc_sql is in the `needs-input` state in the standard scenario — open it.
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+    await user.type(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      'here is the input'
+    )
+    await user.click(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    )
+    const sent = port.commands.find(
+      (c) => c.kind === 'send-agent-instruction'
+    )!
     expect(sent).toMatchObject({ mode: 'reply-current-run' })
+  })
+
+  it('blocks the composer while Terminal takeover is active', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    // cx_anti holds an active Terminal takeover in the standard scenario.
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /cx_anti/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+    // Composer must be disabled and explain the Terminal mutex.
+    expect(view).toHaveTextContent('Terminal 接管中')
+    expect(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+    ).toBeDisabled()
+    expect(
+      port.commands.filter((c) => c.kind === 'send-agent-instruction')
+    ).toHaveLength(0)
   })
 
   it('addresses an idle agent as start-or-queue', async () => {
@@ -422,5 +461,140 @@ describe('Dispatch — mock safety', () => {
     expect(
       within(dialog).queryByRole('button', { name: /cc_report/ })
     ).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2nd-round Codex review fixes — adapter contracts
+// ---------------------------------------------------------------------------
+
+describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => {
+  it('rejects an empty target set', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const result = await adapter.dispatch({
+      commandId: id('cmd-empty', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [],
+      instruction: 'noop'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+
+  it('rejects a duplicate target set', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const target = snap.agents.find((a) => a.name === 'cx_review')!
+    const result = await adapter.dispatch({
+      commandId: id('cmd-dup', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [target.agentInstanceId, target.agentInstanceId],
+      instruction: 'dup'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+
+  it('rejects an empty instruction', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const target = snap.agents.find((a) => a.name === 'cx_review')!
+    const result = await adapter.dispatch({
+      commandId: id('cmd-noinstr', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: '   '
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+
+  it('advances the per-instance queue position after dispatching to a busy agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    // cc_data is running (busy) — dispatches must queue behind it.
+    const ccData = snap.agents.find((a) => a.name === 'cc_data')!
+    const before = (await adapter.getSnapshot()).agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!.queueDepth
+
+    await adapter.dispatch({
+      commandId: id('cmd-q1', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [ccData.agentInstanceId],
+      instruction: 'first'
+    })
+    const mid = (await adapter.getSnapshot()).agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!.queueDepth
+    expect(mid).toBe(before + 1)
+
+    // A second dispatch to the same busy agent must advance the queue again,
+    // so the next preview shows a progressing position (#6 P2-4).
+    const snap2 = await adapter.getSnapshot()
+    await adapter.dispatch({
+      commandId: id('cmd-q2', 'CommandId'),
+      expectedRevision: snap2.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [ccData.agentInstanceId],
+      instruction: 'second'
+    })
+    const after = (await adapter.getSnapshot()).agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!.queueDepth
+    expect(after).toBe(mid + 1)
+  })
+
+  it('does not advance the queue for an idle agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const idle = snap.agents.find((a) => a.name === 'cx_review')!
+    await adapter.dispatch({
+      commandId: id('cmd-idle', 'CommandId'),
+      expectedRevision: snap.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [idle.agentInstanceId],
+      instruction: 'go'
+    })
+    const after = (await adapter.getSnapshot()).agents.find(
+      (a) => a.agentInstanceId === idle.agentInstanceId
+    )!.queueDepth
+    expect(after).toBe(0)
+  })
+})
+
+describe('Dispatch — Agent Name syntax contracts (#6 review round 2)', () => {
+  it('create-agent rejects names with spaces, punctuation, or the reserved "all"', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const bad = ['data review', 'all', 'name!', 'a b']
+    for (const name of bad) {
+      await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+      await user.type(
+        await screen.findByRole('textbox', { name: 'Agent 名称' }),
+        name
+      )
+      await user.click(screen.getByRole('button', { name: '创建 Agent' }))
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '取消' }))
+    }
+    expect(
+      port.commands.filter((c) => c.kind === 'create-agent' && true).length
+    ).toBeGreaterThanOrEqual(bad.length)
   })
 })

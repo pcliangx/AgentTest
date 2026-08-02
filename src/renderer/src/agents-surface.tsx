@@ -734,9 +734,13 @@ function ChatState({
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
 
-  const disabled =
+  const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
-  const busy = ACTIVE_RUN_STATES.has(agent.runtimeState) || !!agent.activeRunId
+  // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
+  // Terminal takeover is active the composer is disabled and shows why.
+  const terminalBlocked = agent.terminalState === 'active'
+  const disabled = lifecycleBlocked || terminalBlocked
+  const awaitingInput = agent.runtimeState === 'needs-input'
 
   const submit = async () => {
     const instruction = draft.trim()
@@ -747,10 +751,10 @@ function ChatState({
       projectId: project.projectId,
       agentInstanceId: agent.agentInstanceId,
       instruction,
-      // When a Run is active, the instruction joins that Run rather than
-      // starting a second concurrent one; otherwise it starts/queues the
-      // instance's next Run. The composer never addresses another instance.
-      mode: busy ? 'reply-current-run' : 'start-or-queue'
+      // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+      // Any other active state enqueues as the next Run instead of being
+      // mistaken for a reply to the current Run.
+      mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
     })
     if (result.ok) {
       setDraft('')
@@ -770,9 +774,17 @@ function ChatState({
           <p className="text-neutral-500">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
           </p>
-        ) : busy ? (
+        ) : terminalBlocked ? (
           <p className="text-neutral-500">
-            当前有进行中的 Run；结构化对话内容将在真实执行通道接入后展示。
+            Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。
+          </p>
+        ) : awaitingInput ? (
+          <p className="text-neutral-500">
+            当前 Run 正在等待输入，可直接回复。
+          </p>
+        ) : ACTIVE_RUN_STATES.has(agent.runtimeState) || agent.activeRunId ? (
+          <p className="text-neutral-500">
+            当前有进行中的 Run；新指令将进入下一 Run 队列。
           </p>
         ) : (
           <p className="text-neutral-500">

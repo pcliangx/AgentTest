@@ -13,6 +13,7 @@ import type {
 } from './contract'
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
+import { validateAgentName } from './agent-name'
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -139,10 +140,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
             'Provider Doctor 未通过，不能创建实例'
           )
         }
-        const name = command.name.trim()
-        if (!name) {
-          return this.reject(command, 'invalid-target', 'Agent 名称不能为空')
+        const nameCheck = validateAgentName(command.name)
+        if (!nameCheck.ok) {
+          return this.reject(command, 'invalid-target', nameCheck.reason!)
         }
+        const name = command.name.trim()
         const nameTaken = this.snapshot.agents.some(
           (a) =>
             a.projectId === project.projectId &&
@@ -212,6 +214,35 @@ export class MockScenarioAdapter implements WorkbenchPort {
             'Agent 当前不可用，无法接收指令'
           )
         }
+        // ADR-0007: structured Run and Terminal PTY are mutually exclusive per
+        // instance. While Terminal takeover is active the adapter must refuse
+        // a structured instruction even if the renderer mistakenly sends one.
+        if (agent.terminalState === 'active') {
+          return this.reject(
+            command,
+            'busy',
+            'Terminal 接管期间不能发送结构化指令'
+          )
+        }
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // Any other active state must enqueue as the next Run instead of being
+        // mistaken for a reply to the current Run.
+        const canReply =
+          agent.runtimeState === 'needs-input' &&
+          command.mode === 'reply-current-run'
+        if (command.mode === 'reply-current-run' && !canReply) {
+          return this.reject(
+            command,
+            'busy',
+            '当前没有待输入的 Run，不能回复；将作为下一 Run 入队'
+          )
+        }
+        if (
+          command.instruction === undefined ||
+          command.instruction.trim().length === 0
+        ) {
+          return this.reject(command, 'invalid-target', '指令不能为空')
+        }
         // Phase 1 has no real runtime: recording the instruction is the only
         // side effect. No Run is created — we record an instruction-sent fact,
         // never a fake `run-started` (#6 P1-3).
@@ -236,6 +267,26 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
+        // Instruction must be non-empty (#6 P2-5).
+        if (
+          command.instruction === undefined ||
+          command.instruction.trim().length === 0
+        ) {
+          return this.reject(command, 'invalid-target', '指令不能为空')
+        }
+        // Targets must be non-empty and unique (#6 P2-5). Duplicates would
+        // otherwise create multiple DispatchIds for the same instance.
+        if (command.targets.length === 0) {
+          return this.reject(command, 'invalid-target', '目标不能为空')
+        }
+        const dedup = new Set(command.targets as string[])
+        if (dedup.size !== command.targets.length) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '目标不能包含重复 Agent'
+          )
+        }
         // Atomic target validation: every requested target must exist, belong
         // to this project AND be dispatchable. A mixed valid/invalid set is
         // rejected as a whole — we never partially dispatch (#6 P2-5).
@@ -247,6 +298,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         )
         let missing = false
         let nonDispatchable = false
+        let terminalBusy = false
         for (const tid of command.targets) {
           const a = byId.get(tid)
           if (!a) {
@@ -256,6 +308,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
             a.runtimeState === 'archived'
           ) {
             nonDispatchable = true
+          } else if (a.terminalState === 'active') {
+            terminalBusy = true
           }
         }
         if (missing) {
@@ -270,6 +324,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
             command,
             'unavailable',
             '部分目标 Agent 不可派发，已拒绝整单派发'
+          )
+        }
+        if (terminalBusy) {
+          return this.reject(
+            command,
+            'busy',
+            '部分目标处于 Terminal 接管，已拒绝整单派发'
           )
         }
         const targets = command.targets.map((tid) => byId.get(tid)!)
@@ -289,7 +350,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
           summary: `${a.name} 收到派发：${command.instruction}`
         }))
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
-        for (const a of targets) a.lastActivityAt = now
+        for (const a of targets) {
+          a.lastActivityAt = now
+          // Authoritative queue projection (#6 P2-4): a dispatch to an agent
+          // that already holds an active Run/PTY must queue behind it, so the
+          // next preview shows an advancing position. Idle agents stay at 0.
+          if (
+            a.activeRunId ||
+            a.runtimeState === 'running' ||
+            a.runtimeState === 'starting' ||
+            a.runtimeState === 'finishing' ||
+            a.runtimeState === 'needs-input' ||
+            a.runtimeState === 'permission-requested'
+          ) {
+            a.queueDepth += 1
+          }
+        }
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
         // CommandId never reaches here (cached result short-circuits).

@@ -105,6 +105,14 @@ export interface WorkspaceLayoutViewModel {
   temporaryFocusPanelId?: PanelId
 }
 
+export interface ResourceBindingViewModel {
+  bindingId: string
+  connectionId: ConnectionId
+  resourceType: 'task-list' | 'knowledge-space' | 'document' | 'other'
+  label: string
+  allowedOperations: Array<'read' | 'create' | 'update'>
+}
+
 export interface ProjectViewModel {
   projectId: ProjectId
   name: string
@@ -116,6 +124,8 @@ export interface ProjectViewModel {
   queuedRunCount: number
   attentionCount: number
   primaryConnectionId?: ConnectionId
+  /** Authoritative resource bindings scoped to the primary connection (#6). */
+  resourceBindings: ResourceBindingViewModel[]
   currentSurface: ProjectSurface
   layout: WorkspaceLayoutViewModel
 }
