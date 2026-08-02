@@ -499,7 +499,7 @@ describe('ProjectShell — focus restoration', () => {
     expect(deleteButton).toHaveFocus()
   })
 
-  it('moves focus to a valid element after confirming deletion', async () => {
+  it('keeps focus in content area, not header, after confirming deletion', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
@@ -509,7 +509,68 @@ describe('ProjectShell — focus restoration', () => {
     await screen.findByRole('dialog')
     await user.click(screen.getByRole('button', { name: '确认' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    // Trigger button was removed; focus must land on a valid element, not body
+    // Focus must NOT land on the header nav button
+    const headerConnButton = screen.getByRole('button', { name: '连接' })
+    expect(document.activeElement).not.toBe(headerConnButton)
     expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('marks the active global surface button with aria-current', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    expect(
+      screen.getByRole('button', { name: '连接' })
+    ).toHaveAttribute('aria-current', 'page')
+    expect(
+      screen.getByRole('button', { name: 'Provider 健康' })
+    ).not.toHaveAttribute('aria-current')
+  })
+
+  it('clears stale rejection error when opening a new confirmation', async () => {
+    // Port that rejects all confirm-dangerous-action commands
+    const inner = new MockScenarioAdapter()
+    const port: WorkbenchPort = {
+      async getSnapshot() {
+        return inner.getSnapshot()
+      },
+      dispatch(cmd) {
+        if (cmd.kind === 'confirm-dangerous-action') {
+          return Promise.resolve({
+            ok: false,
+            commandId: cmd.commandId,
+            reason: 'invalid-target' as const,
+            latestRevision: 0,
+            message: '确认 ID 已过期'
+          })
+        }
+        return inner.dispatch(cmd)
+      },
+      subscribe(fn) {
+        return inner.subscribe(fn)
+      }
+    }
+
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+
+    // Open confirmation and confirm — fails
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.getByText('确认 ID 已过期')).toBeVisible()
+
+    // Cancel and open a new confirmation
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+
+    // Stale error from previous confirmation must NOT appear
+    expect(screen.queryByText('确认 ID 已过期')).not.toBeInTheDocument()
   })
 })

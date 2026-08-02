@@ -97,9 +97,10 @@ function useWorkbench(port: WorkbenchPort) {
     [send]
   )
 
-  const [confirmationError, setConfirmationError] = useState<string | null>(
-    null
-  )
+  const [confirmationError, setConfirmationError] = useState<{
+    id: ConfirmationId
+    message: string
+  } | null>(null)
 
   const confirmDangerousAction = useCallback(
     (confirmationId: ConfirmationId) => {
@@ -109,7 +110,7 @@ function useWorkbench(port: WorkbenchPort) {
       })
       void result.then((r) => {
         if (!r.ok && r.reason !== 'stale-revision') {
-          setConfirmationError(r.message)
+          setConfirmationError({ id: confirmationId, message: r.message })
         }
       })
       return result
@@ -229,19 +230,24 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <div className="flex items-center gap-3">
           <span className="font-medium">Agent Squad HQ</span>
           <div className="flex items-center gap-1">
-            {GLOBAL_ENTRIES.map(({ surface, label }) => (
-              <button
-                key={surface}
-                className={`rounded px-2 py-0.5 text-xs transition-colors ${
-                  inGlobalView && snapshot.activeGlobalSurface === surface
-                    ? 'bg-neutral-700 text-neutral-100'
-                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
-                }`}
-                onClick={() => void navigateGlobal(surface)}
-              >
-                {label}
-              </button>
-            ))}
+            {GLOBAL_ENTRIES.map(({ surface, label }) => {
+              const isActive =
+                inGlobalView && snapshot.activeGlobalSurface === surface
+              return (
+                <button
+                  key={surface}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                    isActive
+                      ? 'bg-neutral-700 text-neutral-100'
+                      : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                  }`}
+                  onClick={() => void navigateGlobal(surface)}
+                >
+                  {label}
+                </button>
+              )
+            })}
           </div>
           {inGlobalView && project && (
             <button
@@ -357,7 +363,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       {snapshot.pendingConfirmation && (
         <ConfirmationModal
           confirmation={snapshot.pendingConfirmation}
-          error={confirmationError}
+          error={
+            confirmationError?.id ===
+            snapshot.pendingConfirmation!.confirmationId
+              ? confirmationError.message
+              : null
+          }
           onConfirm={() =>
             void confirmDangerousAction(
               snapshot.pendingConfirmation!.confirmationId
@@ -602,10 +613,13 @@ function ConfirmationModal({
         opener.focus()
       } else {
         // Opener was removed (e.g., connection row deleted) — fall back to
-        // the first remaining delete button in the Connections surface.
-        const fallback = document.querySelector<HTMLButtonElement>(
-          'button:not([disabled])'
-        )
+        // the first remaining button scoped to the main content area, not
+        // the header navigation.
+        const mainEl = document.querySelector('main')
+        const fallback =
+          mainEl?.querySelector<HTMLButtonElement>(
+            'button:not([disabled])'
+          ) ?? null
         fallback?.focus()
       }
     }

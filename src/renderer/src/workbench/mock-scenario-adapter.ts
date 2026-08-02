@@ -103,11 +103,18 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(command, 'invalid-target', '连接不存在')
         }
         this.pendingConnectionId = command.connectionId
+        const affectedProjects = this.snapshot.projects
+          .filter((p) => p.primaryConnectionId === command.connectionId)
+          .map((p) => p.name)
+        let impact = `此操作将永久删除「${conn.label}」，且不可恢复。`
+        if (affectedProjects.length > 0) {
+          impact += `以下 Project 的主连接将被解除绑定：${affectedProjects.join('、')}。`
+        }
         this.snapshot.pendingConfirmation = {
           confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
           action: '删除连接',
           target: conn.label,
-          impact: `此操作将永久删除「${conn.label}」，且不可恢复。`,
+          impact,
           nonBypassableReason: '高风险操作需要二次确认，无法跳过'
         }
         return null

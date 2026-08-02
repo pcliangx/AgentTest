@@ -321,6 +321,20 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     expect(conf.nonBypassableReason).toBeTruthy()
   })
 
+  it('discloses affected project bindings in the impact text', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const connId = snap.global.connections[0].connectionId
+    const affectedProject = snap.projects.find(
+      (p) => p.primaryConnectionId === connId
+    )
+    if (affectedProject) {
+      await adapter.dispatch(requestDeletion(cmdId(1), snap.revision, connId))
+      const after = await adapter.getSnapshot()
+      expect(after.pendingConfirmation!.impact).toContain(affectedProject.name)
+    }
+  })
+
   it('request-connection-deletion rejects non-existent connection', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
