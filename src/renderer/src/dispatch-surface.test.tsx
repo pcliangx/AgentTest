@@ -53,6 +53,19 @@ async function gotoAgentsSurface() {
   return { user, port }
 }
 
+/**
+ * Opens the unified Dispatch Picker via the header command entry. The picker
+ * is a shell-level surface reachable from any project surface (#6 P1-1), so
+ * tests target the global header button rather than surface-specific ones.
+ */
+async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+  // The header button is the global entry; use it to avoid the ambiguity of
+  // multiple surface-level triggers.
+  const headerButtons = screen.getAllByRole('button', { name: '派发给 Agent' })
+  await user.click(headerButtons[0])
+  return screen.findByRole('dialog', { name: '派发给 Agent' })
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance criterion 1 — Agent Tab composer targets only the current instance
 // ---------------------------------------------------------------------------
@@ -133,9 +146,7 @@ describe('Dispatch — Agent Tab composer', () => {
 describe('Dispatch — Agent Picker and @@ routing', () => {
   it('opens the Agent Picker, selects multiple targets shown as chips, previews, and confirms creating one dispatch per target', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     // Select two distinct targets from the same project.
     await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
@@ -180,8 +191,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
   it('cancelling the preview sends no Command', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
     await user.type(
@@ -197,8 +207,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
   it('Escape closes the picker without dispatching', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
     await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
@@ -214,8 +223,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
   it('parses @@<agent-name> in the instruction into visible chips before confirming', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
@@ -230,10 +238,20 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(parsed.some((c) => c.textContent?.includes('kimi_visual'))).toBe(true)
   })
 
-  it('expands @@all into the current Project instances and requires a second confirmation', async () => {
+  it('does not misread @@all-review (a valid agent name) as an @@all broadcast', async () => {
+    const { user } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'ping @@all-review'
+    )
+    // No broadcast expansion banner should appear.
+    expect(dialog).not.toHaveTextContent('展开为全部实例')
+  })
+
+  it('expands @@all into the current Project dispatchable instances and requires a second confirmation', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     await user.type(
       within(dialog).getByRole('textbox', { name: '指令' }),
@@ -242,13 +260,17 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 
     // @@all surfaces the explicit instance list for the active project before
     // any dispatch happens.
-    expect(dialog).toHaveTextContent('展开为全部实例')
+    expect(dialog).toHaveTextContent('已展开为全部可派发实例')
 
-    // The standard sales project has 8 instances.
+    // The standard sales project has 8 instances but kimi_docs is
+    // unavailable, so only 7 are dispatchable.
     const expansion = within(dialog).getAllByRole('listitem', {
       name: /已选目标/
     })
-    expect(expansion.length).toBeGreaterThanOrEqual(8)
+    expect(expansion.length).toBe(7)
+    expect(
+      expansion.some((c) => c.textContent?.includes('kimi_docs'))
+    ).toBe(false)
 
     // Confirm once → must still ask for explicit confirmation of the broadcast.
     await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
@@ -263,17 +285,34 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(beforeCount).toBe(0)
   })
 
-  it('does not treat @@ appearing inside assistant text as a command trigger', async () => {
+  it('excludes unavailable agents from the selectable list', async () => {
+    const { user } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+    // kimi_docs is unavailable in the standard scenario — present but disabled.
+    const kimiDocs = within(dialog).getByRole('button', { name: /kimi_docs/ })
+    expect(kimiDocs).toBeDisabled()
+    expect(kimiDocs).toHaveTextContent('不可派发')
+  })
+
+  it('does not treat @@ typed into the composer as a multi-target dispatch', async () => {
     const { user, port } = await gotoAgentsSurface()
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
-
-    // Assistant conversation content containing @@ is rendered as plain text
-    // and produces no dispatch command.
-    expect(view).toHaveTextContent('@@cc_sql')
+    // The Agent Tab composer addresses only the current instance; typing @@
+    // there must NOT fan out to other agents — only send-agent-instruction.
+    await user.type(
+      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      'notify @@cc_sql too'
+    )
+    await user.click(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    )
     expect(
       port.commands.filter((c) => c.kind === 'confirm-dispatch')
     ).toHaveLength(0)
+    expect(
+      port.commands.filter((c) => c.kind === 'send-agent-instruction')
+    ).toHaveLength(1)
   })
 })
 
@@ -284,8 +323,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 describe('Dispatch — idempotency', () => {
   it('a duplicate confirm-dispatch with the same CommandId does not create a second dispatch set', async () => {
     const { user, port } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
     await user.type(
@@ -319,8 +357,12 @@ describe('Dispatch — mock safety', () => {
     const adapter = new MockScenarioAdapter()
     const snapshot = await adapter.getSnapshot()
     const project = snapshot.projects[0]
+    // Pick a dispatchable target (cx_review is ready in the standard scenario).
     const target = snapshot.agents.find(
-      (a) => a.projectId === project.projectId
+      (a) =>
+        a.projectId === project.projectId &&
+        a.runtimeState !== 'unavailable' &&
+        a.runtimeState !== 'archived'
     )!
     const events: WorkbenchEvent[] = []
     const unsub = adapter.subscribe((e) => events.push(e))
@@ -347,10 +389,34 @@ describe('Dispatch — mock safety', () => {
     expect(events.some((e) => e.kind === 'permission-requested')).toBe(false)
   })
 
+  it('rejects a mixed target set atomically instead of partially dispatching', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snapshot = await adapter.getSnapshot()
+    const project = snapshot.projects[0]
+    const dispatchable = snapshot.agents.find(
+      (a) => a.projectId === project.projectId && a.name === 'cx_review'
+    )!
+    const unavailable = snapshot.agents.find(
+      (a) => a.projectId === project.projectId && a.runtimeState === 'unavailable'
+    )!
+
+    const result = await adapter.dispatch({
+      commandId: id('cmd-mixed', 'CommandId'),
+      expectedRevision: snapshot.revision,
+      kind: 'confirm-dispatch',
+      projectId: project.projectId,
+      targets: [dispatchable.agentInstanceId, unavailable.agentInstanceId],
+      instruction: 'mixed'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('unavailable')
+    }
+  })
+
   it('keeps the Agent Picker within the active project only', async () => {
     const { user } = await gotoAgentsSurface()
-    await user.click(screen.getByRole('button', { name: '派发给 Agent' }))
-    const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
+    const dialog = await openPicker(user)
 
     // cc_report belongs to the other project and must not be selectable.
     expect(

@@ -1,5 +1,6 @@
 import type {
   AgentInstanceId,
+  Brand,
   CommandId,
   CommandRejectionReason,
   CommandResult,
@@ -201,15 +202,26 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!agent) {
           return this.reject(command, 'invalid-target', 'Agent 不存在')
         }
-        // Phase 1 has no real runtime: recording the instruction as activity
-        // is the only side effect. No process, PTY, Git or Run is created.
+        if (
+          agent.runtimeState === 'unavailable' ||
+          agent.runtimeState === 'archived'
+        ) {
+          return this.reject(
+            command,
+            'unavailable',
+            'Agent 当前不可用，无法接收指令'
+          )
+        }
+        // Phase 1 has no real runtime: recording the instruction is the only
+        // side effect. No Run is created — we record an instruction-sent fact,
+        // never a fake `run-started` (#6 P1-3).
         this.snapshot.activity = [
           {
-            activityId: id(`act-send-${Date.now()}`, 'ActivityId'),
+            activityId: this.freshId('ActivityId'),
             projectId: agent.projectId,
             agentInstanceId: agent.agentInstanceId,
             timestamp: Date.now(),
-            kind: 'run-started',
+            kind: 'instruction-sent',
             summary: `${agent.name} 收到指令：${command.instruction}`
           },
           ...this.snapshot.activity
@@ -224,36 +236,60 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        const targets = command.targets.filter((tid) =>
-          this.snapshot.agents.some(
-            (a) =>
-              a.agentInstanceId === tid && a.projectId === project.projectId
-          )
+        // Atomic target validation: every requested target must exist, belong
+        // to this project AND be dispatchable. A mixed valid/invalid set is
+        // rejected as a whole — we never partially dispatch (#6 P2-5).
+        const projectAgents = this.snapshot.agents.filter(
+          (a) => a.projectId === project.projectId
         )
-        if (targets.length === 0) {
-          return this.reject(command, 'invalid-target', '目标 Agent 不存在')
-        }
-        // One stable DispatchId per target — Phase 1 records activity only.
-        const now = Date.now()
-        const dispatchIds = targets.map((_, idx) =>
-          id(`dispatch-${now}-${idx}`, 'DispatchId')
+        const byId = new Map(
+          projectAgents.map((a) => [a.agentInstanceId, a] as const)
         )
-        const newActivity = targets.map((tid, idx) => {
-          const a = this.snapshot.agents.find((x) => x.agentInstanceId === tid)!
-          return {
-            activityId: id(`act-dispatch-${now}-${idx}`, 'ActivityId'),
-            projectId: project.projectId,
-            agentInstanceId: tid,
-            timestamp: now,
-            kind: 'run-started',
-            summary: `${a.name} 收到派发：${command.instruction}`
+        let missing = false
+        let nonDispatchable = false
+        for (const tid of command.targets) {
+          const a = byId.get(tid)
+          if (!a) {
+            missing = true
+          } else if (
+            a.runtimeState === 'unavailable' ||
+            a.runtimeState === 'archived'
+          ) {
+            nonDispatchable = true
           }
-        })
-        this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
-        for (const tid of targets) {
-          const a = this.snapshot.agents.find((x) => x.agentInstanceId === tid)!
-          a.lastActivityAt = now
         }
+        if (missing) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '部分目标 Agent 不存在，已拒绝整单派发'
+          )
+        }
+        if (nonDispatchable) {
+          return this.reject(
+            command,
+            'unavailable',
+            '部分目标 Agent 不可派发，已拒绝整单派发'
+          )
+        }
+        const targets = command.targets.map((tid) => byId.get(tid)!)
+        // One stable, collision-free DispatchId per target — UUID, not
+        // Date.now()+index, so two commands in the same millisecond cannot
+        // share an id (#6 P1-2).
+        const dispatchIds = targets.map(() => this.freshId('DispatchId'))
+        const now = Date.now()
+        const newActivity = targets.map((a) => ({
+          activityId: this.freshId('ActivityId'),
+          projectId: project.projectId,
+          agentInstanceId: a.agentInstanceId,
+          timestamp: now,
+          // Record the dispatch fact only — never a fake `run-started`, since
+          // no Run is actually created in Phase 1 (#6 P1-3).
+          kind: 'dispatch-created',
+          summary: `${a.name} 收到派发：${command.instruction}`
+        }))
+        this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
+        for (const a of targets) a.lastActivityAt = now
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
         // CommandId never reaches here (cached result short-circuits).
@@ -377,6 +413,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
     layout.panels[panelId] = { tabs: [] }
     layout.root = { kind: 'panel', panelId }
     return panelId
+  }
+
+  /**
+   * Mints a collision-free branded ID. UUID-based so two commands issued in the
+   * same millisecond (or even the same tick) can never share an id. Available
+   * in renderer (Web Crypto) and Node ≥ 20 (`globalThis.crypto`).
+   */
+  private freshId<Name extends string>(name: Name): Brand<string, Name> {
+    const uuid =
+      typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return id(uuid, name)
   }
 
   private reject(

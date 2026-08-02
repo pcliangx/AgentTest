@@ -12,6 +12,7 @@ import type {
 } from './workbench/contract'
 import { id } from './workbench/contract'
 import { AgentsSurface } from './agents-surface'
+import { DispatchPicker } from './dispatch-picker'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -102,7 +103,9 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
   'run-started': '运行开始',
   'run-completed': '运行完成',
   'configuration-applied': '配置已应用',
-  'permission-decided': '权限已决定'
+  'permission-decided': '权限已决定',
+  'instruction-sent': '指令已发送',
+  'dispatch-created': '派发已创建'
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +114,10 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
 
 export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const { snapshot, navigate, sendCommand } = useWorkbench(port)
+  // The unified Dispatch Picker lives at the shell level so every surface
+  // (Overview, Agents, Tasks, …) opens the same picker via a single command
+  // entry, instead of each surface owning its own dispatcher (#6).
+  const [showPicker, setShowPicker] = useState(false)
 
   if (!snapshot) {
     return (
@@ -146,11 +153,19 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
         <span className="font-medium">Agent Squad HQ</span>
-        {connection && (
-          <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-            {connection.label}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+            onClick={() => setShowPicker(true)}
+          >
+            派发给 Agent
+          </button>
+          {connection && (
+            <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+              {connection.label}
+            </span>
+          )}
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -206,6 +221,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               agentCount={projectAgents.length}
               connectionLabel={connection?.label}
               activity={projectActivity.slice(0, 5)}
+              onDispatch={() => setShowPicker(true)}
             />
           )}
           {project.currentSurface === 'activity' && (
@@ -217,6 +233,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               project={project}
               snapshot={snapshot}
               sendCommand={sendCommand}
+              onDispatch={() => setShowPicker(true)}
             />
           )}
           {project.currentSurface !== 'overview' &&
@@ -226,6 +243,15 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )}
         </main>
       </div>
+
+      {showPicker && (
+        <DispatchPicker
+          project={project}
+          snapshot={snapshot}
+          sendCommand={sendCommand}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
     </div>
   )
 }
@@ -238,12 +264,14 @@ function OverviewSurface({
   project,
   agentCount,
   connectionLabel,
-  activity
+  activity,
+  onDispatch
 }: {
   project: ProjectViewModel
   agentCount: number
   connectionLabel?: string
   activity: ActivityEntry[]
+  onDispatch: () => void
 }) {
   return (
     <section role="region" aria-label="项目概览" className="space-y-4">
@@ -276,6 +304,15 @@ function OverviewSurface({
         <StatCard value={project.activeRunCount} label="活动运行" />
         <StatCard value={project.queuedRunCount} label="排队" />
         <StatCard value={project.attentionCount} label="关注" />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          className="rounded bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700"
+          onClick={onDispatch}
+        >
+          派发给 Agent
+        </button>
       </div>
 
       <div>
