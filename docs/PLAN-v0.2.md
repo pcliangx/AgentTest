@@ -1,6 +1,6 @@
 # Agent Squad HQ v0.2 产品与工程计划
 
-> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 生产 UI 尚未启动
+> 状态：设计基线已冻结，Design Gate 已关闭；Phase 1 #1 已完成，#2–#16 待推进
 >
 > 更新日期：2026-08-02
 >
@@ -729,14 +729,15 @@ PermissionBroker 是 AgentRuntime 的前置依赖，Provider 原生 auto-approve
 
 ## 16. 立即下一步
 
-Phase 0 已完成，本轮不自动启动生产实现。收到明确开工指令后，按
+Phase 0 已完成。Phase 1 #1 已由 [PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)
+实现（Project Shell + 版本化 WorkbenchPort + MockScenarioAdapter）。后续按
 [`ui-first-command-center`](../.scratch/ui-first-command-center/spec.md) 和
-[GitHub Issues #1–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的 16 个纵向 tracer
-bullets 执行 Phase 1。工作顺序只由 GitHub Relationships 的原生 `blocked by` 决定，
+[GitHub Issues #2–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的剩余纵向 tracer
+bullets 推进。工作顺序只由 GitHub Relationships 的原生 `blocked by` 决定，
 不按编号机械串行。[产品身份迁移 #17](https://github.com/pcliangx/agent-squad-hq/issues/17)
-已完成；Phase 1 不会自动启动，收到用户明确指令后按以下 7 批 DAG 执行：
+已完成；收到用户明确指令后按以下 7 批 DAG 执行：
 
-1. `01`：建立 Project Shell、版本化 WorkbenchPort 与第一条 mock 纵向路径；
+1. `01`：✅ 已完成（[PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)）；
 2. `02, 03`：并行交付全局操作/确认宿主与 Agent Directory/唯一 Tab；
 3. `04, 06, 08, 13`：并行交付基础布局、显式 Dispatch、Changes 与 Settings A；
 4. `05, 07`：并行补齐高级布局与队列/Terminal 执行槽；
