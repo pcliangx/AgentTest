@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type {
   AgentInstanceViewModel,
@@ -7,7 +7,7 @@ import type {
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agents-surface'
-import { isDispatchable } from './workbench/dispatchability'
+import { isAgentBusy, isDispatchable } from './workbench/dispatchability'
 
 /**
  * Unified Dispatch Picker (#6).
@@ -82,9 +82,11 @@ function resolveAtAt(
   // Longest names first so `all review` is matched before `all`.
   const knownNames = [...byName.keys()].sort((a, b) => b.length - a.length)
   for (const name of knownNames) {
-    // Match `@@<name>` case-insensitively, preceded by start or whitespace.
+    // Match `@@<name>` case-insensitively as a complete mention. The trailing
+    // boundary prevents a shorter valid name such as `a` from consuming the
+    // prefix of `@@all`, or `cx_review` from claiming `@@cx_review_extra`.
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(`(^|\\s)(@@${escaped})`, 'gi')
+    const re = new RegExp(`(^|\\s)(@@${escaped})(?=\\s|$)`, 'gi')
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
       // The `@@` begins right after the captured leading separator.
@@ -147,6 +149,8 @@ export function DispatchPicker({
   >(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [awaitingBroadcast, setAwaitingBroadcast] = useState(false)
+  const submittingRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const resolved = resolveAtAt(instruction, dispatchable)
   const targetIds = new Set([...manual, ...resolved.ids])
@@ -165,8 +169,8 @@ export function DispatchPicker({
 
   // Authoritative per-target queue position comes from each instance's own
   // queueDepth in the port snapshot — never a renderer-guessed global value.
-  const queuePositionFor = (a: AgentInstanceViewModel): number =>
-    a.queueDepth + 1
+  const queuePositionFor = (a: AgentInstanceViewModel): string =>
+    isAgentBusy(a) ? `第 ${a.queueDepth + 1} 位` : '无需排队'
 
   // Authoritative resource scope comes from the port's Resource Bindings, not
   // from the connection label (#6 P2-3). External Connection and Resource
@@ -187,23 +191,39 @@ export function DispatchPicker({
         : '未绑定连接（仅本地资源）'
 
   const confirm = async () => {
-    if (targets.length === 0 || instruction.trim().length === 0) return
+    if (
+      submittingRef.current ||
+      targets.length === 0 ||
+      instruction.trim().length === 0
+    ) {
+      return
+    }
     setNotice(null)
     if (resolved.hasAll && !awaitingBroadcast) {
       setAwaitingBroadcast(true)
       return
     }
-    const result = await sendCommand({
-      kind: 'confirm-dispatch',
-      projectId: project.projectId,
-      targets: targets.map((a) => a.agentInstanceId),
-      instruction: instruction.trim()
-    })
-    if (result.ok) {
-      onClose()
-    } else {
-      setAwaitingBroadcast(false)
-      setNotice(result.message)
+    // A WorkbenchPort event may arrive before its response. Guard with a ref,
+    // not only rendered state, so a second activation in the same pending
+    // window cannot mint a fresh CommandId for the same logical confirmation.
+    submittingRef.current = true
+    setSubmitting(true)
+    try {
+      const result = await sendCommand({
+        kind: 'confirm-dispatch',
+        projectId: project.projectId,
+        targets: targets.map((a) => a.agentInstanceId),
+        instruction: instruction.trim()
+      })
+      if (result.ok) {
+        onClose()
+      } else {
+        setAwaitingBroadcast(false)
+        setNotice(result.message)
+      }
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
     }
   }
 
@@ -325,7 +345,7 @@ export function DispatchPicker({
             </div>
             <div>
               <span className="text-neutral-500">队列位置：</span>
-              {targets.map((a) => `${a.name}: 第 ${queuePositionFor(a)} 位`).join('，')}
+              {targets.map((a) => `${a.name}: ${queuePositionFor(a)}`).join('，')}
             </div>
           </section>
         )}
@@ -345,7 +365,11 @@ export function DispatchPicker({
           </button>
           <button
             className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
-            disabled={targets.length === 0 || instruction.trim().length === 0}
+            disabled={
+              submitting ||
+              targets.length === 0 ||
+              instruction.trim().length === 0
+            }
             onClick={() => void confirm()}
           >
             {awaitingBroadcast ? '确认广播' : '确认派发'}
@@ -376,6 +400,7 @@ export function DispatchPicker({
                 </button>
                 <button
                   className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+                  disabled={submitting}
                   onClick={() => void confirm()}
                 >
                   确认广播

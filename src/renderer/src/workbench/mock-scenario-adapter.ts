@@ -14,7 +14,7 @@ import type {
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
-import { isAgentBusy } from './dispatchability'
+import { getDispatchBlockReason, isAgentBusy } from './dispatchability'
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -310,13 +310,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
           const a = byId.get(tid)
           if (!a) {
             missing = true
-          } else if (
-            a.runtimeState === 'unavailable' ||
-            a.runtimeState === 'archived'
-          ) {
-            nonDispatchable = true
-          } else if (a.terminalState === 'active') {
-            terminalBusy = true
+          } else {
+            const blockReason = getDispatchBlockReason(a)
+            if (blockReason === 'terminal-active') terminalBusy = true
+            else if (blockReason) nonDispatchable = true
           }
         }
         if (missing) {

@@ -8,16 +8,25 @@
  */
 import type { AgentInstanceViewModel } from './contract'
 
+export type DispatchBlockReason = 'agent-unavailable' | 'terminal-active'
+
+/** Returns the authoritative reason an instance cannot receive a dispatch. */
+export function getDispatchBlockReason(
+  a: AgentInstanceViewModel
+): DispatchBlockReason | undefined {
+  if (a.runtimeState === 'unavailable' || a.runtimeState === 'archived') {
+    return 'agent-unavailable'
+  }
+  if (a.terminalState === 'active') return 'terminal-active'
+  return undefined
+}
+
 /**
  * An instance is dispatchable when it is not Provider-down, not archived, and
  * not holding a Terminal takeover (ADR-0007 structured/PTY mutex).
  */
 export function isDispatchable(a: AgentInstanceViewModel): boolean {
-  return (
-    a.runtimeState !== 'unavailable' &&
-    a.runtimeState !== 'archived' &&
-    a.terminalState !== 'active'
-  )
+  return getDispatchBlockReason(a) === undefined
 }
 
 /**

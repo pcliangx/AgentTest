@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   CommandResult,
@@ -39,6 +39,44 @@ class RecordingPort implements WorkbenchPort {
 
   subscribe(listener: (event: WorkbenchEvent) => void): () => void {
     return this.inner.subscribe(listener)
+  }
+}
+
+/**
+ * Keeps confirm-dispatch responses pending after the real adapter has accepted
+ * them. This models the WorkbenchPort contract's allowed event-before-response
+ * ordering and makes duplicate user confirmation deterministic.
+ */
+class DeferredConfirmPort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private readonly pending: Array<{
+    result: Promise<CommandResult>
+    resolve: (result: CommandResult) => void
+  }> = []
+  readonly commands: WorkbenchCommand[] = []
+
+  getSnapshot(): Promise<WorkbenchViewModel> {
+    return this.inner.getSnapshot()
+  }
+
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    const result = this.inner.dispatch(command)
+    if (command.kind !== 'confirm-dispatch') return result
+    return new Promise((resolve) => {
+      this.pending.push({ result, resolve })
+    })
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    return this.inner.subscribe(listener)
+  }
+
+  async resolveConfirmations(): Promise<void> {
+    const pending = this.pending.splice(0)
+    const results = await Promise.all(pending.map((item) => item.result))
+    pending.forEach((item, index) => item.resolve(results[index]))
+    await Promise.resolve()
   }
 }
 
@@ -244,6 +282,22 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     ).toHaveLength(0)
   })
 
+  it('shows that an idle target does not need a queue position', async () => {
+    const { user } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+
+    // cx_review is idle and confirm-dispatch does not enqueue it in the mock.
+    await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'start now'
+    )
+
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    expect(preview).toHaveTextContent('cx_review: 无需排队')
+    expect(preview).not.toHaveTextContent('cx_review: 第 1 位')
+  })
+
   it('Escape closes the picker without dispatching', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)
@@ -286,6 +340,35 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     )
     // No broadcast expansion banner should appear.
     expect(dialog).not.toHaveTextContent('展开为全部实例')
+  })
+
+  it('keeps exact @@all as a broadcast when an Agent Name is its prefix', async () => {
+    const { user } = await gotoAgentsSurface()
+
+    // `a` is a valid Agent Name. It must not consume the `@@a` prefix of the
+    // reserved `@@all` token and turn an explicit broadcast into one target.
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Agent 名称' }),
+      'a'
+    )
+    await user.click(screen.getByRole('button', { name: '创建 Agent' }))
+
+    const dialog = await openPicker(user)
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      '@@all'
+    )
+
+    expect(dialog).toHaveTextContent('已展开为全部可派发实例')
+    expect(
+      within(dialog).getAllByRole('listitem', { name: /已选目标/ })
+    ).toHaveLength(7)
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    expect(
+      await screen.findByRole('dialog', { name: /确认广播/ })
+    ).toBeInTheDocument()
   })
 
   it('expands @@all into the current Project dispatchable instances and requires a second confirmation', async () => {
@@ -394,6 +477,32 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
 // ---------------------------------------------------------------------------
 
 describe('Dispatch — idempotency', () => {
+  it('submits only once while a confirmation response is pending', async () => {
+    const user = userEvent.setup()
+    const port = new DeferredConfirmPort()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    await user.click(within(dialog).getByRole('button', { name: /cx_review/ }))
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'run once'
+    )
+    const confirm = within(dialog).getByRole('button', { name: '确认派发' })
+
+    await user.click(confirm)
+    await user.click(confirm)
+
+    try {
+      expect(
+        port.commands.filter((command) => command.kind === 'confirm-dispatch')
+      ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolveConfirmations())
+    }
+  })
+
   it('a duplicate confirm-dispatch with the same CommandId does not create a second dispatch set', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)
