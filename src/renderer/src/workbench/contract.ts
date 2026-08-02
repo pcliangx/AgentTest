@@ -200,7 +200,7 @@ export interface ConfirmationViewModel {
 
 export interface ActivityEntry {
   activityId: ActivityId
-  projectId: ProjectId
+  projectId?: ProjectId
   agentInstanceId?: AgentInstanceId
   timestamp: number
   kind: string
@@ -234,7 +234,11 @@ export interface WorkbenchViewModel {
       label: string
       status: 'connected' | 'disconnected' | 'offline' | 'error'
     }>
-    providers: Array<{ providerId: AgentProviderId; status: 'ready' | 'blocked' }>
+    providers: Array<{
+      providerId: AgentProviderId
+      displayName: string
+      status: 'ready' | 'blocked'
+    }>
   }
 }
 
@@ -331,7 +335,8 @@ export type WorkbenchCommand = CommandMeta &
         mode: 'execute-confirmed'
         confirmationId: ConfirmationId
       }
-    | { kind: 'request-dangerous-action'; action: string; target: string }
+    | { kind: 'request-connection-deletion'; connectionId: ConnectionId }
+    | { kind: 'request-provider-recovery'; providerId: AgentProviderId }
     | { kind: 'dismiss-confirmation' }
     | { kind: 'request-quit-preview' }
     | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }

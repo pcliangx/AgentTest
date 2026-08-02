@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
 import type {
+  AgentProviderId,
   CommandId,
   ConfirmationId,
+  ConnectionId,
   GlobalSurface,
   ProjectId,
   ProjectSurface,
@@ -288,26 +290,25 @@ describe('MockScenarioAdapter — navigate-global', () => {
 // ---------------------------------------------------------------------------
 
 describe('MockScenarioAdapter — confirmation flow', () => {
-  function requestAction(
+  function requestDeletion(
     commandId: CommandId,
     expectedRevision: number,
-    action = '删除连接',
-    target = '飞书 · 销售团队'
+    connectionId: ConnectionId
   ): WorkbenchCommand {
     return {
-      kind: 'request-dangerous-action',
+      kind: 'request-connection-deletion',
       commandId,
       expectedRevision,
-      action,
-      target
+      connectionId
     }
   }
 
-  it('request-dangerous-action sets pendingConfirmation with all fields', async () => {
+  it('request-connection-deletion sets pendingConfirmation with display text', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
+    const connId = snap.global.connections[0].connectionId
     const result = await adapter.dispatch(
-      requestAction(cmdId(1), snap.revision)
+      requestDeletion(cmdId(1), snap.revision, connId)
     )
     expect(result.ok).toBe(true)
     const after = await adapter.getSnapshot()
@@ -315,15 +316,33 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     const conf = after.pendingConfirmation!
     expect(conf.confirmationId).toBeDefined()
     expect(conf.action).toBe('删除连接')
-    expect(conf.target).toBe('飞书 · 销售团队')
+    expect(conf.target).toBe(snap.global.connections[0].label)
     expect(conf.impact).toBeTruthy()
     expect(conf.nonBypassableReason).toBeTruthy()
   })
 
-  it('confirm-dangerous-action with valid ID clears pending and records activity', async () => {
+  it('request-connection-deletion rejects non-existent connection', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    await adapter.dispatch(requestAction(cmdId(1), snap.revision))
+    const result = await adapter.dispatch(
+      requestDeletion(
+        cmdId(1),
+        snap.revision,
+        id('conn-nonexistent', 'ConnectionId') as ConnectionId
+      )
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid-target')
+    }
+  })
+
+  it('confirm removes the connection and records global activity', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const connId = snap.global.connections[0].connectionId
+    const connLabel = snap.global.connections[0].label
+    await adapter.dispatch(requestDeletion(cmdId(1), snap.revision, connId))
     const snap2 = await adapter.getSnapshot()
     const confId = snap2.pendingConfirmation!.confirmationId
 
@@ -336,9 +355,15 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     expect(result.ok).toBe(true)
     const after = await adapter.getSnapshot()
     expect(after.pendingConfirmation).toBeUndefined()
+    // Connection removed — visual result feedback
+    expect(
+      after.global.connections.find((c) => c.connectionId === connId)
+    ).toBeUndefined()
+    // Global activity recorded without projectId
     const lastActivity = after.activity[0]
     expect(lastActivity).toBeDefined()
-    expect(lastActivity.summary).toContain('删除连接')
+    expect(lastActivity.summary).toContain(connLabel)
+    expect(lastActivity.projectId).toBeUndefined()
   })
 
   it('confirm-dangerous-action with invalid ID is rejected', async () => {
@@ -356,25 +381,11 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     }
   })
 
-  it('confirm-dangerous-action with no pending confirmation is rejected', async () => {
-    const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const result = await adapter.dispatch({
-      kind: 'confirm-dangerous-action',
-      commandId: cmdId(1),
-      expectedRevision: snap.revision,
-      confirmationId: id('orphan-id', 'ConfirmationId') as ConfirmationId
-    })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.reason).toBe('invalid-target')
-    }
-  })
-
   it('dismiss-confirmation clears pendingConfirmation', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    await adapter.dispatch(requestAction(cmdId(1), snap.revision))
+    const connId = snap.global.connections[0].connectionId
+    await adapter.dispatch(requestDeletion(cmdId(1), snap.revision, connId))
     const snap2 = await adapter.getSnapshot()
     expect(snap2.pendingConfirmation).toBeDefined()
 
@@ -386,5 +397,55 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     expect(result.ok).toBe(true)
     const after = await adapter.getSnapshot()
     expect(after.pendingConfirmation).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Provider recovery
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — provider recovery', () => {
+  function recover(
+    commandId: CommandId,
+    expectedRevision: number,
+    providerId: AgentProviderId
+  ): WorkbenchCommand {
+    return {
+      kind: 'request-provider-recovery',
+      commandId,
+      expectedRevision,
+      providerId
+    }
+  }
+
+  it('changes a blocked provider to ready', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const blocked = snap.global.providers.find((p) => p.status === 'blocked')!
+    const result = await adapter.dispatch(
+      recover(cmdId(1), snap.revision, blocked.providerId)
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const provider = after.global.providers.find(
+      (p) => p.providerId === blocked.providerId
+    )!
+    expect(provider.status).toBe('ready')
+  })
+
+  it('rejects non-existent provider', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch(
+      recover(
+        cmdId(1),
+        snap.revision,
+        id('nonexistent', 'AgentProviderId') as AgentProviderId
+      )
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid-target')
+    }
   })
 })

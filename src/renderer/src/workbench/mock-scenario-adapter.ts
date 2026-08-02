@@ -2,6 +2,7 @@ import type {
   CommandId,
   CommandRejectionReason,
   CommandResult,
+  ConnectionId,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -21,6 +22,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private snapshot: WorkbenchViewModel
   private listeners = new Set<(event: WorkbenchEvent) => void>()
   private resultsByCommandId = new Map<CommandId, CommandResult>()
+  private pendingConnectionId: ConnectionId | null = null
 
   constructor() {
     this.snapshot = createStandardScenario()
@@ -93,14 +95,31 @@ export class MockScenarioAdapter implements WorkbenchPort {
         this.snapshot.activeGlobalSurface = command.surface
         return null
       }
-      case 'request-dangerous-action': {
+      case 'request-connection-deletion': {
+        const conn = this.snapshot.global.connections.find(
+          (c) => c.connectionId === command.connectionId
+        )
+        if (!conn) {
+          return this.reject(command, 'invalid-target', '连接不存在')
+        }
+        this.pendingConnectionId = command.connectionId
         this.snapshot.pendingConfirmation = {
           confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
-          action: command.action,
-          target: command.target,
-          impact: `此操作将永久${command.action}「${command.target}」，且不可恢复。`,
+          action: '删除连接',
+          target: conn.label,
+          impact: `此操作将永久删除「${conn.label}」，且不可恢复。`,
           nonBypassableReason: '高风险操作需要二次确认，无法跳过'
         }
+        return null
+      }
+      case 'request-provider-recovery': {
+        const provider = this.snapshot.global.providers.find(
+          (p) => p.providerId === command.providerId
+        )
+        if (!provider) {
+          return this.reject(command, 'invalid-target', 'Provider 不存在')
+        }
+        provider.status = 'ready'
         return null
       }
       case 'confirm-dangerous-action': {
@@ -114,22 +133,26 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         const { action, target } = pending
         this.snapshot.pendingConfirmation = undefined
-        const projectId =
-          this.snapshot.activeProjectId ??
-          this.snapshot.projects[0]?.projectId
-        if (projectId) {
-          this.snapshot.activity.unshift({
-            activityId: id(`act-${Date.now()}`, 'ActivityId'),
-            projectId,
-            timestamp: Date.now(),
-            kind: 'dangerous-action-confirmed',
-            summary: `已确认: ${action}（${target}）`
-          })
+        // Mock result: remove the connection if one was pending deletion.
+        if (this.pendingConnectionId) {
+          this.snapshot.global.connections =
+            this.snapshot.global.connections.filter(
+              (c) => c.connectionId !== this.pendingConnectionId
+            )
+          this.pendingConnectionId = null
         }
+        // Record as a global activity — no projectId attribution.
+        this.snapshot.activity.unshift({
+          activityId: id(`act-${Date.now()}`, 'ActivityId'),
+          timestamp: Date.now(),
+          kind: 'dangerous-action-confirmed',
+          summary: `已确认: ${action}（${target}）`
+        })
         return null
       }
       case 'dismiss-confirmation': {
         this.snapshot.pendingConfirmation = undefined
+        this.pendingConnectionId = null
         return null
       }
       default:

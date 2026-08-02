@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
+  AgentProviderId,
   CommandResult,
   ConfirmationId,
+  ConnectionId,
   GlobalSurface,
   ProjectId,
   ProjectSurface,
@@ -81,9 +83,15 @@ function useWorkbench(port: WorkbenchPort) {
     [send]
   )
 
-  const requestDangerousAction = useCallback(
-    (action: string, target: string) =>
-      send({ kind: 'request-dangerous-action', action, target }),
+  const requestConnectionDeletion = useCallback(
+    (connectionId: ConnectionId) =>
+      send({ kind: 'request-connection-deletion', connectionId }),
+    [send]
+  )
+
+  const requestProviderRecovery = useCallback(
+    (providerId: AgentProviderId) =>
+      send({ kind: 'request-provider-recovery', providerId }),
     [send]
   )
 
@@ -102,7 +110,8 @@ function useWorkbench(port: WorkbenchPort) {
     snapshot,
     navigate,
     navigateGlobal,
-    requestDangerousAction,
+    requestConnectionDeletion,
+    requestProviderRecovery,
     confirmDangerousAction,
     dismissConfirmation
   }
@@ -153,12 +162,6 @@ const CONNECTION_STATUS_LABEL: Record<string, string> = {
   error: '错误'
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  'kimi-code': 'Kimi Code'
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -168,7 +171,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     snapshot,
     navigate,
     navigateGlobal,
-    requestDangerousAction,
+    requestConnectionDeletion,
+    requestProviderRecovery,
     confirmDangerousAction,
     dismissConfirmation
   } = useWorkbench(port)
@@ -185,25 +189,21 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     snapshot.projects.find((p) => p.projectId === snapshot.activeProjectId) ??
     snapshot.projects[0]
 
-  if (!project) {
-    return (
-      <div className="flex h-full items-center justify-center bg-neutral-950 text-neutral-500">
-        没有可用的 Project
-      </div>
-    )
-  }
-
-  const projectAgents = snapshot.agents.filter(
-    (a) => a.projectId === project.projectId
-  )
-  const connection = snapshot.global.connections.find(
-    (c) => c.connectionId === project.primaryConnectionId
-  )
-  const projectActivity = snapshot.activity
-    .filter((a) => a.projectId === project.projectId)
-    .sort((a, b) => b.timestamp - a.timestamp)
-
   const inGlobalView = snapshot.activeGlobalSurface !== undefined
+
+  const projectAgents = project
+    ? snapshot.agents.filter((a) => a.projectId === project.projectId)
+    : []
+  const connection = project
+    ? snapshot.global.connections.find(
+        (c) => c.connectionId === project.primaryConnectionId
+      )
+    : undefined
+  const projectActivity = project
+    ? snapshot.activity
+        .filter((a) => a.projectId === project.projectId)
+        .sort((a, b) => b.timestamp - a.timestamp)
+    : []
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
@@ -211,12 +211,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <div className="flex items-center gap-3">
           <span className="font-medium">Agent Squad HQ</span>
           {inGlobalView ? (
-            <button
-              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
-              onClick={() => void navigate(project.projectId, project.currentSurface)}
-            >
-              ← 返回项目
-            </button>
+            project && (
+              <button
+                className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+                onClick={() =>
+                  void navigate(project.projectId, project.currentSurface)
+                }
+              >
+                ← 返回项目
+              </button>
+            )
           ) : (
             <div className="flex items-center gap-1">
               {GLOBAL_ENTRIES.map(({ surface, label }) => (
@@ -243,19 +247,24 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {snapshot.activeGlobalSurface === 'connections' && (
             <ConnectionsSurface
               connections={snapshot.global.connections}
-              onDelete={(action, target) =>
-                void requestDangerousAction(action, target)
+              onDelete={(connectionId) =>
+                void requestConnectionDeletion(connectionId)
               }
             />
           )}
           {snapshot.activeGlobalSurface === 'provider-health' && (
-            <ProviderHealthSurface providers={snapshot.global.providers} />
+            <ProviderHealthSurface
+              providers={snapshot.global.providers}
+              onRecovery={(providerId) =>
+                void requestProviderRecovery(providerId)
+              }
+            />
           )}
           {snapshot.activeGlobalSurface === 'global-settings' && (
             <GlobalSettingsSurface />
           )}
         </main>
-      ) : (
+      ) : project ? (
         <div className="flex min-h-0 flex-1">
           <nav
             className="w-48 shrink-0 border-r border-neutral-800 p-2"
@@ -319,6 +328,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 <PlaceholderSurface surface={project.currentSurface} />
               )}
           </main>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 text-neutral-500">
+          没有可用的 Project
         </div>
       )}
 
@@ -459,40 +472,46 @@ function ConnectionsSurface({
   onDelete
 }: {
   connections: WorkbenchViewModel['global']['connections']
-  onDelete: (action: string, target: string) => void
+  onDelete: (connectionId: ConnectionId) => void
 }) {
   return (
     <section role="region" aria-label="全局连接" className="space-y-3">
       <h2 className="text-lg font-medium text-neutral-100">连接</h2>
-      <ul className="space-y-2">
-        {connections.map((conn) => (
-          <li
-            key={conn.connectionId}
-            className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-neutral-200">{conn.label}</span>
-              <span className="text-xs text-neutral-500">
-                {CONNECTION_STATUS_LABEL[conn.status] ?? conn.status}
-              </span>
-            </div>
-            <button
-              className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
-              onClick={() => onDelete('删除连接', conn.label)}
+      {connections.length === 0 ? (
+        <p className="text-sm text-neutral-500">暂无连接</p>
+      ) : (
+        <ul className="space-y-2">
+          {connections.map((conn) => (
+            <li
+              key={conn.connectionId}
+              className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
             >
-              删除
-            </button>
-          </li>
-        ))}
-      </ul>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-neutral-200">{conn.label}</span>
+                <span className="text-xs text-neutral-500">
+                  {CONNECTION_STATUS_LABEL[conn.status] ?? conn.status}
+                </span>
+              </div>
+              <button
+                className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
+                onClick={() => onDelete(conn.connectionId)}
+              >
+                删除
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }
 
 function ProviderHealthSurface({
-  providers
+  providers,
+  onRecovery
 }: {
   providers: WorkbenchViewModel['global']['providers']
+  onRecovery: (providerId: AgentProviderId) => void
 }) {
   return (
     <section role="region" aria-label="Provider 健康" className="space-y-3">
@@ -503,9 +522,7 @@ function ProviderHealthSurface({
             key={p.providerId}
             className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
           >
-            <span className="text-sm text-neutral-200">
-              {PROVIDER_LABEL[p.providerId] ?? p.providerId}
-            </span>
+            <span className="text-sm text-neutral-200">{p.displayName}</span>
             <div className="flex items-center gap-2">
               <span
                 className={`text-xs ${
@@ -515,7 +532,10 @@ function ProviderHealthSurface({
                 {p.status === 'ready' ? '可用' : '已阻断'}
               </span>
               {p.status === 'blocked' && (
-                <button className="text-xs text-blue-400 hover:text-blue-300">
+                <button
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                  onClick={() => onRecovery(p.providerId)}
+                >
                   恢复
                 </button>
               )}
@@ -552,7 +572,12 @@ function ConfirmationModal({
   const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
+    // Save the currently focused element to restore when the modal closes.
+    const opener = document.activeElement as HTMLElement | null
     confirmRef.current?.focus()
+    return () => {
+      opener?.focus()
+    }
   }, [])
 
   useEffect(() => {

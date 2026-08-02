@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
@@ -395,5 +395,96 @@ describe('ProjectShell — no side effects (global + confirmation)', () => {
     await user.click(screen.getByRole('button', { name: '取消' }))
     await user.click(screen.getByRole('button', { name: /返回项目/ }))
     expect(apiSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Empty project — global surfaces still accessible
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — empty project', () => {
+  it('shows global nav entries and empty message when no projects exist', async () => {
+    const emptyPort: WorkbenchPort = {
+      async getSnapshot() {
+        const snap = createStandardScenario()
+        snap.projects = []
+        snap.activeProjectId = undefined
+        return snap
+      },
+      async dispatch(cmd) {
+        return {
+          ok: true,
+          commandId: cmd.commandId,
+          acceptedRevision: 0
+        }
+      },
+      subscribe() {
+        return () => {}
+      }
+    }
+    render(<ProjectShell port={emptyPort} />)
+    expect(await screen.findByRole('button', { name: '连接' })).toBeVisible()
+    expect(screen.getByText('没有可用的 Project')).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Confirmation result — connection disappears
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — confirmation result', () => {
+  it('removes the connection after confirming deletion', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    expect(screen.getByText('飞书 · 销售团队')).toBeVisible()
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByText('飞书 · 销售团队')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Provider recovery
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — provider recovery', () => {
+  it('recovers a blocked provider via the recovery button', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    const region = await screen.findByRole('region', {
+      name: 'Provider 健康'
+    })
+    expect(region).toHaveTextContent('已阻断')
+    await user.click(screen.getByRole('button', { name: '恢复' }))
+    await waitFor(() => {
+      expect(screen.queryByText('已阻断')).not.toBeInTheDocument()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Focus restoration
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — focus restoration', () => {
+  it('restores focus to the trigger after closing confirmation', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    const deleteButton = screen.getAllByRole('button', { name: '删除' })[0]
+    deleteButton.focus()
+    expect(deleteButton).toHaveFocus()
+    await user.click(deleteButton)
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(deleteButton).toHaveFocus()
   })
 })

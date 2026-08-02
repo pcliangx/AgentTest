@@ -211,9 +211,21 @@ export function createStandardScenario(): WorkbenchViewModel {
         }
       ],
       providers: [
-        { providerId: id('claude-code', 'AgentProviderId'), status: 'ready' },
-        { providerId: id('codex', 'AgentProviderId'), status: 'ready' },
-        { providerId: id('kimi-code', 'AgentProviderId'), status: 'blocked' }
+        {
+          providerId: id('claude-code', 'AgentProviderId'),
+          displayName: 'Claude Code',
+          status: 'ready'
+        },
+        {
+          providerId: id('codex', 'AgentProviderId'),
+          displayName: 'Codex',
+          status: 'ready'
+        },
+        {
+          providerId: id('kimi-code', 'AgentProviderId'),
+          displayName: 'Kimi Code',
+          status: 'blocked'
+        }
       ]
     }
   }
