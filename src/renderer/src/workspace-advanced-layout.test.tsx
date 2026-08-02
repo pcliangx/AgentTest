@@ -1,0 +1,385 @@
+// @vitest-environment jsdom
+import { afterEach, describe, it, expect } from 'vitest'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { ProjectShell } from './project-shell'
+import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import type {
+  CommandResult,
+  WorkbenchCommand,
+  WorkbenchPort
+} from './workbench/contract'
+
+/**
+ * Advanced workspace layout (#5): temporary Focus with lossless restore,
+ * the one-main-two-auxiliary Analysis preset, keyboard parity with pointer
+ * gestures, and 4+ panel density behaviour. Tests observe accessible roles,
+ * names and the commands reaching the port — never private DOM or CSS.
+ */
+
+afterEach(() => cleanup())
+
+async function gotoAgentsSurface(port?: WorkbenchPort) {
+  const user = userEvent.setup()
+  render(<ProjectShell port={port ?? new MockScenarioAdapter()} />)
+  await screen.findByRole('button', { name: '概览' })
+  await user.click(screen.getByRole('button', { name: 'Agent' }))
+  await screen.findByRole('region', { name: 'Agent 目录' })
+  return { user }
+}
+
+function panels(): HTMLElement[] {
+  return screen.getAllByRole('group', { name: 'Agent 面板' })
+}
+
+/** Records every command reaching the port while delegating to the mock. */
+class RecordingPort implements WorkbenchPort {
+  private inner = new MockScenarioAdapter()
+  readonly commands: WorkbenchCommand[] = []
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+  subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
+    return this.inner.subscribe(listener)
+  }
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return this.inner.dispatch(command)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Focus — temporary maximize with lossless restore
+// ---------------------------------------------------------------------------
+
+describe('Workspace layout — Focus', () => {
+  it('temporarily maximizes a panel and restores the split tree losslessly on exit', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    expect(panels()).toHaveLength(2)
+
+    // Enter Focus on the second panel (cc_sql's).
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(panels()).toHaveLength(1)
+    within(panels()[0]).getByRole('tab', { name: /cc_sql/ })
+
+    // Exit Focus: the original tree returns — two panels, both tabs, the
+    // divider ratio exactly where it was.
+    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+    expect(
+      screen.getByRole('separator', { name: '调整分割比例' })
+    ).toHaveAttribute('aria-valuenow', '50')
+  })
+
+  it('exits Focus with the Escape key', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(panels()).toHaveLength(1)
+
+    fireEvent.keyDown(panels()[0], { key: 'Escape' })
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+  })
+
+  it('keeps the focused panel operable while hidden panels are preserved', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+
+    // The focused panel still activates its tabs through the same command.
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_etl/ }))
+    const ccEtlTab = screen.getByRole('tab', { name: /cc_etl/ })
+    await user.click(ccEtlTab)
+    expect(ccEtlTab).toHaveAttribute('aria-selected', 'true')
+
+    // Everything comes back on exit — nothing was restructured.
+    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Analysis preset — one main + two auxiliary panels
+// ---------------------------------------------------------------------------
+
+describe('Workspace layout — Analysis preset', () => {
+  it('builds the one-main-two-auxiliary tree from a single panel', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Analysis 预设' })
+    )
+
+    expect(panels()).toHaveLength(3)
+    // The main panel keeps its tab; the two auxiliaries start empty.
+    within(panels()[0]).getByRole('tab', { name: /cc_data/ })
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    // Plain split tree: horizontal main at 61%, auxiliaries stacked at 52%.
+    const separators = screen.getAllByRole('separator', {
+      name: '调整分割比例'
+    })
+    expect(separators).toHaveLength(2)
+    expect(separators[0]).toHaveAttribute('aria-valuenow', '61')
+    expect(separators[1]).toHaveAttribute('aria-valuenow', '52')
+  })
+
+  it('keeps every tab exactly once when more than three panels collapse into the preset', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_etl' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cx_review' })
+    )
+    expect(panels()).toHaveLength(4)
+
+    // Apply the preset with cc_etl's panel as the main one.
+    await user.click(
+      within(panels()[2]).getByRole('button', { name: 'Analysis 预设' })
+    )
+
+    expect(panels()).toHaveLength(3)
+    // No tab is lost or duplicated by the restructuring.
+    for (const name of [/cc_data/, /cc_sql/, /cc_etl/, /cx_review/]) {
+      expect(screen.getAllByRole('tab', { name })).toHaveLength(1)
+    }
+    // The leftover panel's tab migrated into the main panel.
+    const mainTabs = within(panels()[0]).getAllByRole('tab')
+    expect(mainTabs).toHaveLength(2)
+    within(panels()[0]).getByRole('tab', { name: /cc_etl/ })
+    within(panels()[0]).getByRole('tab', { name: /cx_review/ })
+    // The first two other panels in tree order became the auxiliaries.
+    within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    within(panels()[2]).getByRole('tab', { name: /cc_sql/ })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Keyboard parity — same commands as pointer gestures
+// ---------------------------------------------------------------------------
+
+describe('Workspace layout — keyboard parity', () => {
+  it('activates a tab with Enter after arrow-key navigation', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    // cc_sql is selected after opening; go back to cc_data first.
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    await user.click(ccDataTab)
+
+    // Roving tabindex: only the selected tab is in the tab order.
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    expect(ccDataTab).toHaveAttribute('tabindex', '0')
+    expect(ccSqlTab).toHaveAttribute('tabindex', '-1')
+
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, { key: 'ArrowRight' })
+    expect(ccSqlTab).toHaveFocus()
+    // Arrow navigation moves focus only; Enter activates.
+    expect(ccSqlTab).toHaveAttribute('aria-selected', 'false')
+    fireEvent.keyDown(ccSqlTab, { key: 'Enter' })
+    expect(ccSqlTab).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('moves a tab to the next panel with Ctrl+ArrowRight', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    expect(panels()).toHaveLength(2)
+
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, { key: 'ArrowRight', ctrlKey: true })
+
+    // The tab moved — never copied — into the sibling panel.
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+    within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    within(panels()[0]).getByRole('tab', { name: /cc_sql/ })
+  })
+
+  it('moves a tab back to the previous panel with Ctrl+ArrowLeft', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, { key: 'ArrowRight', ctrlKey: true })
+    const movedTab = screen.getByRole('tab', { name: /cc_data/ })
+    movedTab.focus()
+    fireEvent.keyDown(movedTab, { key: 'ArrowLeft', ctrlKey: true })
+
+    // Moving back empties the sibling panel, which is pruned: the tab is
+    // home again, exactly once, next to cc_sql.
+    expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
+    const home = panels()[panels().length - 1]
+    within(home).getByRole('tab', { name: /cc_data/ })
+    within(home).getByRole('tab', { name: /cc_sql/ })
+  })
+
+  it('split-moves a tab with Ctrl+Shift+ArrowRight, dispatching the same command as an edge drop', async () => {
+    const port = new RecordingPort()
+    await gotoAgentsSurface(port)
+
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, {
+      key: 'ArrowRight',
+      ctrlKey: true,
+      shiftKey: true
+    })
+
+    expect(panels()).toHaveLength(2)
+    within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    // Exactly the operation a drop on the right edge produces.
+    const layoutCommands = port.commands.filter(
+      (c) => c.kind === 'change-layout'
+    )
+    expect(layoutCommands).toHaveLength(1)
+    expect(layoutCommands[0]).toMatchObject({
+      operation: {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: 'inst-cc-data',
+        direction: 'horizontal',
+        position: 'after',
+        relativeToPanelId: 'panel-main'
+      }
+    })
+  })
+
+  it('split-moves a tab downward with Ctrl+Shift+ArrowDown', async () => {
+    await gotoAgentsSurface()
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, {
+      key: 'ArrowDown',
+      ctrlKey: true,
+      shiftKey: true
+    })
+
+    expect(panels()).toHaveLength(2)
+    within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    expect(
+      screen.getByRole('separator', { name: '调整分割比例' })
+    ).toHaveAttribute('aria-orientation', 'horizontal')
+  })
+
+  it('advertises the keyboard shortcuts on the tab', async () => {
+    await gotoAgentsSurface()
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    expect(ccDataTab).toHaveAttribute(
+      'aria-keyshortcuts',
+      expect.stringContaining('Control+ArrowRight')
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Density — 4+ panels stay usable with a non-blocking hint
+// ---------------------------------------------------------------------------
+
+describe('Workspace layout — density', () => {
+  it('shows a non-blocking hint at four panels and keeps every panel operable', async () => {
+    const { user } = await gotoAgentsSurface()
+    expect(screen.queryByRole('note')).toBeNull()
+
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_etl' })
+    )
+    expect(screen.queryByRole('note')).toBeNull()
+
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cx_review' })
+    )
+    expect(panels()).toHaveLength(4)
+    // The hint is informational only — all panels keep working.
+    expect(screen.getByRole('note')).toHaveTextContent(/超出建议密度/)
+    for (const name of [/cc_data/, /cc_sql/, /cc_etl/, /cx_review/]) {
+      expect(screen.getAllByRole('tab', { name })).toHaveLength(1)
+    }
+
+    // A fifth panel is still allowed — density never blocks.
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 kimi_visual' })
+    )
+    expect(panels()).toHaveLength(5)
+
+    // The hint is dismissible.
+    await user.click(
+      screen.getByRole('button', { name: '关闭密度提示' })
+    )
+    expect(screen.queryByRole('note')).toBeNull()
+    expect(panels()).toHaveLength(5)
+  })
+
+  it('stays fully operable after the window shrinks below the default desktop size', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_etl' })
+    )
+    expect(panels()).toHaveLength(3)
+
+    // Shrink below 1280×800 — layout state must survive the resize.
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1024
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 700
+    })
+    fireEvent(window, new Event('resize'))
+
+    expect(panels()).toHaveLength(3)
+    for (const name of [/cc_data/, /cc_sql/, /cc_etl/]) {
+      expect(screen.getAllByRole('tab', { name })).toHaveLength(1)
+    }
+
+    // Layout commands keep working after the resize: split further,
+    // then enter and exit Focus.
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cx_review' })
+    )
+    expect(panels()).toHaveLength(4)
+    expect(screen.getByRole('note')).toHaveTextContent(/超出建议密度/)
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(panels()).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    expect(panels()).toHaveLength(4)
+  })
+})

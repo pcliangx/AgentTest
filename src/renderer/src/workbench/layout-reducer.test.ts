@@ -666,7 +666,18 @@ describe('layout-reducer — property invariants over random command sequences',
             migrateToPanelId:
               layout.panels[target].tabs.length > 0 ? pick(others) : undefined
           } as const
-        } else if (opRoll < 0.95) {
+        } else if (opRoll < 0.9) {
+          // Focus enter/exit mixes with structural operations.
+          operation =
+            rand() < 0.5 && panels.length > 0
+              ? ({ kind: 'focus-panel', panelId: pick(panels) } as const)
+              : ({ kind: 'focus-panel' } as const)
+        } else if (opRoll < 0.94 && panels.length > 0) {
+          operation = {
+            kind: 'apply-analysis-preset',
+            panelId: pick(panels)
+          } as const
+        } else if (opRoll < 0.98) {
           const splits: SplitNodeId[] = []
           const walk = (n: LayoutNode | null) => {
             if (!n) return
@@ -697,4 +708,342 @@ describe('layout-reducer — property invariants over random command sequences',
       }
     })
   }
+})
+
+// ---------------------------------------------------------------------------
+// focus-panel — temporary Focus, lossless restore (#5)
+// ---------------------------------------------------------------------------
+
+describe('layout-reducer — focus-panel', () => {
+  function twoPanelLayout(ids: LayoutIdGenerator) {
+    const split = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      { kind: 'split-panel', panelId: P(1), direction: 'horizontal' },
+      ids
+    )
+    if (!split.ok) throw new Error('setup failed')
+    return split.layout
+  }
+
+  it('enters Focus on an existing panel without touching the tree', () => {
+    const ids = makeIds()
+    const layout = twoPanelLayout(ids)
+    const p2 = id('panel-new-1', 'PanelId')
+
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Focus is a temporary view state: the split tree, tabs and ratios are
+    // exactly what they were, so exiting later restores them losslessly.
+    expect(result.layout.root).toEqual(layout.root)
+    expect(result.layout.panels).toEqual(layout.panels)
+    expect(result.layout.temporaryFocusPanelId).toEqual(p2)
+    expect(result.layout.focusedPanelId).toEqual(p2)
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('exiting Focus clears the temporary focus and keeps the full tree', () => {
+    const ids = makeIds()
+    const layout = twoPanelLayout(ids)
+    const p2 = id('panel-new-1', 'PanelId')
+    const focused = applyLayoutOperation(
+      layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focused.ok) throw new Error('setup failed')
+
+    const result = applyLayoutOperation(
+      focused.layout,
+      { kind: 'focus-panel' },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.temporaryFocusPanelId).toBeUndefined()
+    expect(result.layout.root).toEqual(layout.root)
+    expect(result.layout.panels).toEqual(layout.panels)
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('moves Focus to another panel when already focused', () => {
+    const ids = makeIds()
+    const layout = twoPanelLayout(ids)
+    const p2 = id('panel-new-1', 'PanelId')
+    const first = applyLayoutOperation(
+      layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!first.ok) throw new Error('setup failed')
+
+    const result = applyLayoutOperation(
+      first.layout,
+      { kind: 'focus-panel', panelId: P(1) },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.temporaryFocusPanelId).toEqual(P(1))
+    expect(result.layout.focusedPanelId).toEqual(P(1))
+  })
+
+  it('rejects focusing a panel that does not exist', () => {
+    const layout = singlePanelLayout(P(1), [A('a')])
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'focus-panel', panelId: P(99) },
+      makeIds()
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('invalid-target')
+  })
+
+  it('clears the temporary Focus when the focused panel is closed', () => {
+    const ids = makeIds()
+    const layout = twoPanelLayout(ids)
+    const p2 = id('panel-new-1', 'PanelId')
+    const focused = applyLayoutOperation(
+      layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focused.ok) throw new Error('setup failed')
+
+    const result = applyLayoutOperation(
+      focused.layout,
+      { kind: 'close-panel', panelId: p2 },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.temporaryFocusPanelId).toBeUndefined()
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('clears the temporary Focus when the focused panel loses its last tab', () => {
+    const ids = makeIds()
+    const split = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: A('b'),
+        direction: 'horizontal'
+      },
+      ids
+    )
+    if (!split.ok) throw new Error('setup failed')
+    const p2 = id('panel-new-1', 'PanelId')
+    const focused = applyLayoutOperation(
+      split.layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focused.ok) throw new Error('setup failed')
+
+    // Closing b empties and prunes the focused panel.
+    const result = applyLayoutOperation(
+      focused.layout,
+      { kind: 'close-tab', panelId: p2, agentInstanceId: A('b') },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.temporaryFocusPanelId).toBeUndefined()
+    expect(result.layout.focusedPanelId).toEqual(P(1))
+    assertLayoutInvariants(result.layout)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// apply-analysis-preset — one main + two auxiliary panels (#5)
+// ---------------------------------------------------------------------------
+
+describe('layout-reducer — apply-analysis-preset', () => {
+  it('builds the one-main-two-auxiliary tree from a single panel', () => {
+    const result = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a'), A('b')]),
+      { kind: 'apply-analysis-preset', panelId: P(1) },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const aux1 = id('panel-new-1', 'PanelId')
+    const aux2 = id('panel-new-2', 'PanelId')
+    // The preset is a plain split tree (UX-v0.2 §7.1) — no second layout
+    // model: horizontal main at 61%, two auxiliaries stacked at 52%.
+    expect(result.layout.root).toEqual({
+      kind: 'split',
+      splitNodeId: id('split-new-1', 'SplitNodeId'),
+      direction: 'horizontal',
+      ratio: 0.61,
+      first: { kind: 'panel', panelId: P(1) },
+      second: {
+        kind: 'split',
+        splitNodeId: id('split-new-2', 'SplitNodeId'),
+        direction: 'vertical',
+        ratio: 0.52,
+        first: { kind: 'panel', panelId: aux1 },
+        second: { kind: 'panel', panelId: aux2 }
+      }
+    })
+    // Main keeps its tabs untouched; both auxiliaries start empty.
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('a'), A('b')])
+    expect(result.layout.panels[P(1)].activeTabId).toEqual(A('a'))
+    expect(result.layout.panels[aux1].tabs).toEqual([])
+    expect(result.layout.panels[aux2].tabs).toEqual([])
+    expect(result.layout.focusedPanelId).toEqual(P(1))
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('reuses existing panels in tree order for the auxiliary slots', () => {
+    const ids = makeIds()
+    const s1 = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: A('b'),
+        direction: 'horizontal'
+      },
+      ids
+    )
+    if (!s1.ok) throw new Error('setup failed')
+    const p2 = id('panel-new-1', 'PanelId')
+    const s2 = applyLayoutOperation(
+      s1.layout,
+      {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: A('c'),
+        direction: 'horizontal'
+      },
+      ids
+    )
+    if (!s2.ok) throw new Error('setup failed')
+    const p3 = id('panel-new-2', 'PanelId')
+    // Tree order: P1, p2, p3. Main = p2 → auxiliaries reuse P1 and p3.
+    const result = applyLayoutOperation(
+      s2.layout,
+      { kind: 'apply-analysis-preset', panelId: p2 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // No new panels allocated: exactly the same three panel records.
+    expect(Object.keys(result.layout.panels).sort()).toEqual(
+      [P(1), p2, p3].sort()
+    )
+    expect(result.layout.root).toMatchObject({
+      direction: 'horizontal',
+      first: { kind: 'panel', panelId: p2 },
+      second: {
+        direction: 'vertical',
+        first: { kind: 'panel', panelId: P(1) },
+        second: { kind: 'panel', panelId: p3 }
+      }
+    })
+    // Every panel keeps its own tab.
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('a')])
+    expect(result.layout.panels[p2].tabs).toEqual([A('b')])
+    expect(result.layout.panels[p3].tabs).toEqual([A('c')])
+    expect(result.layout.focusedPanelId).toEqual(p2)
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('migrates leftover tabs into the main panel instead of losing them', () => {
+    const ids = makeIds()
+    let layout = singlePanelLayout(P(1), [A('a')])
+    for (const tab of [A('b'), A('c'), A('d')]) {
+      const step = applyLayoutOperation(
+        layout,
+        { kind: 'open-tab-in-new-panel', agentInstanceId: tab, direction: 'horizontal' },
+        ids
+      )
+      if (!step.ok) throw new Error('setup failed')
+      layout = step.layout
+    }
+    // Tree order: P1(a), p2(b), p3(c), p4(d). Main = p2.
+    const p2 = id('panel-new-1', 'PanelId')
+    const p3 = id('panel-new-2', 'PanelId')
+    const p4 = id('panel-new-3', 'PanelId')
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'apply-analysis-preset', panelId: p2 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Auxiliaries reuse P1 and p3; p4 is pruned and its tab migrates into
+    // the main panel — no tab is ever dropped by the preset.
+    expect(Object.keys(result.layout.panels).sort()).toEqual(
+      [P(1), p2, p3].sort()
+    )
+    expect(result.layout.panels[p2].tabs).toEqual([A('b'), A('d')])
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('a')])
+    expect(result.layout.panels[p3].tabs).toEqual([A('c')])
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('clears any temporary Focus — the user asked for the three-panel view', () => {
+    const ids = makeIds()
+    const s1 = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      {
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: A('b'),
+        direction: 'horizontal'
+      },
+      ids
+    )
+    if (!s1.ok) throw new Error('setup failed')
+    const p2 = id('panel-new-1', 'PanelId')
+
+    // Focus on the would-be main panel is cleared as well: showing only
+    // one panel right after the user applied a three-panel preset would
+    // contradict the explicit action.
+    const focusedMain = applyLayoutOperation(
+      s1.layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focusedMain.ok) throw new Error('setup failed')
+    const result = applyLayoutOperation(
+      focusedMain.layout,
+      { kind: 'apply-analysis-preset', panelId: p2 },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.temporaryFocusPanelId).toBeUndefined()
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('rejects an unknown main panel without changing the layout', () => {
+    const layout = singlePanelLayout(P(1), [A('a')])
+    const frozen = structuredClone(layout)
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'apply-analysis-preset', panelId: P(99) },
+      makeIds()
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('invalid-target')
+    expect(layout).toEqual(frozen)
+  })
+
+  it('rejects the preset on an empty workspace', () => {
+    const result = applyLayoutOperation(
+      emptyLayout(),
+      { kind: 'apply-analysis-preset', panelId: P(1) },
+      makeIds()
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe('invalid-target')
+  })
 })

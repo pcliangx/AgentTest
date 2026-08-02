@@ -28,14 +28,15 @@ import {
 import type { SendCommand } from './agents-surface'
 
 /**
- * Workspace — the free split tree of Agent Panels (#4).
+ * Workspace — the free split tree of Agent Panels (#4), plus temporary
+ * Focus, the Analysis preset, keyboard parity and 4+ panel density (#5).
  *
  * Renders `project.layout` recursively and turns every user gesture into a
  * typed `change-layout` command. The component owns NO layout rules: splits,
  * pruning, migration and clamping all live in the shared layout reducer
  * behind the WorkbenchPort. Local state is limited to drag-in-progress,
- * divider preview and recoverable notices. Layout commands never touch
- * runtime, PTY, session or instance lifecycle.
+ * divider preview, the dismissed density hint and recoverable notices.
+ * Layout commands never touch runtime, PTY, session or instance lifecycle.
  */
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ interface LayoutRenderContext {
   draggingTab: { tabId: AgentInstanceId; startRevision: number } | null
   panelCount: number
   layoutRevision: number
+  temporaryFocusPanelId?: PanelId
   sendLayout: (
     operation: LayoutOperation,
     expectedRevision?: number
@@ -100,6 +102,7 @@ export function WorkspaceArea({
     startRevision: number
   } | null>(null)
   const [migrateTarget, setMigrateTarget] = useState('')
+  const [densityHintDismissed, setDensityHintDismissed] = useState(false)
 
   // Backstop: an authoritative layout change invalidates any in-flight
   // drag — its drop would stale-reject anyway, so hide the zones now
@@ -153,6 +156,13 @@ export function WorkspaceArea({
     setClosingPanel({ panelId, startRevision: snapshot.revision })
   }
 
+  // Temporary Focus: render only the focused panel. The split tree itself
+  // is never touched by Focus, so exiting restores it losslessly (#5).
+  const focusPanelId =
+    layout.temporaryFocusPanelId && layout.panels[layout.temporaryFocusPanelId]
+      ? layout.temporaryFocusPanelId
+      : undefined
+
   const ctx: LayoutRenderContext = {
     project,
     snapshot,
@@ -161,6 +171,7 @@ export function WorkspaceArea({
     draggingTab,
     panelCount: Object.keys(layout.panels).length,
     layoutRevision: snapshot.revision,
+    ...(focusPanelId ? { temporaryFocusPanelId: focusPanelId } : {}),
     sendLayout,
     sendCommand,
     onPreviewRatio: (splitNodeId, ratio) =>
@@ -195,11 +206,63 @@ export function WorkspaceArea({
     ? layout.panels[closingPanel.panelId]
     : null
 
+  const panelCount = Object.keys(layout.panels).length
+
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1">
-        <LayoutNodeView node={layout.root} ctx={ctx} />
-      </div>
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      onKeyDown={(e) => {
+        // Escape is the keyboard exit from temporary Focus — the pointer
+        // equivalent of the 退出 Focus button, normalised to the same
+        // focus-panel command.
+        if (e.key === 'Escape' && focusPanelId) {
+          e.preventDefault()
+          void sendLayout({ kind: 'focus-panel' })
+        }
+      }}
+    >
+      {focusPanelId ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-2 py-1">
+            <span className="flex-1 text-xs text-neutral-500">
+              Focus 模式：仅显示当前 Panel，布局保持不变
+            </span>
+            <button
+              aria-label="退出 Focus"
+              aria-keyshortcuts="Escape"
+              className="rounded px-1.5 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-neutral-400"
+              onClick={() => void sendLayout({ kind: 'focus-panel' })}
+            >
+              退出 Focus
+            </button>
+          </div>
+          <div className="flex min-h-0 flex-1">
+            <PanelView panelId={focusPanelId} ctx={ctx} />
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <LayoutNodeView node={layout.root} ctx={ctx} />
+        </div>
+      )}
+      {panelCount > DEFAULT_DENSITY_PANELS && !densityHintDismissed && (
+        <div
+          role="note"
+          className="absolute left-2 top-2 z-20 flex items-center gap-2 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-300"
+        >
+          <span>
+            当前打开 {panelCount} 个 Panel，超出建议密度（1–3
+            个）；空间不足时可滚动查看，Panel 不会被压缩到不可用。
+          </span>
+          <button
+            aria-label="关闭密度提示"
+            className="rounded px-1 text-neutral-400 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-neutral-400"
+            onClick={() => setDensityHintDismissed(true)}
+          >
+            ×
+          </button>
+        </div>
+      )}
       {closingPanel && closingPanelRecord && (
         <ClosePanelDialog
           layout={layout}
@@ -232,6 +295,9 @@ export function WorkspaceArea({
   )
 }
 
+/** Panels beyond this count keep working but earn a non-blocking hint. */
+const DEFAULT_DENSITY_PANELS = 3
+
 // ---------------------------------------------------------------------------
 // Recursive split-tree rendering
 // ---------------------------------------------------------------------------
@@ -254,14 +320,18 @@ function LayoutNodeView({
     return <PanelView panelId={node.panelId} ctx={ctx} />
   }
   const ratio = ctx.previewRatios[node.splitNodeId] ?? node.ratio
+  // Children keep a minimum usable size (UX-v0.2 §7.2(8)): when the window
+  // cannot fit them the split container scrolls instead of compressing
+  // panels into an inoperable state.
+  const childMin = 'min-w-56 min-h-32'
   return (
     <div
-      className={`flex min-h-0 min-w-0 flex-1 ${
+      className={`flex min-h-0 min-w-0 flex-1 overflow-auto ${
         node.direction === 'horizontal' ? 'flex-row' : 'flex-col'
       }`}
     >
       <div
-        className="flex min-h-0 min-w-0"
+        className={`flex min-h-0 min-w-0 ${childMin}`}
         style={{ flexBasis: `${Math.round(ratio * 100)}%` }}
       >
         <LayoutNodeView node={node.first} ctx={ctx} />
@@ -275,7 +345,7 @@ function LayoutNodeView({
         onCommit={ctx.onCommitRatio}
         onCancel={ctx.onCancelRatio}
       />
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div className={`flex min-h-0 min-w-0 flex-1 ${childMin}`}>
         <LayoutNodeView node={node.second} ctx={ctx} />
       </div>
     </div>
@@ -409,10 +479,10 @@ function Divider({
       aria-valuemin={10}
       aria-valuemax={90}
       tabIndex={0}
-      className={`shrink-0 bg-neutral-800 hover:bg-neutral-600 ${
+      className={`shrink-0 bg-neutral-800 hover:bg-neutral-600 focus-visible:bg-neutral-500 focus-visible:outline-2 focus-visible:outline-neutral-400 ${
         direction === 'horizontal'
-          ? 'w-1 cursor-col-resize'
-          : 'h-1 cursor-row-resize'
+          ? 'w-1.5 cursor-col-resize'
+          : 'h-1.5 cursor-row-resize'
       }`}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
@@ -427,6 +497,102 @@ function Divider({
 // ---------------------------------------------------------------------------
 // Panel — toolbar, unique Agent Tabs, agent view, drop zones
 // ---------------------------------------------------------------------------
+
+/**
+ * Keyboard parity for tab gestures (#5): plain arrows and Home/End move
+ * DOM focus within the tablist (ARIA manual activation), Ctrl+Arrow moves
+ * the tab across panels (the pointer centre drop) and Ctrl+Shift+Arrow
+ * split-moves it (the pointer edge drop). Every path normalises to the
+ * same layout commands as the pointer equivalent.
+ */
+function handleTabKeyDown(
+  e: KeyboardEvent<HTMLDivElement>,
+  ctx: LayoutRenderContext,
+  panelId: PanelId,
+  tabId: AgentInstanceId
+): void {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    void ctx.sendLayout({
+      kind: 'activate-tab',
+      panelId,
+      agentInstanceId: tabId
+    })
+    return
+  }
+
+  const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
+  if (!ARROWS.includes(e.key) && e.key !== 'Home' && e.key !== 'End') return
+
+  const plain =
+    !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+  if (e.key === 'Home' || e.key === 'End' || (plain && ARROWS.includes(e.key))) {
+    e.preventDefault()
+    const tablist = e.currentTarget.closest('[role="tablist"]')
+    const tabs = Array.from(
+      tablist?.querySelectorAll('[role="tab"]') ?? []
+    ) as HTMLElement[]
+    const index = tabs.indexOf(e.currentTarget)
+    let target: HTMLElement | undefined
+    if (e.key === 'ArrowRight') target = tabs[index + 1]
+    else if (e.key === 'ArrowLeft') target = tabs[index - 1]
+    else if (e.key === 'Home') target = tabs[0]
+    else if (e.key === 'End') target = tabs[tabs.length - 1]
+    target?.focus()
+    return
+  }
+
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || !ARROWS.includes(e.key)) return
+  e.preventDefault()
+  if (e.shiftKey) {
+    // Split-move — the same command a drop on the matching edge produces.
+    const direction =
+      e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+        ? 'horizontal'
+        : 'vertical'
+    const position =
+      e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? 'before' : 'after'
+    void ctx.sendLayout({
+      kind: 'open-tab-in-new-panel',
+      agentInstanceId: tabId,
+      direction,
+      position,
+      relativeToPanelId: panelId
+    })
+    return
+  }
+  // Move to the previous/next panel in tree order — the centre-drop command.
+  const ordered = treePanelOrder(ctx.project.layout.root)
+  const index = ordered.indexOf(panelId)
+  const targetIndex =
+    e.key === 'ArrowRight' || e.key === 'ArrowDown' ? index + 1 : index - 1
+  const target = ordered[targetIndex]
+  if (target) {
+    void ctx.sendLayout({
+      kind: 'move-tab',
+      agentInstanceId: tabId,
+      targetPanelId: target
+    })
+  }
+}
+
+const TAB_KEYSHORTCUTS = [
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'Control+ArrowLeft',
+  'Control+ArrowRight',
+  'Control+ArrowUp',
+  'Control+ArrowDown',
+  'Control+Shift+ArrowLeft',
+  'Control+Shift+ArrowRight',
+  'Control+Shift+ArrowUp',
+  'Control+Shift+ArrowDown'
+].join(' ')
+
+const PANEL_TOOLBAR_BUTTON_CLASS =
+  'rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-neutral-400'
 
 function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContext }) {
   const { project, snapshot, openAttentionTargets, sendLayout } = ctx
@@ -490,34 +656,56 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-1.5 py-1">
-        <button
-          className="rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
-          onClick={() =>
-            void sendLayout({
-              kind: 'split-panel',
-              panelId,
-              direction: 'horizontal'
-            })
-          }
-        >
-          向右分割
-        </button>
-        <button
-          className="rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
-          onClick={() =>
-            void sendLayout({
-              kind: 'split-panel',
-              panelId,
-              direction: 'vertical'
-            })
-          }
-        >
-          向下分割
-        </button>
+        {!ctx.temporaryFocusPanelId && (
+          <>
+            <button
+              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              onClick={() =>
+                void sendLayout({
+                  kind: 'split-panel',
+                  panelId,
+                  direction: 'horizontal'
+                })
+              }
+            >
+              向右分割
+            </button>
+            <button
+              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              onClick={() =>
+                void sendLayout({
+                  kind: 'split-panel',
+                  panelId,
+                  direction: 'vertical'
+                })
+              }
+            >
+              向下分割
+            </button>
+            <button
+              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              title="以此 Panel 为主，生成一主两辅布局"
+              onClick={() =>
+                void sendLayout({ kind: 'apply-analysis-preset', panelId })
+              }
+            >
+              Analysis 预设
+            </button>
+          </>
+        )}
         <span className="flex-1" />
-        {ctx.panelCount > 1 && (
+        {!ctx.temporaryFocusPanelId && (
           <button
-            className="rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+            aria-label="Focus 此 Panel"
+            className={PANEL_TOOLBAR_BUTTON_CLASS}
+            onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
+          >
+            Focus
+          </button>
+        )}
+        {!ctx.temporaryFocusPanelId && ctx.panelCount > 1 && (
+          <button
+            className={PANEL_TOOLBAR_BUTTON_CLASS}
             onClick={() => ctx.onRequestClosePanel(panelId)}
           >
             关闭 Panel
@@ -541,9 +729,10 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               key={tabId}
               role="tab"
               aria-selected={selected}
-              tabIndex={0}
+              aria-keyshortcuts={TAB_KEYSHORTCUTS}
+              tabIndex={selected ? 0 : -1}
               draggable
-              className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm ${
+              className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-neutral-400 ${
                 selected
                   ? 'bg-neutral-900 text-neutral-100'
                   : 'text-neutral-500 hover:bg-neutral-900/60'
@@ -555,16 +744,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                   agentInstanceId: tabId
                 })
               }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  void sendLayout({
-                    kind: 'activate-tab',
-                    panelId,
-                    agentInstanceId: tabId
-                  })
-                }
-              }}
+              onKeyDown={(e) => handleTabKeyDown(e, ctx, panelId, tabId)}
               onDragStart={(e) => {
                 e.dataTransfer.setData('text/plain', tabId)
                 e.dataTransfer.effectAllowed = 'move'
@@ -588,7 +768,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               </span>
               <button
                 aria-label={`关闭标签 ${agent.name}`}
-                className="ml-1 rounded px-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                className="ml-1 rounded px-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-neutral-400"
                 onClick={(e) => {
                   e.stopPropagation()
                   void sendLayout({

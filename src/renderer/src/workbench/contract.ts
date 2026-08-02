@@ -290,6 +290,7 @@ export type LayoutOperation =
     }
   | { kind: 'resize-split'; splitNodeId: SplitNodeId; ratio: number }
   | { kind: 'focus-panel'; panelId?: PanelId }
+  | { kind: 'apply-analysis-preset'; panelId: PanelId }
   | { kind: 'prune-empty-panels' }
 
 export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'

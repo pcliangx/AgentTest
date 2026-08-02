@@ -126,6 +126,10 @@ function prunePanel(state: WorkspaceLayoutViewModel, panelId: PanelId): void {
     state.focusedPanelId = (Object.keys(state.panels)[0] as PanelId) ?? undefined
     if (!state.focusedPanelId) delete state.focusedPanelId
   }
+  // A panel in temporary Focus cannot outlive itself — Focus ends with it.
+  if (state.temporaryFocusPanelId === panelId) {
+    delete state.temporaryFocusPanelId
+  }
 }
 
 function removeTabFromPanel(
@@ -385,8 +389,76 @@ export function applyLayoutOperation(
       return ok(state)
     }
 
+    case 'focus-panel': {
+      // Focus is a temporary view state: the tree, tabs and ratios stay
+      // verbatim, so exiting later restores them losslessly (UX-v0.2 §7.1).
+      if (operation.panelId && !layout.panels[operation.panelId]) {
+        return reject('invalid-target', 'Panel 不存在')
+      }
+      const state = cloneLayout(layout)
+      if (operation.panelId) {
+        state.temporaryFocusPanelId = operation.panelId
+        state.focusedPanelId = operation.panelId
+      } else {
+        delete state.temporaryFocusPanelId
+      }
+      return ok(state)
+    }
+
+    case 'apply-analysis-preset': {
+      if (!layout.panels[operation.panelId]) {
+        return reject('invalid-target', 'Panel 不存在')
+      }
+      const state = cloneLayout(layout)
+      // The preset is a plain split tree (UX-v0.2 §7.1) — a shortcut over
+      // the same model, never a second layout model: horizontal main at
+      // 61%, two auxiliaries stacked vertically at 52%.
+      //
+      // Auxiliary slots reuse other panels in tree (rendered) order; any
+      // missing slot gets a fresh empty panel.
+      const others = collectPanelIds(state.root).filter(
+        (panelId) => panelId !== operation.panelId
+      )
+      const aux1 = others[0] ?? ids.newPanelId()
+      const aux2 = others[1] ?? ids.newPanelId()
+      for (const aux of [aux1, aux2]) {
+        if (!state.panels[aux]) state.panels[aux] = { tabs: [] }
+      }
+      // Panels beyond the preset's three slots are pruned; their tabs
+      // migrate into the main panel — restructuring never drops a tab.
+      const main = state.panels[operation.panelId]
+      for (const leftover of others.slice(2)) {
+        main.tabs.push(...state.panels[leftover].tabs)
+        delete state.panels[leftover]
+      }
+      if (!main.activeTabId && main.tabs.length > 0) {
+        main.activeTabId = main.tabs[0]
+      }
+      const mainSplitId = ids.newSplitNodeId()
+      const auxSplitId = ids.newSplitNodeId()
+      state.root = {
+        kind: 'split',
+        splitNodeId: mainSplitId,
+        direction: 'horizontal',
+        ratio: 0.61,
+        first: { kind: 'panel', panelId: operation.panelId },
+        second: {
+          kind: 'split',
+          splitNodeId: auxSplitId,
+          direction: 'vertical',
+          ratio: 0.52,
+          first: { kind: 'panel', panelId: aux1 },
+          second: { kind: 'panel', panelId: aux2 }
+        }
+      }
+      state.focusedPanelId = operation.panelId
+      // The user explicitly asked for the three-panel view — showing a
+      // single focused panel right after would contradict the action.
+      delete state.temporaryFocusPanelId
+      return ok(state)
+    }
+
     default:
-      // focus-panel belongs to the advanced layout ticket (#5).
       return reject('scenario-read-only', '此布局操作尚未实现')
   }
 }
@@ -457,5 +529,15 @@ export function assertLayoutInvariants(layout: WorkspaceLayoutViewModel): void {
   // Focus references an existing panel.
   if (layout.focusedPanelId && !layout.panels[layout.focusedPanelId]) {
     throw new Error(`focusedPanelId ${layout.focusedPanelId} does not exist`)
+  }
+
+  // Temporary Focus references an existing panel.
+  if (
+    layout.temporaryFocusPanelId &&
+    !layout.panels[layout.temporaryFocusPanelId]
+  ) {
+    throw new Error(
+      `temporaryFocusPanelId ${layout.temporaryFocusPanelId} does not exist`
+    )
   }
 }

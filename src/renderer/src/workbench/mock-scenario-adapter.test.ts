@@ -655,17 +655,50 @@ describe('MockScenarioAdapter — change-layout tab commands', () => {
     if (!result.ok) expect(result.reason).toBe('invalid-target')
   })
 
-  it('still rejects focus operations as scenario-read-only (#5 scope)', async () => {
+  it('enters and exits temporary Focus through the shared reducer (#5)', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const result = await adapter.dispatch(
+    const focused = await adapter.dispatch(
       changeLayout(cmdId(1), snap.revision, {
         kind: 'focus-panel',
         panelId: PANEL
       })
     )
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.reason).toBe('scenario-read-only')
+    expect(focused.ok).toBe(true)
+    let after = await adapter.getSnapshot()
+    // Focus is a temporary view state: the tree and tabs are untouched.
+    expect(after.projects[0].layout.temporaryFocusPanelId).toEqual(PANEL)
+    expect(after.projects[0].layout.root).toEqual(snap.projects[0].layout.root)
+
+    const unfocused = await adapter.dispatch(
+      changeLayout(cmdId(2), after.revision, { kind: 'focus-panel' })
+    )
+    expect(unfocused.ok).toBe(true)
+    after = await adapter.getSnapshot()
+    expect(after.projects[0].layout.temporaryFocusPanelId).toBeUndefined()
+  })
+
+  it('applies the analysis preset through the shared reducer (#5)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch(
+      changeLayout(cmdId(1), snap.revision, {
+        kind: 'apply-analysis-preset',
+        panelId: PANEL
+      })
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const layout = after.projects[0].layout
+    // One main + two auxiliary panels, all plain split-tree nodes.
+    expect(Object.keys(layout.panels)).toHaveLength(3)
+    expect(layout.panels[PANEL].tabs).toEqual([CC_DATA])
+    const root = layout.root
+    expect(root).toMatchObject({
+      kind: 'split',
+      direction: 'horizontal',
+      second: { kind: 'split', direction: 'vertical' }
+    })
   })
 })
 
