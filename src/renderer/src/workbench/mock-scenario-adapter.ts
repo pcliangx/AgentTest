@@ -7,6 +7,7 @@ import type {
   WorkbenchPort,
   WorkbenchViewModel
 } from './contract'
+import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
 
 /**
@@ -90,6 +91,45 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
       case 'navigate-global': {
         this.snapshot.activeGlobalSurface = command.surface
+        return null
+      }
+      case 'request-dangerous-action': {
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: command.action,
+          target: command.target,
+          impact: `此操作将永久${command.action}「${command.target}」，且不可恢复。`,
+          nonBypassableReason: '高风险操作需要二次确认，无法跳过'
+        }
+        return null
+      }
+      case 'confirm-dangerous-action': {
+        const pending = this.snapshot.pendingConfirmation
+        if (!pending || pending.confirmationId !== command.confirmationId) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '无效或过期的确认 ID'
+          )
+        }
+        const { action, target } = pending
+        this.snapshot.pendingConfirmation = undefined
+        const projectId =
+          this.snapshot.activeProjectId ??
+          this.snapshot.projects[0]?.projectId
+        if (projectId) {
+          this.snapshot.activity.unshift({
+            activityId: id(`act-${Date.now()}`, 'ActivityId'),
+            projectId,
+            timestamp: Date.now(),
+            kind: 'dangerous-action-confirmed',
+            summary: `已确认: ${action}（${target}）`
+          })
+        }
+        return null
+      }
+      case 'dismiss-confirmation': {
+        this.snapshot.pendingConfirmation = undefined
         return null
       }
       default:

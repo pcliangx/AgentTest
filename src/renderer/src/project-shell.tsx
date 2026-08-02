@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   CommandResult,
+  ConfirmationId,
+  GlobalSurface,
   ProjectId,
   ProjectSurface,
   ProjectViewModel,
@@ -15,12 +17,18 @@ import { id } from './workbench/contract'
 // Hook — the renderer's sole connection to the port
 // ---------------------------------------------------------------------------
 
+/** Distributes Omit over the WorkbenchCommand union so each variant stays
+ *  independently discriminated by `kind`. */
+type CommandInput = WorkbenchCommand extends infer T
+  ? T extends unknown
+    ? Omit<T, 'commandId' | 'expectedRevision'>
+    : never
+  : never
+
 function useWorkbench(port: WorkbenchPort) {
   const [snapshot, setSnapshot] = useState<WorkbenchViewModel | null>(null)
   const revisionRef = useRef<number>(-1)
 
-  // Shared updater — only accepts snapshots with strictly higher revision.
-  // Prevents a stale getSnapshot response from overwriting a newer event.
   const applySnapshot = useCallback((snap: WorkbenchViewModel) => {
     if (snap.revision > revisionRef.current) {
       revisionRef.current = snap.revision
@@ -30,7 +38,6 @@ function useWorkbench(port: WorkbenchPort) {
 
   useEffect(() => {
     let active = true
-    // Subscribe FIRST so events arriving during the initial load aren't missed.
     const unsubscribe = port.subscribe((event) => {
       if (event.kind === 'view-model-updated') {
         applySnapshot(event.snapshot)
@@ -45,15 +52,13 @@ function useWorkbench(port: WorkbenchPort) {
     }
   }, [port, applySnapshot])
 
-  const navigate = useCallback(
-    (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> => {
-      const command: WorkbenchCommand = {
-        kind: 'navigate',
+  const send = useCallback(
+    (partial: CommandInput): Promise<CommandResult> => {
+      const command = {
+        ...partial,
         commandId: id(crypto.randomUUID(), 'CommandId'),
-        expectedRevision: revisionRef.current,
-        projectId,
-        surface
-      }
+        expectedRevision: revisionRef.current
+      } as WorkbenchCommand
       const result = port.dispatch(command)
       void result.then((r) => {
         if (!r.ok && r.reason === 'stale-revision') {
@@ -65,7 +70,42 @@ function useWorkbench(port: WorkbenchPort) {
     [port, applySnapshot]
   )
 
-  return { snapshot, navigate }
+  const navigate = useCallback(
+    (projectId: ProjectId, surface: ProjectSurface) =>
+      send({ kind: 'navigate', projectId, surface }),
+    [send]
+  )
+
+  const navigateGlobal = useCallback(
+    (surface: GlobalSurface) => send({ kind: 'navigate-global', surface }),
+    [send]
+  )
+
+  const requestDangerousAction = useCallback(
+    (action: string, target: string) =>
+      send({ kind: 'request-dangerous-action', action, target }),
+    [send]
+  )
+
+  const confirmDangerousAction = useCallback(
+    (confirmationId: ConfirmationId) =>
+      send({ kind: 'confirm-dangerous-action', confirmationId }),
+    [send]
+  )
+
+  const dismissConfirmation = useCallback(
+    () => send({ kind: 'dismiss-confirmation' }),
+    [send]
+  )
+
+  return {
+    snapshot,
+    navigate,
+    navigateGlobal,
+    requestDangerousAction,
+    confirmDangerousAction,
+    dismissConfirmation
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +122,12 @@ const SURFACES: Array<{ surface: ProjectSurface; label: string }> = [
   { surface: 'settings', label: '设置' }
 ]
 
+const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
+  { surface: 'connections', label: '连接' },
+  { surface: 'provider-health', label: 'Provider 健康' },
+  { surface: 'global-settings', label: '全局设置' }
+]
+
 const ROOT_LABEL: Record<string, string> = {
   available: '可用',
   unavailable: '不可用'
@@ -96,7 +142,21 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
   'run-started': '运行开始',
   'run-completed': '运行完成',
   'configuration-applied': '配置已应用',
-  'permission-decided': '权限已决定'
+  'permission-decided': '权限已决定',
+  'dangerous-action-confirmed': '高风险操作已确认'
+}
+
+const CONNECTION_STATUS_LABEL: Record<string, string> = {
+  connected: '已连接',
+  disconnected: '未连接',
+  offline: '离线',
+  error: '错误'
+}
+
+const PROVIDER_LABEL: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  'kimi-code': 'Kimi Code'
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +164,14 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export function ProjectShell({ port }: { port: WorkbenchPort }) {
-  const { snapshot, navigate } = useWorkbench(port)
+  const {
+    snapshot,
+    navigate,
+    navigateGlobal,
+    requestDangerousAction,
+    confirmDangerousAction,
+    dismissConfirmation
+  } = useWorkbench(port)
 
   if (!snapshot) {
     return (
@@ -136,87 +203,142 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     .filter((a) => a.projectId === project.projectId)
     .sort((a, b) => b.timestamp - a.timestamp)
 
+  const inGlobalView = snapshot.activeGlobalSurface !== undefined
+
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
-        <span className="font-medium">Agent Squad HQ</span>
-        {connection && (
+        <div className="flex items-center gap-3">
+          <span className="font-medium">Agent Squad HQ</span>
+          {inGlobalView ? (
+            <button
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+              onClick={() => void navigate(project.projectId, project.currentSurface)}
+            >
+              ← 返回项目
+            </button>
+          ) : (
+            <div className="flex items-center gap-1">
+              {GLOBAL_ENTRIES.map(({ surface, label }) => (
+                <button
+                  key={surface}
+                  className="rounded px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                  onClick={() => void navigateGlobal(surface)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {!inGlobalView && connection && (
           <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
             {connection.label}
           </span>
         )}
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <nav
-          className="w-48 shrink-0 border-r border-neutral-800 p-2"
-          aria-label="主导航"
-        >
-          <div className="mb-3">
-            <div className="text-[10px] uppercase tracking-wide text-neutral-600">
-              当前项目
-            </div>
-            <select
-              aria-label="切换项目"
-              className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
-              value={project.projectId}
-              onChange={(e) => {
-                const targetId = id(e.target.value, 'ProjectId')
-                const target = snapshot.projects.find(
-                  (p) => p.projectId === targetId
-                )
-                void navigate(targetId, target?.currentSurface ?? 'overview')
-              }}
-            >
-              {snapshot.projects.map((p) => (
-                <option key={p.projectId} value={p.projectId}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-0.5">
-            {SURFACES.map(({ surface, label }) => (
-              <button
-                key={surface}
-                className={`block w-full rounded px-2 py-1 text-left text-sm transition-colors ${
-                  project.currentSurface === surface
-                    ? 'bg-neutral-800 text-neutral-100'
-                    : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
-                }`}
-                onClick={() => void navigate(project.projectId, surface)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </nav>
-
+      {inGlobalView ? (
         <main className="min-h-0 flex-1 overflow-auto p-4">
-          {project.currentSurface === 'overview' && (
-            <OverviewSurface
-              project={project}
-              agentCount={projectAgents.length}
-              connectionLabel={connection?.label}
-              activity={projectActivity.slice(0, 5)}
+          {snapshot.activeGlobalSurface === 'connections' && (
+            <ConnectionsSurface
+              connections={snapshot.global.connections}
+              onDelete={(action, target) =>
+                void requestDangerousAction(action, target)
+              }
             />
           )}
-          {project.currentSurface === 'activity' && (
-            <ActivitySurface activity={projectActivity} />
+          {snapshot.activeGlobalSurface === 'provider-health' && (
+            <ProviderHealthSurface providers={snapshot.global.providers} />
           )}
-          {project.currentSurface !== 'overview' &&
-            project.currentSurface !== 'activity' && (
-              <PlaceholderSurface surface={project.currentSurface} />
-            )}
+          {snapshot.activeGlobalSurface === 'global-settings' && (
+            <GlobalSettingsSurface />
+          )}
         </main>
-      </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <nav
+            className="w-48 shrink-0 border-r border-neutral-800 p-2"
+            aria-label="主导航"
+          >
+            <div className="mb-3">
+              <div className="text-[10px] uppercase tracking-wide text-neutral-600">
+                当前项目
+              </div>
+              <select
+                aria-label="切换项目"
+                className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
+                value={project.projectId}
+                onChange={(e) => {
+                  const targetId = id(e.target.value, 'ProjectId')
+                  const target = snapshot.projects.find(
+                    (p) => p.projectId === targetId
+                  )
+                  void navigate(targetId, target?.currentSurface ?? 'overview')
+                }}
+              >
+                {snapshot.projects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-0.5">
+              {SURFACES.map(({ surface, label }) => (
+                <button
+                  key={surface}
+                  className={`block w-full rounded px-2 py-1 text-left text-sm transition-colors ${
+                    project.currentSurface === surface
+                      ? 'bg-neutral-800 text-neutral-100'
+                      : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                  }`}
+                  onClick={() => void navigate(project.projectId, surface)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </nav>
+
+          <main className="min-h-0 flex-1 overflow-auto p-4">
+            {project.currentSurface === 'overview' && (
+              <OverviewSurface
+                project={project}
+                agentCount={projectAgents.length}
+                connectionLabel={connection?.label}
+                activity={projectActivity.slice(0, 5)}
+              />
+            )}
+            {project.currentSurface === 'activity' && (
+              <ActivitySurface activity={projectActivity} />
+            )}
+            {project.currentSurface !== 'overview' &&
+              project.currentSurface !== 'activity' && (
+                <PlaceholderSurface surface={project.currentSurface} />
+              )}
+          </main>
+        </div>
+      )}
+
+      {snapshot.pendingConfirmation && (
+        <ConfirmationModal
+          confirmation={snapshot.pendingConfirmation}
+          onConfirm={() =>
+            void confirmDangerousAction(
+              snapshot.pendingConfirmation!.confirmationId
+            )
+          }
+          onCancel={() => void dismissConfirmation()}
+        />
+      )}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Surfaces
+// Project surfaces
 // ---------------------------------------------------------------------------
 
 function OverviewSurface({
@@ -324,6 +446,170 @@ function PlaceholderSurface({ surface }: { surface: ProjectSurface }) {
       <p className="text-sm text-neutral-500">
         {labels[surface]} 工作面尚未实现
       </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Global surfaces
+// ---------------------------------------------------------------------------
+
+function ConnectionsSurface({
+  connections,
+  onDelete
+}: {
+  connections: WorkbenchViewModel['global']['connections']
+  onDelete: (action: string, target: string) => void
+}) {
+  return (
+    <section role="region" aria-label="全局连接" className="space-y-3">
+      <h2 className="text-lg font-medium text-neutral-100">连接</h2>
+      <ul className="space-y-2">
+        {connections.map((conn) => (
+          <li
+            key={conn.connectionId}
+            className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-neutral-200">{conn.label}</span>
+              <span className="text-xs text-neutral-500">
+                {CONNECTION_STATUS_LABEL[conn.status] ?? conn.status}
+              </span>
+            </div>
+            <button
+              className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
+              onClick={() => onDelete('删除连接', conn.label)}
+            >
+              删除
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function ProviderHealthSurface({
+  providers
+}: {
+  providers: WorkbenchViewModel['global']['providers']
+}) {
+  return (
+    <section role="region" aria-label="Provider 健康" className="space-y-3">
+      <h2 className="text-lg font-medium text-neutral-100">Provider 健康</h2>
+      <ul className="space-y-2">
+        {providers.map((p) => (
+          <li
+            key={p.providerId}
+            className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
+          >
+            <span className="text-sm text-neutral-200">
+              {PROVIDER_LABEL[p.providerId] ?? p.providerId}
+            </span>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-xs ${
+                  p.status === 'ready' ? 'text-emerald-400' : 'text-amber-400'
+                }`}
+              >
+                {p.status === 'ready' ? '可用' : '已阻断'}
+              </span>
+              {p.status === 'blocked' && (
+                <button className="text-xs text-blue-400 hover:text-blue-300">
+                  恢复
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function GlobalSettingsSurface() {
+  return (
+    <section role="region" aria-label="全局设置" className="space-y-3">
+      <h2 className="text-lg font-medium text-neutral-100">全局设置</h2>
+      <p className="text-sm text-neutral-500">全局设置工作面尚未实现</p>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation modal — reusable high-risk action host
+// ---------------------------------------------------------------------------
+
+function ConfirmationModal({
+  confirmation,
+  onConfirm,
+  onCancel
+}: {
+  confirmation: WorkbenchViewModel['pendingConfirmation']
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    confirmRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onCancel])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={confirmation!.action}
+        className="w-full max-w-md space-y-3 rounded-lg bg-neutral-900 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-medium text-neutral-100">
+          {confirmation!.action}
+        </h3>
+        <dl className="space-y-1.5 text-sm">
+          <div>
+            <dt className="inline text-neutral-500">目标：</dt>
+            <dd className="inline text-neutral-200">{confirmation!.target}</dd>
+          </div>
+          <div>
+            <dt className="inline text-neutral-500">影响：</dt>
+            <dd className="inline text-neutral-200">{confirmation!.impact}</dd>
+          </div>
+          <div>
+            <dt className="inline text-neutral-500">不可跳过：</dt>
+            <dd className="inline text-neutral-200">
+              {confirmation!.nonBypassableReason}
+            </dd>
+          </div>
+        </dl>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={onCancel}
+          >
+            取消
+          </button>
+          <button
+            ref={confirmRef}
+            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
+            onClick={onConfirm}
+          >
+            确认
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

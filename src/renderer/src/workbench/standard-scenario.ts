@@ -198,12 +198,22 @@ export function createStandardScenario(): WorkbenchViewModel {
           connectionId: connId,
           label: '飞书 · 销售团队',
           status: 'connected'
+        },
+        {
+          connectionId: id('conn-feishu-product', 'ConnectionId'),
+          label: '飞书 · 产品团队',
+          status: 'disconnected'
+        },
+        {
+          connectionId: id('conn-github', 'ConnectionId'),
+          label: 'GitHub',
+          status: 'error'
         }
       ],
       providers: [
         { providerId: id('claude-code', 'AgentProviderId'), status: 'ready' },
         { providerId: id('codex', 'AgentProviderId'), status: 'ready' },
-        { providerId: id('kimi-code', 'AgentProviderId'), status: 'ready' }
+        { providerId: id('kimi-code', 'AgentProviderId'), status: 'blocked' }
       ]
     }
   }

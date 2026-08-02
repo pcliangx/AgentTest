@@ -331,6 +331,8 @@ export type WorkbenchCommand = CommandMeta &
         mode: 'execute-confirmed'
         confirmationId: ConfirmationId
       }
+    | { kind: 'request-dangerous-action'; action: string; target: string }
+    | { kind: 'dismiss-confirmation' }
     | { kind: 'request-quit-preview' }
     | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
   )

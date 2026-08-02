@@ -257,3 +257,143 @@ describe('ProjectShell — command ID uniqueness', () => {
     ).toBeVisible()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Global surfaces
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — global surfaces', () => {
+  it('shows global navigation entries in project view', async () => {
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    expect(screen.getByRole('button', { name: '连接' })).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: 'Provider 健康' })
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: '全局设置' })).toBeVisible()
+  })
+
+  it('navigates to Connections showing multiple connections', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    const region = await screen.findByRole('region', { name: '全局连接' })
+    expect(region).toHaveTextContent('飞书 · 销售团队')
+    expect(region).toHaveTextContent('已连接')
+    expect(region).toHaveTextContent('飞书 · 产品团队')
+    expect(region).toHaveTextContent('未连接')
+    expect(region).toHaveTextContent('GitHub')
+    expect(region).toHaveTextContent('错误')
+  })
+
+  it('navigates to Provider Health showing blocked provider', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    const region = await screen.findByRole('region', {
+      name: 'Provider 健康'
+    })
+    expect(region).toHaveTextContent('Claude Code')
+    expect(region).toHaveTextContent('可用')
+    expect(region).toHaveTextContent('Kimi Code')
+    expect(region).toHaveTextContent('已阻断')
+  })
+
+  it('returns to project from global view preserving the surface', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    // Navigate to tasks first, then go to global, then return
+    await user.click(screen.getByRole('button', { name: '任务' }))
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    // Should return to tasks surface, not overview
+    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Confirmation host
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — confirmation host', () => {
+  it('shows confirmation modal with all fields when deleting a connection', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    const deleteButtons = screen.getAllByRole('button', { name: '删除' })
+    await user.click(deleteButtons[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('删除连接')
+    expect(dialog).toHaveTextContent('飞书 · 销售团队')
+    expect(dialog).toHaveTextContent('不可恢复')
+    expect(dialog).toHaveTextContent('二次确认')
+  })
+
+  it('confirms dangerous action and closes modal', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('cancels confirmation via cancel button', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('dismisses confirmation via Escape key', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// No side effects — extended
+// ---------------------------------------------------------------------------
+
+describe('ProjectShell — no side effects (global + confirmation)', () => {
+  it('does not call window.api during global navigation and confirmation', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    await user.click(screen.getAllByRole('button', { name: '删除' })[0])
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    expect(apiSpy).not.toHaveBeenCalled()
+  })
+})
