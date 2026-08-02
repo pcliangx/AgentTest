@@ -295,6 +295,7 @@ export function DispatchPicker({
   const toggleManual = (
     agentInstanceId: AgentInstanceViewModel['agentInstanceId']
   ) => {
+    if (submittingRef.current) return
     setManual((prev) => {
       const next = new Set(prev)
       if (next.has(agentInstanceId)) next.delete(agentInstanceId)
@@ -466,7 +467,8 @@ export function DispatchPicker({
             className="max-h-40 space-y-0.5 overflow-auto"
           >
             {projectAgents.map((a) => {
-              const disabled = projectBlocked || !isDispatchable(a)
+              const disabled =
+                projectBlocked || submitting || !isDispatchable(a)
               const selected = targetIds.has(a.agentInstanceId)
               return (
                 <li key={a.agentInstanceId}>

@@ -1128,6 +1128,42 @@ describe('Dispatch — idempotency', () => {
     }
   })
 
+  it('freezes the submitted target preview while confirmation is pending', async () => {
+    const user = userEvent.setup()
+    const port = new DeferredCommandPort('confirm-dispatch')
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+
+    const submittedTarget = within(dialog).getByRole('button', {
+      name: /cx_review/
+    })
+    const otherTarget = within(dialog).getByRole('button', { name: /cc_etl/ })
+    await user.click(submittedTarget)
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'keep the submitted preview stable'
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    )
+
+    try {
+      expect(submittedTarget).toBeDisabled()
+      expect(otherTarget).toBeDisabled()
+      await user.click(otherTarget)
+      const chips = within(dialog).getAllByRole('listitem', {
+        name: /已选目标/
+      })
+      expect(chips.map((chip) => chip.textContent)).toEqual(['cx_review'])
+      expect(
+        port.commands.filter((command) => command.kind === 'confirm-dispatch')
+      ).toHaveLength(1)
+    } finally {
+      await act(() => port.resolvePending())
+    }
+  })
+
   it('cannot dismiss and reopen the picker while confirmation is pending', async () => {
     const user = userEvent.setup()
     const port = new DeferredCommandPort('confirm-dispatch')
