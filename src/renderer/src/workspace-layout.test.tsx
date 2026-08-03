@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { id } from './workbench/contract'
+import { createStandardScenario } from './workbench/standard-scenario'
 import type {
   AgentInstanceId,
   CommandResult,
@@ -12,6 +21,7 @@ import type {
   PanelId,
   SplitNodeId,
   WorkbenchCommand,
+  WorkbenchEvent,
   WorkbenchPort
 } from './workbench/contract'
 
@@ -24,6 +34,109 @@ async function gotoAgentsSurface(port?: WorkbenchPort) {
   await user.click(screen.getByRole('button', { name: 'Agent' }))
   await screen.findByRole('region', { name: 'Agent 目录' })
   return { user }
+}
+
+class RejectTerminalOpenAdapter extends MockScenarioAdapter {
+  override async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (
+      command.kind === 'set-terminal-takeover' &&
+      command.operation === 'open'
+    ) {
+      return {
+        ok: false,
+        commandId: command.commandId,
+        reason: 'unavailable',
+        latestRevision: command.expectedRevision,
+        message: 'Project Root 刚刚变为不可用，请恢复或重新定位 Root'
+      }
+    }
+    return super.dispatch(command)
+  }
+}
+
+class DeferredTerminalAdapter extends MockScenarioAdapter {
+  private pending:
+    | {
+        command: Extract<WorkbenchCommand, { kind: 'set-terminal-takeover' }>
+        resolve: (result: CommandResult) => void
+      }
+    | undefined
+
+  override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind !== 'set-terminal-takeover') {
+      return super.dispatch(command)
+    }
+    return new Promise((resolve) => {
+      this.pending = { command, resolve }
+    })
+  }
+
+  async releaseTerminal(): Promise<void> {
+    if (!this.pending) throw new Error('No pending Terminal command')
+    const { command, resolve } = this.pending
+    this.pending = undefined
+    resolve(await super.dispatch(command))
+  }
+}
+
+class DeferredTerminalEventPort implements WorkbenchPort {
+  private readonly inner: MockScenarioAdapter
+  private readonly listeners = new Set<(event: WorkbenchEvent) => void>()
+  private readonly pendingEvents: WorkbenchEvent[] = []
+  private deferTerminalEvents = false
+
+  constructor() {
+    this.inner = new MockScenarioAdapter()
+    this.inner.subscribe((event) => {
+      if (this.deferTerminalEvents) this.pendingEvents.push(event)
+      else this.listeners.forEach((listener) => listener(event))
+    })
+  }
+
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+
+  planDispatch(request: Parameters<WorkbenchPort['planDispatch']>[0]) {
+    return this.inner.planDispatch(request)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind !== 'set-terminal-takeover') {
+      return this.inner.dispatch(command)
+    }
+    this.deferTerminalEvents = true
+    try {
+      return await this.inner.dispatch(command)
+    } finally {
+      this.deferTerminalEvents = false
+    }
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  releaseTerminalEvents(): void {
+    const events = this.pendingEvents.splice(0)
+    events.forEach((event) =>
+      this.listeners.forEach((listener) => listener(event))
+    )
+  }
+}
+
+async function gotoNamedAgentTerminal(
+  port: WorkbenchPort,
+  agentName: string
+) {
+  const { user } = await gotoAgentsSurface(port)
+  await user.click(
+    screen.getByRole('button', { name: new RegExp(`^${agentName}`) })
+  )
+  const view = await screen.findByRole('region', { name: 'Agent 视图' })
+  await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+  return { user, view }
 }
 
 function panels(): HTMLElement[] {
@@ -748,9 +861,9 @@ describe('Workspace layout — rejection recovery', () => {
 
 describe('Workspace layout — queue and terminal (#7)', () => {
   /** Navigate to Agents surface; cc_data is open by default in the scenario. */
-  async function gotoAgentView() {
+  async function gotoAgentView(port: WorkbenchPort = new MockScenarioAdapter()) {
     const user = userEvent.setup()
-    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     await user.click(screen.getByRole('button', { name: 'Agent' }))
     await screen.findByRole('region', { name: 'Agent 目录' })
@@ -795,6 +908,77 @@ describe('Workspace layout — queue and terminal (#7)', () => {
     expect(status.textContent).not.toBe(firstAnnouncement)
   })
 
+  it.each([
+    {
+      priority: 'low',
+      raiseName: '提高优先级',
+      raiseDisabled: false,
+      lowerName: '降低优先级（已是最低优先级）',
+      lowerDisabled: true
+    },
+    {
+      priority: 'normal',
+      raiseName: '提高优先级',
+      raiseDisabled: false,
+      lowerName: '降低优先级',
+      lowerDisabled: false
+    },
+    {
+      priority: 'high',
+      raiseName: '提高优先级（已是最高优先级）',
+      raiseDisabled: true,
+      lowerName: '降低优先级',
+      lowerDisabled: false
+    }
+  ] as const)(
+    'exposes accessible priority boundaries for $priority',
+    async ({
+      priority,
+      raiseName,
+      raiseDisabled,
+      lowerName,
+      lowerDisabled
+    }) => {
+      const scenario = createStandardScenario()
+      scenario.queue[0].priority = priority
+      await gotoAgentView(new MockScenarioAdapter(scenario))
+      const row = screen.getByRole('group', {
+        name: '队列项 1：cx_forecast'
+      })
+
+      const raise = within(row).getByRole('button', { name: raiseName })
+      const lower = within(row).getByRole('button', { name: lowerName })
+      if (raiseDisabled) expect(raise).toBeDisabled()
+      else expect(raise).not.toBeDisabled()
+      if (lowerDisabled) expect(lower).toBeDisabled()
+      else expect(lower).not.toBeDisabled()
+    }
+  )
+
+  it('raises then lowers through normal without losing the original priority', async () => {
+    const { user } = await gotoAgentView()
+    let row = screen.getByRole('group', {
+      name: '队列项 1：cx_forecast'
+    })
+
+    await user.click(
+      within(row).getByRole('button', { name: '提高优先级' })
+    )
+    await waitFor(() => {
+      row = screen.getByRole('group', { name: '队列项 1：cx_forecast' })
+      expect(row).toHaveTextContent('高')
+    })
+
+    await user.click(
+      within(row).getByRole('button', { name: '降低优先级' })
+    )
+    await waitFor(() => {
+      expect(
+        screen.getByRole('group', { name: '队列项 1：cx_forecast' })
+      ).toHaveTextContent('普通')
+    })
+  })
+
   it('terminal sub-view shows takeover blocked for running agent', async () => {
     const { user, view } = await gotoAgentView()
     await user.click(within(view).getByRole('button', { name: 'Terminal' }))
@@ -822,6 +1006,214 @@ describe('Workspace layout — queue and terminal (#7)', () => {
     expect(
       await screen.findByRole('button', { name: '结束接管' })
     ).toBeVisible()
+  })
+
+  it.each([
+    {
+      condition: 'Project archived',
+      configure: (snapshot: ReturnType<typeof createStandardScenario>) => {
+        snapshot.projects[0].lifecycle = 'archived'
+      },
+      reason: 'Project 已归档，不能打开 Terminal',
+      title: 'Project 已归档'
+    },
+    {
+      condition: 'Project Root unavailable',
+      configure: (snapshot: ReturnType<typeof createStandardScenario>) => {
+        snapshot.projects[0].rootAvailability = 'unavailable'
+      },
+      reason: 'Project Root 不可用，不能打开 Terminal',
+      title: 'Project Root 不可用'
+    },
+    {
+      condition: 'repository not ready',
+      configure: (snapshot: ReturnType<typeof createStandardScenario>) => {
+        snapshot.projects[0].repositoryReadiness = 'not-ready'
+      },
+      reason: 'Project 尚未初始化或绑定 Git 仓库，不能打开 Terminal',
+      title: 'Project 尚未初始化或绑定 Git 仓库'
+    }
+  ])(
+    'disables Terminal open with a distinct reason and recovery action when $condition',
+    async ({ configure, reason, title }) => {
+      const snapshot = createStandardScenario()
+      configure(snapshot)
+      const { user, view } = await gotoNamedAgentTerminal(
+        new MockScenarioAdapter(snapshot),
+        'cx_review'
+      )
+
+      expect(view).toHaveTextContent(reason)
+      expect(
+        within(view).getByRole('button', { name: '打开 Terminal' })
+      ).toBeDisabled()
+      expect(
+        within(view).getByRole('button', { name: '打开 Terminal' })
+      ).toHaveAttribute('title', title)
+
+      await user.click(
+        within(view).getByRole('button', { name: '查看 Project 设置' })
+      )
+      expect(
+        await screen.findByRole('region', { name: '项目设置' })
+      ).toBeVisible()
+    }
+  )
+
+  it('surfaces a non-stale Terminal rejection and offers recovery', async () => {
+    const { user, view } = await gotoNamedAgentTerminal(
+      new RejectTerminalOpenAdapter(),
+      'cx_review'
+    )
+    const open = within(view).getByRole('button', { name: '打开 Terminal' })
+
+    await user.click(open)
+
+    expect(await within(view).findByRole('alert')).toHaveTextContent(
+      'Project Root 刚刚变为不可用，请恢复或重新定位 Root'
+    )
+    expect(open).not.toBeDisabled()
+    expect(
+      within(view).getByRole('button', { name: '重试打开 Terminal' })
+    ).toBeVisible()
+    expect(
+      within(view).getAllByRole('button', { name: /打开 Terminal/ })
+    ).toHaveLength(1)
+    expect(
+      within(view).queryByRole('button', { name: '查看 Project 设置' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('announces a pending open and focuses close after acceptance', async () => {
+    const adapter = new DeferredTerminalAdapter()
+    const { user, view } = await gotoNamedAgentTerminal(adapter, 'cx_review')
+    const open = within(view).getByRole('button', { name: '打开 Terminal' })
+
+    await user.click(open)
+
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).toHaveTextContent('正在打开 Terminal')
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).not.toHaveAttribute('aria-busy')
+    expect(
+      within(view).getByRole('group', { name: 'Terminal 控制' })
+    ).toHaveAttribute('aria-busy', 'true')
+    expect(
+      within(view).getByRole('group', { name: 'Terminal 控制' })
+    ).not.toContainElement(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    )
+    expect(open).toBeDisabled()
+
+    await act(async () => adapter.releaseTerminal())
+
+    const close = await within(view).findByRole('button', {
+      name: '结束接管'
+    })
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).toHaveTextContent('Terminal 已接管')
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).not.toHaveAttribute('aria-busy')
+    expect(
+      within(view).getByRole('group', { name: 'Terminal 控制' })
+    ).toHaveAttribute('aria-busy', 'false')
+    expect(close).toHaveFocus()
+  })
+
+  it('preserves the focus target when success arrives before its snapshot event', async () => {
+    const port = new DeferredTerminalEventPort()
+    const { user, view } = await gotoNamedAgentTerminal(port, 'cx_review')
+    const open = within(view).getByRole('button', { name: '打开 Terminal' })
+
+    await user.click(open)
+
+    await waitFor(() => {
+      expect(
+        within(view).getByRole('group', { name: 'Terminal 控制' })
+      ).toHaveAttribute('aria-busy', 'false')
+    })
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).toHaveTextContent('Terminal 未接管')
+    expect(open).toHaveFocus()
+
+    act(() => port.releaseTerminalEvents())
+
+    const close = await within(view).findByRole('button', {
+      name: '结束接管'
+    })
+    expect(close).toHaveFocus()
+  })
+
+  it('announces a pending close and focuses recovery when open stays gated', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].lifecycle = 'archived'
+    const adapter = new DeferredTerminalAdapter(snapshot)
+    const { user, view } = await gotoNamedAgentTerminal(adapter, 'cx_anti')
+    const close = within(view).getByRole('button', { name: '结束接管' })
+
+    await user.click(close)
+
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).toHaveTextContent('正在结束 Terminal 接管')
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).not.toHaveAttribute('aria-busy')
+    expect(
+      within(view).getByRole('group', { name: 'Terminal 控制' })
+    ).toHaveAttribute('aria-busy', 'true')
+    expect(close).toBeDisabled()
+
+    await act(async () => adapter.releaseTerminal())
+
+    const recovery = await within(view).findByRole('button', {
+      name: '查看 Project 设置'
+    })
+    expect(
+      within(view).getByRole('status', { name: 'Terminal 状态' })
+    ).toHaveTextContent('Terminal 未接管')
+    expect(recovery).toHaveFocus()
+  })
+
+  it('allows a queued Agent to open Terminal while the Project is executable', async () => {
+    const { user, view } = await gotoNamedAgentTerminal(
+      new MockScenarioAdapter(),
+      'cx_forecast'
+    )
+    const open = within(view).getByRole('button', { name: '打开 Terminal' })
+
+    expect(open).not.toBeDisabled()
+    await user.click(open)
+    expect(
+      await within(view).findByRole('button', { name: '结束接管' })
+    ).toBeVisible()
+  })
+
+  it('allows an active Terminal to close after the Project becomes archived', async () => {
+    const snapshot = createStandardScenario()
+    snapshot.projects[0].lifecycle = 'archived'
+    const adapter = new MockScenarioAdapter(snapshot)
+    const active = snapshot.agents.find((agent) => agent.name === 'cx_anti')!
+    const { user, view } = await gotoNamedAgentTerminal(adapter, 'cx_anti')
+
+    await user.click(within(view).getByRole('button', { name: '结束接管' }))
+
+    await waitFor(() => {
+      expect(
+        within(view).getByRole('button', { name: '打开 Terminal' })
+      ).toBeDisabled()
+    })
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === active.agentInstanceId
+      )?.terminalState
+    ).toBe('closed')
   })
 
   it('does not call window.api during queue and terminal interactions', async () => {

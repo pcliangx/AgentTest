@@ -1687,31 +1687,123 @@ describe('MockScenarioAdapter — manage-queue', () => {
     expect(moved.position).toBe(2)
   })
 
-  it('raise-priority sets priority to high', async () => {
-    const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const item = snap.queue[0]
-    const result = await adapter.dispatch(
-      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'raise-priority')
-    )
-    expect(result.ok).toBe(true)
-    const after = await adapter.getSnapshot()
-    const updated = after.queue.find((q) => q.queueItemId === item.queueItemId)!
-    expect(updated.priority).toBe('high')
-  })
+  it.each([
+    {
+      initial: 'low',
+      operation: 'raise-priority',
+      expected: 'normal'
+    },
+    {
+      initial: 'normal',
+      operation: 'raise-priority',
+      expected: 'high'
+    },
+    {
+      initial: 'high',
+      operation: 'lower-priority',
+      expected: 'normal'
+    },
+    {
+      initial: 'normal',
+      operation: 'lower-priority',
+      expected: 'low'
+    }
+  ] as const)(
+    'steps $initial via $operation to $expected',
+    async ({ initial, operation, expected }) => {
+      const scenario = createStandardScenario()
+      scenario.queue[0].priority = initial
+      const adapter = new MockScenarioAdapter(scenario)
+      const before = await adapter.getSnapshot()
+      const item = before.queue[0]
 
-  it('lower-priority sets priority to low', async () => {
-    const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const item = snap.queue[0]
-    const result = await adapter.dispatch(
-      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'lower-priority')
-    )
-    expect(result.ok).toBe(true)
-    const after = await adapter.getSnapshot()
-    const updated = after.queue.find((q) => q.queueItemId === item.queueItemId)!
-    expect(updated.priority).toBe('low')
-  })
+      const result = await adapter.dispatch(
+        manageQueue(cmdId(81), before.revision, item.queueItemId, operation)
+      )
+
+      expect(result.ok).toBe(true)
+      const after = await adapter.getSnapshot()
+      expect(
+        after.queue.find((queueItem) => queueItem.queueItemId === item.queueItemId)
+          ?.priority
+      ).toBe(expected)
+      expect(after.revision).toBe(before.revision + 1)
+    }
+  )
+
+  it.each([
+    { initial: 'high', operation: 'raise-priority', boundary: '最高' },
+    { initial: 'low', operation: 'lower-priority', boundary: '最低' }
+  ] as const)(
+    'rejects $operation at the $boundary boundary without a revision',
+    async ({ initial, operation, boundary }) => {
+      const scenario = createStandardScenario()
+      scenario.queue[0].priority = initial
+      const adapter = new MockScenarioAdapter(scenario)
+      const before = await adapter.getSnapshot()
+      const events: WorkbenchEvent[] = []
+      const unsubscribe = adapter.subscribe((event) => events.push(event))
+
+      const result = await adapter.dispatch(
+        manageQueue(
+          cmdId(82),
+          before.revision,
+          before.queue[0].queueItemId,
+          operation
+        )
+      )
+      unsubscribe()
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'invariant-violation',
+        latestRevision: before.revision,
+        message: expect.stringContaining(boundary)
+      })
+      expect(await adapter.getSnapshot()).toEqual(before)
+      expect(events.map((event) => event.kind)).toEqual(['command-rejected'])
+    }
+  )
+
+  it.each([
+    {
+      first: 'raise-priority',
+      midpoint: 'high',
+      second: 'lower-priority'
+    },
+    {
+      first: 'lower-priority',
+      midpoint: 'low',
+      second: 'raise-priority'
+    }
+  ] as const)(
+    'returns normal after $first then $second',
+    async ({ first, midpoint, second }) => {
+      const adapter = new MockScenarioAdapter()
+      const before = await adapter.getSnapshot()
+      const item = before.queue[0]
+
+      await adapter.dispatch(
+        manageQueue(cmdId(83), before.revision, item.queueItemId, first)
+      )
+      const changed = await adapter.getSnapshot()
+      expect(
+        changed.queue.find(
+          (queueItem) => queueItem.queueItemId === item.queueItemId
+        )?.priority
+      ).toBe(midpoint)
+
+      await adapter.dispatch(
+        manageQueue(cmdId(84), changed.revision, item.queueItemId, second)
+      )
+      const restored = await adapter.getSnapshot()
+      expect(
+        restored.queue.find(
+          (queueItem) => queueItem.queueItemId === item.queueItemId
+        )?.priority
+      ).toBe('normal')
+    }
+  )
 
   it('rejects invalid queue item id', async () => {
     const adapter = new MockScenarioAdapter()
@@ -1829,6 +1921,86 @@ describe('MockScenarioAdapter — set-terminal-takeover', () => {
       terminalCmd(cmdId(1), snap.revision, queued.agentInstanceId, 'open')
     )
     expect(result.ok).toBe(true)
+  })
+
+  it.each([
+    {
+      condition: 'Project archived',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].lifecycle = 'archived'
+      },
+      message: 'Project 已归档，不能接管 Terminal'
+    },
+    {
+      condition: 'Project Root unavailable',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].rootAvailability = 'unavailable'
+      },
+      message: 'Project Root 不可用，不能接管 Terminal'
+    },
+    {
+      condition: 'repository not ready',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].repositoryReadiness = 'not-ready'
+      },
+      message: 'Project 尚未初始化或绑定 Git 仓库，不能接管 Terminal'
+    }
+  ])('rejects open atomically when $condition', async ({ configure, message }) => {
+    const scenario = createStandardScenario()
+    configure(scenario)
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const ready = before.agents.find((agent) => agent.name === 'cx_review')!
+
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(91), before.revision, ready.agentInstanceId, 'open')
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'unavailable',
+      message
+    })
+    expect(await adapter.getSnapshot()).toEqual(before)
+  })
+
+  it.each([
+    {
+      condition: 'Project archived',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].lifecycle = 'archived'
+      }
+    },
+    {
+      condition: 'Project Root unavailable',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].rootAvailability = 'unavailable'
+      }
+    },
+    {
+      condition: 'repository not ready',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].repositoryReadiness = 'not-ready'
+      }
+    }
+  ])('still allows close when $condition', async ({ configure }) => {
+    const scenario = createStandardScenario()
+    configure(scenario)
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const active = before.agents.find((agent) => agent.name === 'cx_anti')!
+
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(92), before.revision, active.agentInstanceId, 'close')
+    )
+
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === active.agentInstanceId
+      )?.terminalState
+    ).toBe('closed')
   })
 
   it('open is rejected for an unavailable agent', async () => {
