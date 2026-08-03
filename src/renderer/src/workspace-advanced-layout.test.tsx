@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { id } from './workbench/contract'
 import type {
   CommandResult,
   WorkbenchCommand,
-  WorkbenchPort
+  WorkbenchEvent,
+  WorkbenchPort,
+  WorkbenchViewModel
 } from './workbench/contract'
 
 /**
@@ -44,6 +47,35 @@ class RecordingPort implements WorkbenchPort {
   }
   dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
+    return this.inner.dispatch(command)
+  }
+}
+
+/**
+ * Re-emits every event asynchronously (~20 ms). The contract makes no
+ * ordering guarantees between a command response and its view-model-updated
+ * event; this port exercises exactly that gap.
+ */
+class DelayedEventPort implements WorkbenchPort {
+  private inner = new MockScenarioAdapter()
+  private listeners = new Set<(event: WorkbenchEvent) => void>()
+  constructor() {
+    this.inner.subscribe((event) => {
+      setTimeout(() => {
+        for (const listener of this.listeners) listener(event)
+      }, 20)
+    })
+  }
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+  subscribe(listener: (event: WorkbenchEvent) => void) {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     return this.inner.dispatch(command)
   }
 }
@@ -409,6 +441,145 @@ describe('Workspace layout — keyboard parity', () => {
 
     const movedTab = within(panels()[1]).getByRole('tab', { name: /cc_data/ })
     expect(document.activeElement).toBe(movedTab)
+  })
+
+  it('targets the same-row neighbour with Ctrl+Arrow in a 2×2 tree', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    // Build 2×2: [ (A / B) | (C / D) ] — A holds both tabs, B/C/D empty.
+    await user.click(within(panels()[0]).getByRole('button', { name: '向右分割' }))
+    await user.click(within(panels()[0]).getByRole('button', { name: '向下分割' }))
+    await user.click(within(panels()[2]).getByRole('button', { name: '向下分割' }))
+    expect(panels()).toHaveLength(4)
+
+    // Move cc_sql down into B, then right: the same-row neighbour is the
+    // bottom-right panel D — not the top-right C a first-descent picks.
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    ccSqlTab.focus()
+    fireEvent.keyDown(ccSqlTab, { key: 'ArrowDown', ctrlKey: true })
+    const bTab = within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+    bTab.focus()
+    fireEvent.keyDown(bTab, { key: 'ArrowRight', ctrlKey: true })
+
+    expect(panels()).toHaveLength(3)
+    within(panels()[2]).getByRole('tab', { name: /cc_sql/ })
+    expect(
+      within(panels()[1]).queryByRole('tab', { name: /cc_sql/ })
+    ).toBeNull()
+  })
+
+  it('prefers the neighbour with the most shared edge in an asymmetric 2×2 tree', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(within(panels()[0]).getByRole('button', { name: '向右分割' }))
+    await user.click(within(panels()[0]).getByRole('button', { name: '向下分割' }))
+    await user.click(within(panels()[2]).getByRole('button', { name: '向下分割' }))
+    expect(panels()).toHaveLength(4)
+
+    // Left column 70/30, right column 20/80: from A (y[0,0.7]) the
+    // bottom-right D shares y[0.2,0.7] while C only shares y[0,0.2].
+    // Re-query after each keydown: every accepted resize bumps the
+    // revision, so further commits from the stale element would reject.
+    // (Vertical dividers grow with ArrowDown and shrink with ArrowUp.)
+    const separators = () =>
+      screen.getAllByRole('separator', { name: '调整分割比例' })
+    for (let i = 0; i < 4; i++) {
+      fireEvent.keyDown(separators()[0], { key: 'ArrowDown' })
+    }
+    for (let i = 0; i < 6; i++) {
+      fireEvent.keyDown(separators()[2], { key: 'ArrowUp' })
+    }
+
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, { key: 'ArrowRight', ctrlKey: true })
+
+    within(panels()[3]).getByRole('tab', { name: /cc_data/ })
+    expect(
+      within(panels()[2]).queryByRole('tab', { name: /cc_data/ })
+    ).toBeNull()
+  })
+
+  it('restores focus after Ctrl+Arrow even when the snapshot event arrives late', async () => {
+    const { user } = await gotoAgentsSurface(new DelayedEventPort())
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    // With a delayed-event port the render lags the command: wait for each
+    // authoritative update to land, or the next command stale-rejects.
+    await screen.findByRole('tab', { name: /cc_sql/ })
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    await waitFor(() => expect(panels()).toHaveLength(2))
+
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    ccSqlTab.focus()
+    fireEvent.keyDown(ccSqlTab, { key: 'ArrowRight', ctrlKey: true })
+    const movedTab = await within(panels()[1]).findByRole('tab', {
+      name: /cc_sql/
+    })
+    await waitFor(() => expect(document.activeElement).toBe(movedTab))
+  })
+
+  it('handles opaque IDs that break attribute selectors during keyboard moves and Focus exit', async () => {
+    const adapter = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(adapter)
+
+    // Rewrite cc_data's instance ID and the panel's ID to values containing
+    // a quote and a backslash — legal per the opaque-ID contract, fatal to
+    // naive attribute selectors. (The mock's snapshot is only compile-time
+    // private; no public API can mint such IDs.)
+    const internals = adapter as unknown as { snapshot: WorkbenchViewModel }
+    const snapshot = internals.snapshot
+    const evilAgent = id('inst-cc"data', 'AgentInstanceId')
+    const evilPanel = id('panel-main\\bad', 'PanelId')
+    const mainPanelId = id('panel-main', 'PanelId')
+    const agent = snapshot.agents.find(
+      (a) => a.agentInstanceId === id('inst-cc-data', 'AgentInstanceId')
+    )!
+    agent.agentInstanceId = evilAgent
+    const layout = snapshot.projects[0].layout
+    layout.panels[evilPanel] = layout.panels[mainPanelId]
+    layout.panels[evilPanel].tabs = [evilAgent]
+    layout.panels[evilPanel].activeTabId = evilAgent
+    delete layout.panels[mainPanelId]
+    layout.root = { kind: 'panel', panelId: evilPanel }
+    layout.focusedPanelId = evilPanel
+    // Publish the mutated snapshot through a command, inside act so the
+    // shell's state update actually flushes before assertions.
+    await act(async () => {
+      await adapter.dispatch({
+        kind: 'navigate',
+        commandId: id('cmd-evil-ids', 'CommandId'),
+        expectedRevision: snapshot.revision,
+        projectId: snapshot.projects[0].projectId,
+        surface: 'agents'
+      })
+    })
+
+    // Keyboard split-move rebuilds the evil-ID tab; focus restoration must
+    // not crash on a selector — it must find the tab by its raw ID.
+    const evilTab = await screen.findByRole('tab', { name: /cc_data/ })
+    evilTab.focus()
+    fireEvent.keyDown(evilTab, {
+      key: 'ArrowRight',
+      ctrlKey: true,
+      shiftKey: true
+    })
+    const movedTab = within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    await waitFor(() => expect(document.activeElement).toBe(movedTab))
+
+    // Entering and exiting Focus must also restore focus by the raw panel
+    // ID, not by an attribute selector.
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    expect(document.activeElement).toBe(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
   })
 })
 

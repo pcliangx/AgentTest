@@ -67,6 +67,7 @@ interface LayoutRenderContext {
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
   onRequestTabFocus: (tab: AgentInstanceId) => void
+  onCancelTabFocus: (tab: AgentInstanceId) => void
   onRequestClosePanel: (panelId: PanelId) => void
 }
 
@@ -130,25 +131,26 @@ export function WorkspaceArea({
     if (focusPanelId && previous === undefined) {
       exitFocusButtonRef.current?.focus()
     } else if (!focusPanelId && previous) {
-      document
-        .querySelector<HTMLElement>(`[data-focus-trigger="${previous}"]`)
-        ?.focus()
+      findFocusTrigger(previous)?.focus()
     }
     previousFocusPanelId.current = focusPanelId
   }, [focusPanelId])
 
-  // Keyboard moves rebuild the tab node elsewhere in the tree; return
-  // focus to it (by stable AgentInstanceId) once the authoritative layout
-  // has rendered, so keyboard users can keep operating (#24 review).
-  const [pendingTabFocus, setPendingTabFocus] =
-    useState<AgentInstanceId | null>(null)
+  // Keyboard moves rebuild the tab node elsewhere in the tree. The restore
+  // intent carries the command's baseline revision: only once an
+  // authoritative layout NEWER than that baseline has rendered (command
+  // response and view-model-updated may arrive in any order) is the tab
+  // looked up by its raw ID and focused (#24 round-2 review).
+  const [pendingTabFocus, setPendingTabFocus] = useState<{
+    tabId: AgentInstanceId
+    startRevision: number
+  } | null>(null)
   useEffect(() => {
     if (!pendingTabFocus) return
-    document
-      .querySelector<HTMLElement>(`[data-tab-id="${pendingTabFocus}"]`)
-      ?.focus()
+    if (snapshot.revision <= pendingTabFocus.startRevision) return
+    findRenderedTab(pendingTabFocus.tabId)?.focus()
     setPendingTabFocus(null)
-  }, [pendingTabFocus, project.layout])
+  }, [pendingTabFocus, snapshot])
 
   /**
    * All layout commands go through the surface-level handler, which shows
@@ -234,7 +236,10 @@ export function WorkspaceArea({
       // instead of overwriting it.
       setDraggingTab({ tabId: tab, startRevision: snapshot.revision }),
     onDragTabEnd: () => setDraggingTab(null),
-    onRequestTabFocus: (tab) => setPendingTabFocus(tab),
+    onRequestTabFocus: (tab) =>
+      setPendingTabFocus({ tabId: tab, startRevision: snapshot.revision }),
+    onCancelTabFocus: (tab) =>
+      setPendingTabFocus((prev) => (prev?.tabId === tab ? null : prev)),
     onRequestClosePanel: requestClosePanel
   }
 
@@ -347,60 +352,112 @@ function treePanelOrder(node: LayoutNode | null): PanelId[] {
 }
 
 /**
- * Spatial keyboard navigation: resolves which panel an arrow key means —
- * the geometric neighbour across the nearest matching-axis split, NOT the
- * depth-first neighbour. E.g. in the Analysis tree [ main | (aux1 / aux2) ],
- * ArrowLeft from aux2 crosses into main, not into aux1.
+ * Finds a rendered tab by its raw opaque ID. Never a CSS attribute
+ * selector: the contract allows any string ID, and quotes or backslashes
+ * would make a naive selector throw (#24 round-2 review).
  */
+function findRenderedTab(tabId: string): HTMLElement | null {
+  for (const el of document.querySelectorAll<HTMLElement>('[data-tab-id]')) {
+    if (el.dataset.tabId === tabId) return el
+  }
+  return null
+}
+
+/** Same raw-ID lookup for the per-panel Focus trigger button. */
+function findFocusTrigger(panelId: string): HTMLElement | null {
+  for (const el of document.querySelectorAll<HTMLElement>(
+    '[data-focus-trigger]'
+  )) {
+    if (el.dataset.focusTrigger === panelId) return el
+  }
+  return null
+}
+
+/**
+ * Spatial keyboard navigation: resolves which panel an arrow key means by
+ * geometry, not tree order. Each leaf's bounds are derived from the split
+ * directions and ratios; the neighbour is the closest panel strictly in
+ * the arrow's direction (minimal gap on the movement axis), preferring the
+ * one sharing the most edge on the orthogonal axis, then the closest
+ * centre. E.g. in a 2×2 tree, ArrowRight from the bottom-left panel picks
+ * the bottom-right (same row), never the top-right.
+ */
+interface PanelRect {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+function leafBounds(
+  node: LayoutNode,
+  rect: PanelRect,
+  out: Array<{ panelId: PanelId; rect: PanelRect }>
+): void {
+  if (node.kind === 'panel') {
+    out.push({ panelId: node.panelId, rect })
+    return
+  }
+  if (node.direction === 'horizontal') {
+    const xSplit = rect.x0 + (rect.x1 - rect.x0) * node.ratio
+    leafBounds(node.first, { ...rect, x1: xSplit }, out)
+    leafBounds(node.second, { ...rect, x0: xSplit }, out)
+  } else {
+    const ySplit = rect.y0 + (rect.y1 - rect.y0) * node.ratio
+    leafBounds(node.first, { ...rect, y1: ySplit }, out)
+    leafBounds(node.second, { ...rect, y0: ySplit }, out)
+  }
+}
+
 function spatialTargetPanel(
   root: LayoutNode | null,
   fromPanelId: PanelId,
   arrow: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
 ): PanelId | undefined {
   if (!root) return undefined
+  const leaves: Array<{ panelId: PanelId; rect: PanelRect }> = []
+  leafBounds(root, { x0: 0, y0: 0, x1: 1, y1: 1 }, leaves)
+  const from = leaves.find((leaf) => leaf.panelId === fromPanelId)
+  if (!from) return undefined
+
   const horizontal = arrow === 'ArrowLeft' || arrow === 'ArrowRight'
   const forward = arrow === 'ArrowRight' || arrow === 'ArrowDown'
+  const EPS = 1e-9
+  const fromMain0 = horizontal ? from.rect.x0 : from.rect.y0
+  const fromMain1 = horizontal ? from.rect.x1 : from.rect.y1
+  const fromCross0 = horizontal ? from.rect.y0 : from.rect.x0
+  const fromCross1 = horizontal ? from.rect.y1 : from.rect.x1
+  const fromCrossCentre = (fromCross0 + fromCross1) / 2
 
-  // Record the path from the root down to the source leaf, noting which
-  // child each split descended into; failed branches are popped so the
-  // path holds only the ancestors of the source leaf.
-  const path: Array<{ node: LayoutNode; via: 'first' | 'second' | null }> = []
-  const found = (function walk(
-    node: LayoutNode,
-    via: 'first' | 'second' | null
-  ): boolean {
-    path.push({ node, via })
-    if (node.kind === 'panel') {
-      if (node.panelId === fromPanelId) return true
-    } else if (walk(node.first, 'first') || walk(node.second, 'second')) {
-      return true
-    }
-    path.pop()
-    return false
-  })(root, null)
-  if (!found) return undefined
-
-  // The leaf nearest to the split boundary inside a subtree.
-  const edgeLeaf = (node: LayoutNode, side: 'first' | 'second'): PanelId =>
-    node.kind === 'panel'
-      ? node.panelId
-      : edgeLeaf(side === 'first' ? node.first : node.second, side)
-
-  // Walk upwards: the first split on the arrow's axis we can cross in the
-  // requested direction.
-  for (let i = path.length - 1; i >= 0; i--) {
-    const step = path[i]
-    if (step.node.kind !== 'split') continue
-    if ((step.node.direction === 'horizontal') !== horizontal) continue
-    const fromSide = path[i + 1]?.via
-    if (forward && fromSide === 'first') {
-      return edgeLeaf(step.node.second, 'first')
-    }
-    if (!forward && fromSide === 'second') {
-      return edgeLeaf(step.node.first, 'second')
+  let best:
+    | { panelId: PanelId; gap: number; overlap: number; centre: number }
+    | undefined
+  for (const leaf of leaves) {
+    if (leaf.panelId === fromPanelId) continue
+    const main0 = horizontal ? leaf.rect.x0 : leaf.rect.y0
+    const main1 = horizontal ? leaf.rect.x1 : leaf.rect.y1
+    const cross0 = horizontal ? leaf.rect.y0 : leaf.rect.x0
+    const cross1 = horizontal ? leaf.rect.y1 : leaf.rect.x1
+    // Strictly in the arrow's direction (allowing shared boundaries).
+    if (forward ? main0 < fromMain1 - EPS : main1 > fromMain0 + EPS) continue
+    const gap = forward ? main0 - fromMain1 : fromMain0 - main1
+    const overlap = Math.max(
+      0,
+      Math.min(fromCross1, cross1) - Math.max(fromCross0, cross0)
+    )
+    const centre = Math.abs((cross0 + cross1) / 2 - fromCrossCentre)
+    if (
+      !best ||
+      gap < best.gap - EPS ||
+      (Math.abs(gap - best.gap) <= EPS &&
+        (overlap > best.overlap + EPS ||
+          (Math.abs(overlap - best.overlap) <= EPS &&
+            centre < best.centre - EPS)))
+    ) {
+      best = { panelId: leaf.panelId, gap, overlap, centre }
     }
   }
-  return undefined
+  return best?.panelId
 }
 
 function LayoutNodeView({
@@ -648,13 +705,17 @@ function handleTabKeyDown(
       e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? 'before' : 'after'
     // The tab node is rebuilt in the new panel — refocus it after render.
     ctx.onRequestTabFocus(tabId)
-    void ctx.sendLayout({
-      kind: 'open-tab-in-new-panel',
-      agentInstanceId: tabId,
-      direction,
-      position,
-      relativeToPanelId: panelId
-    })
+    void ctx
+      .sendLayout({
+        kind: 'open-tab-in-new-panel',
+        agentInstanceId: tabId,
+        direction,
+        position,
+        relativeToPanelId: panelId
+      })
+      .then((result) => {
+        if (!result.ok) ctx.onCancelTabFocus(tabId)
+      })
     return
   }
   // Move to the spatial neighbour in the arrow's direction — the same
@@ -667,11 +728,15 @@ function handleTabKeyDown(
   if (target) {
     // The tab node is rebuilt in the target panel — refocus after render.
     ctx.onRequestTabFocus(tabId)
-    void ctx.sendLayout({
-      kind: 'move-tab',
-      agentInstanceId: tabId,
-      targetPanelId: target
-    })
+    void ctx
+      .sendLayout({
+        kind: 'move-tab',
+        agentInstanceId: tabId,
+        targetPanelId: target
+      })
+      .then((result) => {
+        if (!result.ok) ctx.onCancelTabFocus(tabId)
+      })
   }
 }
 
