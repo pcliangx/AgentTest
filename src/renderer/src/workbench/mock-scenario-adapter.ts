@@ -41,6 +41,7 @@ import {
 } from './dispatchability'
 import { resolveProviderModelSelection } from './provider-capability'
 import { buildDispatchPlan } from './dispatch-planner'
+import { stepQueuePriority } from './queue-priority'
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
@@ -1415,11 +1416,23 @@ export class MockScenarioAdapter implements WorkbenchPort {
             break
           }
           case 'raise-priority':
-            item.priority = 'high'
+          case 'lower-priority': {
+            const nextPriority = stepQueuePriority(
+              item.priority,
+              command.operation
+            )
+            if (!nextPriority) {
+              return this.reject(
+                command,
+                'invariant-violation',
+                command.operation === 'raise-priority'
+                  ? '队列项已是最高优先级'
+                  : '队列项已是最低优先级'
+              )
+            }
+            item.priority = nextPriority
             break
-          case 'lower-priority':
-            item.priority = 'low'
-            break
+          }
         }
         return null
       }

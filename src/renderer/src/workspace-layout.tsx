@@ -32,6 +32,10 @@ import {
   isActiveStructuredRunState,
   isTerminalExecutionSlotOccupied
 } from './workbench/dispatchability'
+import {
+  stepQueuePriority,
+  type QueuePriority
+} from './workbench/queue-priority'
 
 /**
  * Workspace — the free split tree of Agent Panels (#4), plus temporary
@@ -1662,7 +1666,7 @@ function TerminalStateView({
 // Queue Panel — visible queue depth, reorder, priority, cancel (#7)
 // ---------------------------------------------------------------------------
 
-const PRIORITY_LABEL: Record<string, string> = {
+const PRIORITY_LABEL: Record<QueuePriority, string> = {
   low: '低',
   normal: '普通',
   high: '高'
@@ -1685,7 +1689,12 @@ function QueuePanel({
 
   const manage = (
     queueItemId: QueueItemId,
-    operation: 'cancel' | 'move-earlier' | 'move-later' | 'raise-priority' | 'lower-priority'
+    operation:
+      | 'cancel'
+      | 'move-earlier'
+      | 'move-later'
+      | 'raise-priority'
+      | 'lower-priority'
   ) => {
     void sendCommand({
       kind: 'manage-queue',
@@ -1709,9 +1718,15 @@ function QueuePanel({
           snapshot.agents.find(
             (a) => a.agentInstanceId === item.agentInstanceId
           )?.name ?? item.agentInstanceId
+        const canRaise =
+          stepQueuePriority(item.priority, 'raise-priority') !== undefined
+        const canLower =
+          stepQueuePriority(item.priority, 'lower-priority') !== undefined
         return (
           <div
             key={item.queueItemId}
+            role="group"
+            aria-label={`队列项 ${item.position}：${agentName}`}
             className="flex items-center gap-2 rounded bg-neutral-900 px-2 py-1 text-xs"
           >
             <span className="w-5 text-neutral-600">{item.position}</span>
@@ -1736,15 +1751,21 @@ function QueuePanel({
               ↓
             </button>
             <button
-              aria-label="提高优先级"
-              className="text-neutral-500 hover:text-neutral-200"
+              aria-label={
+                canRaise ? '提高优先级' : '提高优先级（已是最高优先级）'
+              }
+              className="text-neutral-500 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-20"
+              disabled={!canRaise}
               onClick={() => manage(item.queueItemId, 'raise-priority')}
             >
               ⬆
             </button>
             <button
-              aria-label="降低优先级"
-              className="text-neutral-500 hover:text-neutral-200"
+              aria-label={
+                canLower ? '降低优先级' : '降低优先级（已是最低优先级）'
+              }
+              className="text-neutral-500 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-20"
+              disabled={!canLower}
               onClick={() => manage(item.queueItemId, 'lower-priority')}
             >
               ⬇

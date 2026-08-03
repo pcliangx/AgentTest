@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { id } from './workbench/contract'
+import { createStandardScenario } from './workbench/standard-scenario'
 import type {
   AgentInstanceId,
   CommandResult,
@@ -748,9 +749,9 @@ describe('Workspace layout — rejection recovery', () => {
 
 describe('Workspace layout — queue and terminal (#7)', () => {
   /** Navigate to Agents surface; cc_data is open by default in the scenario. */
-  async function gotoAgentView() {
+  async function gotoAgentView(port: WorkbenchPort = new MockScenarioAdapter()) {
     const user = userEvent.setup()
-    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     await user.click(screen.getByRole('button', { name: 'Agent' }))
     await screen.findByRole('region', { name: 'Agent 目录' })
@@ -772,6 +773,77 @@ describe('Workspace layout — queue and terminal (#7)', () => {
     await user.click(cancelButtons[0])
     await waitFor(() => {
       expect(screen.getByText('队列深度：1')).toBeVisible()
+    })
+  })
+
+  it.each([
+    {
+      priority: 'low',
+      raiseName: '提高优先级',
+      raiseDisabled: false,
+      lowerName: '降低优先级（已是最低优先级）',
+      lowerDisabled: true
+    },
+    {
+      priority: 'normal',
+      raiseName: '提高优先级',
+      raiseDisabled: false,
+      lowerName: '降低优先级',
+      lowerDisabled: false
+    },
+    {
+      priority: 'high',
+      raiseName: '提高优先级（已是最高优先级）',
+      raiseDisabled: true,
+      lowerName: '降低优先级',
+      lowerDisabled: false
+    }
+  ] as const)(
+    'exposes accessible priority boundaries for $priority',
+    async ({
+      priority,
+      raiseName,
+      raiseDisabled,
+      lowerName,
+      lowerDisabled
+    }) => {
+      const scenario = createStandardScenario()
+      scenario.queue[0].priority = priority
+      await gotoAgentView(new MockScenarioAdapter(scenario))
+      const row = screen.getByRole('group', {
+        name: '队列项 1：cx_forecast'
+      })
+
+      const raise = within(row).getByRole('button', { name: raiseName })
+      const lower = within(row).getByRole('button', { name: lowerName })
+      if (raiseDisabled) expect(raise).toBeDisabled()
+      else expect(raise).not.toBeDisabled()
+      if (lowerDisabled) expect(lower).toBeDisabled()
+      else expect(lower).not.toBeDisabled()
+    }
+  )
+
+  it('raises then lowers through normal without losing the original priority', async () => {
+    const { user } = await gotoAgentView()
+    let row = screen.getByRole('group', {
+      name: '队列项 1：cx_forecast'
+    })
+
+    await user.click(
+      within(row).getByRole('button', { name: '提高优先级' })
+    )
+    await waitFor(() => {
+      row = screen.getByRole('group', { name: '队列项 1：cx_forecast' })
+      expect(row).toHaveTextContent('高')
+    })
+
+    await user.click(
+      within(row).getByRole('button', { name: '降低优先级' })
+    )
+    await waitFor(() => {
+      expect(
+        screen.getByRole('group', { name: '队列项 1：cx_forecast' })
+      ).toHaveTextContent('普通')
     })
   })
 
