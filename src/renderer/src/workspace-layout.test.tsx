@@ -13,7 +13,10 @@ import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { id } from './workbench/contract'
-import { createStandardScenario } from './workbench/standard-scenario'
+import {
+  createRunLifecycleScenario,
+  createStandardScenario
+} from './workbench/standard-scenario'
 import type {
   AgentInstanceId,
   CommandResult,
@@ -1226,6 +1229,115 @@ describe('Workspace layout — queue and terminal (#7)', () => {
     const { user } = await gotoAgentView()
     const cancelButtons = screen.getAllByRole('button', { name: '取消排队' })
     await user.click(cancelButtons[0])
+    expect(apiSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('Workspace layout — deterministic run lifecycle (#38)', () => {
+  async function gotoLifecycleView() {
+    const port = new MockScenarioAdapter(createRunLifecycleScenario())
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    return { user, directory, view }
+  }
+
+  it.each([
+    {
+      agentName: 'cc_data',
+      stateLabel: '收尾中',
+      chatText: '新指令将进入第 1 位',
+      terminalDisabled: true
+    },
+    {
+      agentName: 'cc_etl',
+      stateLabel: '已中断',
+      chatText: '暂无对话记录',
+      terminalDisabled: false
+    }
+  ] as const)(
+    'shows $stateLabel text, accessible name and actions for $agentName',
+    async ({ agentName, stateLabel, chatText, terminalDisabled }) => {
+      const { user, directory } = await gotoLifecycleView()
+      const directoryEntry = within(directory).getByRole('button', {
+        name: new RegExp(`^${agentName} Claude Code · ${stateLabel}`)
+      })
+      await user.click(directoryEntry)
+
+      const heading = await screen.findByRole('heading', {
+        name: agentName
+      })
+      const view = heading.closest(
+        '[aria-label="Agent 视图"]'
+      ) as HTMLElement
+      expect(heading.closest('header')).toHaveTextContent(stateLabel)
+      expect(
+        within(view).getByRole('log', { name: '对话记录' })
+      ).toHaveTextContent(chatText)
+      expect(
+        within(view).getByRole('textbox', { name: '发送给当前 Agent' })
+      ).not.toBeDisabled()
+
+      await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+      const openTerminal = within(view).getByRole('button', {
+        name: '打开 Terminal'
+      })
+      if (terminalDisabled) expect(openTerminal).toBeDisabled()
+      else expect(openTerminal).not.toBeDisabled()
+    }
+  )
+
+  it(
+    'keeps a completed result separate from the ready Agent runtime',
+    async () => {
+      const { user, directory } = await gotoLifecycleView()
+      await user.click(
+        within(directory).getByRole('button', {
+          name: /^cx_review Codex · 就绪/
+        })
+      )
+
+      const heading = await screen.findByRole('heading', {
+        name: 'cx_review'
+      })
+      const view = heading.closest(
+        '[aria-label="Agent 视图"]'
+      ) as HTMLElement
+      expect(heading.closest('header')).toHaveTextContent('就绪')
+      expect(heading.closest('header')).not.toHaveTextContent('运行完成')
+
+      await user.click(within(view).getByRole('button', { name: '活动' }))
+      expect(
+        within(view).getByRole('listitem', {
+          name: '运行完成：cx_review 已完成客户流失复核'
+        })
+      ).toBeVisible()
+
+      await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+      expect(
+        within(view).getByRole('button', { name: '打开 Terminal' })
+      ).not.toBeDisabled()
+    }
+  )
+
+  it('inspects the lifecycle scenario without external side effects', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const { user, directory } = await gotoLifecycleView()
+
+    await user.click(
+      within(directory).getByRole('button', { name: /^cc_etl Claude Code/ })
+    )
+    const heading = await screen.findByRole('heading', { name: 'cc_etl' })
+    const view = heading.closest(
+      '[aria-label="Agent 视图"]'
+    ) as HTMLElement
+    await user.click(within(view).getByRole('button', { name: '活动' }))
+
     expect(apiSpy).not.toHaveBeenCalled()
   })
 })
