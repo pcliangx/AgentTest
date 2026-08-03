@@ -13,6 +13,7 @@ import type {
   LayoutOperation,
   PanelId,
   ProjectViewModel,
+  QueueItemId,
   SplitNodeId,
   WorkbenchViewModel,
   WorktreeChangesViewModel
@@ -1173,6 +1174,7 @@ function AgentView({
           <ChatState
             project={project}
             agent={agent}
+            snapshot={snapshot}
             sendCommand={sendCommand}
           />
         )}
@@ -1196,11 +1198,16 @@ function AgentView({
           />
         )}
         {subView === 'terminal' && (
-          <p className="text-neutral-500">
-            {TERMINAL_STATE_LABEL[agent.terminalState]}
-          </p>
+          <TerminalStateView
+            project={project}
+            agent={agent}
+            sendCommand={sendCommand}
+          />
         )}
       </div>
+
+      {/* Queue items for this project — visible across all sub-views */}
+      <QueuePanel project={project} snapshot={snapshot} sendCommand={sendCommand} />
     </section>
   )
 }
@@ -1212,16 +1219,19 @@ function AgentView({
 function ChatState({
   project,
   agent,
+  snapshot,
   sendCommand
 }: {
   project: ProjectViewModel
   agent: AgentInstanceViewModel
+  snapshot: WorkbenchViewModel
   sendCommand: SendCommand
 }) {
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
+  const [sendMode, setSendMode] = useState<'reply' | 'enqueue'>('reply')
 
   const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
@@ -1234,6 +1244,9 @@ function ChatState({
     projectBlocked || lifecycleBlocked || terminalBlocked || submitting
   const awaitingInput = agent.runtimeState === 'needs-input'
   const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
+  const projectQueueLength = snapshot.queue.filter(
+    (q) => q.projectId === project.projectId
+  ).length
 
   const submit = async () => {
     const instruction = draft.trim()
@@ -1250,7 +1263,12 @@ function ChatState({
         // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
         // Any other active state enqueues as the next Run instead of being
         // mistaken for a reply to the current Run.
-        mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // The user explicitly chooses reply vs enqueue via the sendMode toggle.
+        mode:
+          awaitingInput && sendMode === 'reply'
+            ? 'reply-current-run'
+            : 'start-or-queue'
       })
       if (result.ok) {
         setDraft('')
@@ -1298,13 +1316,35 @@ function ChatState({
               : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
           </p>
         ) : awaitingInput ? (
+          <fieldset className="space-y-1">
+            <legend className="text-neutral-500">
+              当前 Run 正在等待输入。选择回复当前 Run 或加入下一 Run 队列。
+            </legend>
+            <div className="flex gap-3 text-xs">
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name={`send-mode-${agent.agentInstanceId}`}
+                  checked={sendMode === 'reply'}
+                  onChange={() => setSendMode('reply')}
+                />
+                回复当前 Run
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name={`send-mode-${agent.agentInstanceId}`}
+                  checked={sendMode === 'enqueue'}
+                  onChange={() => setSendMode('enqueue')}
+                />
+                加入下一队列
+              </label>
+            </div>
+          </fieldset>
+        ) : hasQueuedWork && projectQueueLength > 0 ? (
           <p className="text-neutral-500">
-            当前 Run 正在等待输入，可直接回复。
-          </p>
-        ) : hasQueuedWork && agent.queueDepth > 0 ? (
-          <p className="text-neutral-500">
-            当前已有 {agent.queueDepth} 项排队；新指令将进入第{' '}
-            {agent.queueDepth + 1} 位。
+            当前 Project 已有 {projectQueueLength}{' '}
+            项排队；新指令将进入第 {projectQueueLength + 1} 位。
           </p>
         ) : hasQueuedWork ? (
           <p className="text-neutral-500">
@@ -1469,6 +1509,207 @@ function ChangesView({
           丢弃改动
         </button>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Terminal Takeover — execution slot mutual exclusion (#7)
+// ---------------------------------------------------------------------------
+
+const ACTIVE_RUN_STATES: ReadonlySet<string> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
+
+function TerminalStateView({
+  project,
+  agent,
+  sendCommand
+}: {
+  project: ProjectViewModel
+  agent: AgentInstanceViewModel
+  sendCommand: SendCommand
+}) {
+  const ts = agent.terminalState
+  const isTakeover = ts === 'active'
+  const isOpening = ts === 'opening'
+  const isFailed = ts === 'failed'
+  const runBlocks = ACTIVE_RUN_STATES.has(agent.runtimeState)
+  const unavailable =
+    agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
+  const canOpen = !isTakeover && !isOpening && !runBlocks && !unavailable
+
+  const statusText = isTakeover
+    ? 'Terminal 已接管'
+    : isOpening
+      ? 'Terminal 正在打开'
+      : isFailed
+        ? 'Terminal 打开失败'
+        : 'Terminal 未接管'
+
+  const descText = isTakeover
+    ? '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
+    : isOpening
+      ? '正在初始化 Terminal…'
+      : isFailed
+        ? '上次打开 Terminal 失败。可以重试或保持关闭。'
+        : runBlocks
+          ? 'Agent 正在运行结构化 Run，不能接管 Terminal。'
+          : unavailable
+            ? 'Agent 当前不可用，不能接管 Terminal。'
+            : '打开 Terminal 将占用执行槽并阻止结构化 Run。'
+
+  return (
+    <div className="space-y-2">
+      <p className="text-neutral-400">{statusText}</p>
+      <p className="text-xs text-neutral-600">{descText}</p>
+      {(isTakeover || isFailed) && (
+        <button
+          className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+          onClick={() =>
+            void sendCommand({
+              kind: 'set-terminal-takeover',
+              projectId: project.projectId,
+              agentInstanceId: agent.agentInstanceId,
+              operation: 'close'
+            })
+          }
+        >
+          {isTakeover ? '结束接管' : '清除失败'}
+        </button>
+      )}
+      {!isTakeover && !isOpening && (
+        <button
+          className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
+          disabled={!canOpen}
+          title={
+            runBlocks
+              ? 'Agent 正在运行'
+              : unavailable
+                ? 'Agent 不可用'
+                : undefined
+          }
+          onClick={() =>
+            void sendCommand({
+              kind: 'set-terminal-takeover',
+              projectId: project.projectId,
+              agentInstanceId: agent.agentInstanceId,
+              operation: 'open'
+            })
+          }
+        >
+          打开 Terminal
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Queue Panel — visible queue depth, reorder, priority, cancel (#7)
+// ---------------------------------------------------------------------------
+
+const PRIORITY_LABEL: Record<string, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高'
+}
+
+function QueuePanel({
+  project,
+  snapshot,
+  sendCommand
+}: {
+  project: ProjectViewModel
+  snapshot: WorkbenchViewModel
+  sendCommand: SendCommand
+}) {
+  const queueItems = snapshot.queue
+    .filter((q) => q.projectId === project.projectId)
+    .sort((a, b) => a.position - b.position)
+
+  if (queueItems.length === 0) return null
+
+  const manage = (
+    queueItemId: QueueItemId,
+    operation: 'cancel' | 'move-earlier' | 'move-later' | 'raise-priority' | 'lower-priority'
+  ) => {
+    void sendCommand({
+      kind: 'manage-queue',
+      projectId: project.projectId,
+      queueItemId,
+      operation
+    })
+  }
+
+  return (
+    <div
+      role="region"
+      aria-label="队列"
+      className="mt-3 space-y-1.5 border-t border-neutral-800 pt-2"
+    >
+      <div className="text-xs text-neutral-500">
+        队列深度：{queueItems.length}
+      </div>
+      {queueItems.map((item) => {
+        const agentName =
+          snapshot.agents.find(
+            (a) => a.agentInstanceId === item.agentInstanceId
+          )?.name ?? item.agentInstanceId
+        return (
+          <div
+            key={item.queueItemId}
+            className="flex items-center gap-2 rounded bg-neutral-900 px-2 py-1 text-xs"
+          >
+            <span className="w-5 text-neutral-600">{item.position}</span>
+            <span className="flex-1 text-neutral-300">{agentName}</span>
+            <span className="text-neutral-500">
+              {PRIORITY_LABEL[item.priority] ?? item.priority}
+            </span>
+            <button
+              aria-label="上移"
+              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              disabled={item.position <= 1}
+              onClick={() => manage(item.queueItemId, 'move-earlier')}
+            >
+              ↑
+            </button>
+            <button
+              aria-label="下移"
+              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              disabled={item.position >= queueItems.length}
+              onClick={() => manage(item.queueItemId, 'move-later')}
+            >
+              ↓
+            </button>
+            <button
+              aria-label="提高优先级"
+              className="text-neutral-500 hover:text-neutral-200"
+              onClick={() => manage(item.queueItemId, 'raise-priority')}
+            >
+              ⬆
+            </button>
+            <button
+              aria-label="降低优先级"
+              className="text-neutral-500 hover:text-neutral-200"
+              onClick={() => manage(item.queueItemId, 'lower-priority')}
+            >
+              ⬇
+            </button>
+            <button
+              aria-label="取消排队"
+              className="text-red-400 hover:text-red-300"
+              onClick={() => manage(item.queueItemId, 'cancel')}
+            >
+              取消排队
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

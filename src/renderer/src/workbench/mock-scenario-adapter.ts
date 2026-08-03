@@ -4,8 +4,8 @@ import type {
   CommandId,
   CommandRejectionReason,
   CommandResult,
-  PanelId,
   ConnectionId,
+  PanelId,
   ProjectId,
   WorkbenchCommand,
   WorkbenchEvent,
@@ -37,7 +37,7 @@ import {
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
-  action: '发送新指令' | '创建新派发'
+  action: '发送新指令' | '创建新派发' | '接管 Terminal'
 ): string {
   switch (reason) {
     case 'project-archived':
@@ -60,6 +60,15 @@ type ConfigurationDraftEntry =
   WorkbenchViewModel['configurationDrafts'][number]
 type AppliedConfigurationEntry =
   WorkbenchViewModel['appliedConfigurations'][number]
+
+/** Runtime states that occupy the execution slot with an active structured Run. */
+const ACTIVE_STRUCTURED_RUN_STATES: ReadonlySet<string> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -556,11 +565,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
           ...this.snapshot.activity
         ]
         agent.lastActivityAt = Date.now()
-        // start-or-queue to a busy agent must enter the same observable queue
-        // as a dispatch — otherwise the composer would silently drop work
-        // (#6 P1-2).
-        if (command.mode === 'start-or-queue' && isAgentBusy(agent)) {
-          this.enqueue(agent)
+        // #7 AC1: start-or-queue checks per-instance, Project and Global
+        // capacity. Busy agents enqueue. Idle agents start if capacity
+        // allows; otherwise they also enqueue.
+        if (command.mode === 'start-or-queue') {
+          if (isAgentBusy(agent) || !this.canStartRun(agent.projectId)) {
+            this.enqueue(agent)
+          } else {
+            this.startMockRun(agent, agent.projectId)
+          }
         }
         return null
       }
@@ -652,12 +665,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
         for (const a of targets) {
           a.lastActivityAt = now
-          // Authoritative queue projection (#6 P1-2): a dispatch to a busy
-          // agent (including one holding a Terminal takeover) enqueues through
-          // one shared transition that keeps the
-          // per-instance depth, the QueueItem list and the Project/global
-          // summaries consistent. Idle agents start immediately (no queue).
-          if (isAgentBusy(a)) this.enqueue(a)
+          // #7 AC1: enforce per-instance (via isAgentBusy), Project (3) and
+          // Global (6) limits. Busy agents enqueue. Idle agents start if
+          // capacity is available; otherwise they also enqueue.
+          if (isAgentBusy(a) || !this.canStartRun(project.projectId)) {
+            this.enqueue(a)
+          } else {
+            this.startMockRun(a, project.projectId)
+          }
         }
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
@@ -933,6 +948,122 @@ export class MockScenarioAdapter implements WorkbenchPort {
         })
         return null
       }
+      case 'manage-queue': {
+        const item = this.snapshot.queue.find(
+          (q) =>
+            q.queueItemId === command.queueItemId &&
+            q.projectId === command.projectId
+        )
+        if (!item) {
+          return this.reject(command, 'invalid-target', '队列项不存在')
+        }
+        switch (command.operation) {
+          case 'cancel': {
+            this.snapshot.queue = this.snapshot.queue.filter(
+              (q) => q.queueItemId !== item.queueItemId
+            )
+            const agent = this.snapshot.agents.find(
+              (a) => a.agentInstanceId === item.agentInstanceId
+            )
+            if (agent) {
+              agent.queueDepth = Math.max(0, agent.queueDepth - 1)
+              // Restore to ready when no active run and no remaining queue
+              if (
+                agent.queueDepth === 0 &&
+                agent.runtimeState === 'queued'
+              ) {
+                agent.runtimeState = 'ready'
+              }
+            }
+            // Renumber remaining items so positions stay sequential
+            this.renumberProjectQueue(command.projectId)
+            this.recomputeQueueCounts()
+            break
+          }
+          case 'move-earlier': {
+            if (item.position > 1) {
+              const prev = this.snapshot.queue.find(
+                (q) =>
+                  q.projectId === item.projectId &&
+                  q.position === item.position - 1
+              )
+              if (prev) {
+                prev.position++
+                item.position--
+              }
+            }
+            break
+          }
+          case 'move-later': {
+            const next = this.snapshot.queue.find(
+              (q) =>
+                q.projectId === item.projectId &&
+                q.position === item.position + 1
+            )
+            if (next) {
+              next.position--
+              item.position++
+            }
+            break
+          }
+          case 'raise-priority':
+            item.priority = 'high'
+            break
+          case 'lower-priority':
+            item.priority = 'low'
+            break
+        }
+        return null
+      }
+      case 'set-terminal-takeover': {
+        const project = this.snapshot.projects.find(
+          (p) => p.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        const agent = this.snapshot.agents.find(
+          (a) =>
+            a.agentInstanceId === command.agentInstanceId &&
+            a.projectId === command.projectId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        if (command.operation === 'open') {
+          const projectBlock = getProjectDispatchBlockReason(project)
+          if (projectBlock) {
+            return this.reject(
+              command,
+              'unavailable',
+              projectExecutionUnavailableMessage(projectBlock, '接管 Terminal')
+            )
+          }
+          // Only an active structured Run blocks Terminal — queued work does
+          // not occupy the execution slot (ADR-0009 §显式执行与并发).
+          if (ACTIVE_STRUCTURED_RUN_STATES.has(agent.runtimeState)) {
+            return this.reject(
+              command,
+              'busy',
+              'Agent 正在运行结构化 Run，不能接管 Terminal'
+            )
+          }
+          if (
+            agent.runtimeState === 'unavailable' ||
+            agent.runtimeState === 'archived'
+          ) {
+            return this.reject(
+              command,
+              'unavailable',
+              'Agent 当前不可用，不能接管 Terminal'
+            )
+          }
+          agent.terminalState = 'active'
+        } else {
+          agent.terminalState = 'closed'
+        }
+        return null
+      }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
@@ -951,6 +1082,57 @@ export class MockScenarioAdapter implements WorkbenchPort {
     return id(uuid, name)
   }
 
+  /** Recomputes per-project queuedRunCount and global queuedGlobal. */
+  private recomputeQueueCounts(): void {
+    for (const project of this.snapshot.projects) {
+      project.queuedRunCount = this.snapshot.queue.filter(
+        (q) => q.projectId === project.projectId
+      ).length
+    }
+    this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
+  }
+
+  /** True if Project and Global concurrency limits allow a new active Run. */
+  private canStartRun(projectId: ProjectId): boolean {
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === projectId
+    )
+    if (!project) return false
+    const { projectLimit, globalLimit } = this.snapshot.global.concurrency
+    if (project.activeRunCount >= projectLimit) return false
+    if (this.snapshot.global.concurrency.activeGlobal >= globalLimit) return false
+    return true
+  }
+
+  /** Occupies the execution slot: sets runtimeState, activeRunId, increments
+   *  Project and Global active counters. Does NOT record a `run-started`
+   *  activity — Phase 1 does not create real Runs (#6 P1-3). */
+  private startMockRun(
+    agent: WorkbenchViewModel['agents'][number],
+    projectId: ProjectId
+  ): void {
+    agent.runtimeState = 'running'
+    agent.activeRunId = this.freshId('RunId')
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === projectId
+    )
+    if (project) {
+      project.activeRunCount++
+      project.activity = 'active'
+    }
+    this.snapshot.global.concurrency.activeGlobal++
+  }
+
+  /** Renumbers queue items for a project to be sequential 1..N by current position. */
+  private renumberProjectQueue(projectId: ProjectId): void {
+    const items = this.snapshot.queue
+      .filter((q) => q.projectId === projectId)
+      .sort((a, b) => a.position - b.position)
+    items.forEach((item, i) => {
+      item.position = i + 1
+    })
+  }
+
   /**
    * Single atomic enqueue transition used by both dispatch and composer
    * (#6 P1-2). Updates the per-instance queueDepth, appends a visible
@@ -966,8 +1148,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
     )
     if (!project) return
     agent.queueDepth += 1
-    // Position within this agent's own queue = its new depth.
-    const position = agent.queueDepth
+    // Position is project-scoped sequential: next slot after all existing
+    // queue items for this project, so reorder operations work correctly.
+    const position =
+      this.snapshot.queue.filter(
+        (q) => q.projectId === agent.projectId
+      ).length + 1
     const queueItemId = this.freshId('QueueItemId')
     this.snapshot.queue.push({
       queueItemId,

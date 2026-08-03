@@ -536,7 +536,7 @@ describe('Dispatch — Agent Tab composer', () => {
 
     expect(
       within(view).getByRole('log', { name: '对话记录' })
-    ).toHaveTextContent('当前已有 1 项排队；新指令将进入第 2 位。')
+    ).toHaveTextContent('当前 Project 已有 2 项排队；新指令将进入第 3 位。')
   })
 })
 
@@ -885,7 +885,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
       expansion.some((c) => c.textContent?.includes('cx_anti'))
     ).toBe(true)
     expect(dialog).toHaveTextContent('kimi_docs（不可派发）')
-    expect(dialog).toHaveTextContent('cx_anti: 第 1 位')
+    expect(dialog).toHaveTextContent('cx_anti: 第 3 位')
 
     // Atomic broadcast cannot proceed while one of the explicit targets is
     // unavailable; the user must fix availability or choose a narrower set.
@@ -1620,7 +1620,7 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const project = snap.projects[0]
-    // cx_forecast starts queued with queueDepth 1.
+    // cx_forecast starts queued with queueDepth 2.
     const forecast = snap.agents.find((a) => a.name === 'cx_forecast')!
     const beforeDepth = forecast.queueDepth
     const beforeGlobal = snap.global.concurrency.queuedGlobal
@@ -1642,7 +1642,7 @@ describe('Dispatch — adapter target-set contracts (#6 review round 2)', () => 
     expect(after.global.concurrency.queuedGlobal).toBe(beforeGlobal + 1)
     expect(
       after.queue.filter((q) => q.agentInstanceId === forecast.agentInstanceId)
-    ).toHaveLength(2)
+    ).toHaveLength(3)
   })
 
   it('accepts a dispatch during Terminal takeover and queues it behind the occupied execution slot', async () => {
