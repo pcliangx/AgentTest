@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
@@ -735,5 +735,81 @@ describe('Workspace layout — rejection recovery', () => {
       'aria-selected',
       'false'
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Queue panel and Terminal takeover (#7)
+// ---------------------------------------------------------------------------
+
+describe('Workspace layout — queue and terminal (#7)', () => {
+  /** Navigate to Agents surface; cc_data is open by default in the scenario. */
+  async function gotoAgentView() {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    // cc_data is open by default — its Agent View should be visible
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    return { user, view }
+  }
+
+  it('shows queue panel with depth when project has queued items', async () => {
+    const { view } = await gotoAgentView()
+    const queue = screen.getByRole('region', { name: '队列' })
+    expect(queue).toHaveTextContent('队列深度：2')
+  })
+
+  it('canceling a queue item removes it from the list', async () => {
+    const { user } = await gotoAgentView()
+    expect(screen.getByText('队列深度：2')).toBeVisible()
+    const cancelButtons = screen.getAllByRole('button', { name: '取消排队' })
+    await user.click(cancelButtons[0])
+    await waitFor(() => {
+      expect(screen.getByText('队列深度：1')).toBeVisible()
+    })
+  })
+
+  it('terminal sub-view shows takeover blocked for running agent', async () => {
+    const { user, view } = await gotoAgentView()
+    await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+    expect(view).toHaveTextContent('Terminal 未接管')
+    // cc_data is running — open button should be disabled
+    expect(
+      within(view).getByRole('button', { name: '打开 Terminal' })
+    ).toBeDisabled()
+  })
+
+  it('terminal sub-view allows open for a ready agent (cx_review)', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    // Open cx_review in the current panel
+    await user.click(screen.getByRole('button', { name: /^cx_review/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+    const openBtn = within(view).getByRole('button', { name: '打开 Terminal' })
+    expect(openBtn).not.toBeDisabled()
+    await user.click(openBtn)
+    // After opening, should show "结束接管" button
+    expect(
+      await screen.findByRole('button', { name: '结束接管' })
+    ).toBeVisible()
+  })
+
+  it('does not call window.api during queue and terminal interactions', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const { user } = await gotoAgentView()
+    const cancelButtons = screen.getAllByRole('button', { name: '取消排队' })
+    await user.click(cancelButtons[0])
+    expect(apiSpy).not.toHaveBeenCalled()
   })
 })

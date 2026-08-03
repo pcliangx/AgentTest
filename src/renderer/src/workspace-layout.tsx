@@ -13,6 +13,7 @@ import type {
   LayoutOperation,
   PanelId,
   ProjectViewModel,
+  QueueItemId,
   SplitNodeId,
   WorkbenchViewModel,
   WorktreeChangesViewModel
@@ -828,11 +829,16 @@ function AgentView({
           />
         )}
         {subView === 'terminal' && (
-          <p className="text-neutral-500">
-            {TERMINAL_STATE_LABEL[agent.terminalState]}
-          </p>
+          <TerminalStateView
+            project={project}
+            agent={agent}
+            sendCommand={sendCommand}
+          />
         )}
       </div>
+
+      {/* Queue items for this project — visible across all sub-views */}
+      <QueuePanel project={project} snapshot={snapshot} sendCommand={sendCommand} />
     </section>
   )
 }
@@ -1101,6 +1107,182 @@ function ChangesView({
           丢弃改动
         </button>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Terminal Takeover — execution slot mutual exclusion (#7)
+// ---------------------------------------------------------------------------
+
+const ACTIVE_RUN_STATES: ReadonlySet<string> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
+
+function TerminalStateView({
+  project,
+  agent,
+  sendCommand
+}: {
+  project: ProjectViewModel
+  agent: AgentInstanceViewModel
+  sendCommand: SendCommand
+}) {
+  const isTakeover = agent.terminalState === 'active'
+  const runBlocks = ACTIVE_RUN_STATES.has(agent.runtimeState)
+
+  return (
+    <div className="space-y-2">
+      <p className="text-neutral-400">
+        {isTakeover ? 'Terminal 已接管' : 'Terminal 未接管'}
+      </p>
+      <p className="text-xs text-neutral-600">
+        {isTakeover
+          ? '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
+          : runBlocks
+            ? 'Agent 正在运行结构化 Run，不能接管 Terminal。'
+            : '打开 Terminal 将占用执行槽并阻止结构化 Run。'}
+      </p>
+      {isTakeover ? (
+        <button
+          className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+          onClick={() =>
+            void sendCommand({
+              kind: 'set-terminal-takeover',
+              projectId: project.projectId,
+              agentInstanceId: agent.agentInstanceId,
+              operation: 'close'
+            })
+          }
+        >
+          结束接管
+        </button>
+      ) : (
+        <button
+          className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
+          disabled={runBlocks}
+          title={runBlocks ? 'Agent 正在运行' : undefined}
+          onClick={() =>
+            void sendCommand({
+              kind: 'set-terminal-takeover',
+              projectId: project.projectId,
+              agentInstanceId: agent.agentInstanceId,
+              operation: 'open'
+            })
+          }
+        >
+          打开 Terminal
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Queue Panel — visible queue depth, reorder, priority, cancel (#7)
+// ---------------------------------------------------------------------------
+
+const PRIORITY_LABEL: Record<string, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高'
+}
+
+function QueuePanel({
+  project,
+  snapshot,
+  sendCommand
+}: {
+  project: ProjectViewModel
+  snapshot: WorkbenchViewModel
+  sendCommand: SendCommand
+}) {
+  const queueItems = snapshot.queue
+    .filter((q) => q.projectId === project.projectId)
+    .sort((a, b) => a.position - b.position)
+
+  if (queueItems.length === 0) return null
+
+  const manage = (
+    queueItemId: QueueItemId,
+    operation: 'cancel' | 'move-earlier' | 'move-later' | 'raise-priority' | 'lower-priority'
+  ) => {
+    void sendCommand({
+      kind: 'manage-queue',
+      projectId: project.projectId,
+      queueItemId,
+      operation
+    })
+  }
+
+  return (
+    <div
+      role="region"
+      aria-label="队列"
+      className="mt-3 space-y-1.5 border-t border-neutral-800 pt-2"
+    >
+      <div className="text-xs text-neutral-500">
+        队列深度：{queueItems.length}
+      </div>
+      {queueItems.map((item) => {
+        const agentName =
+          snapshot.agents.find(
+            (a) => a.agentInstanceId === item.agentInstanceId
+          )?.name ?? item.agentInstanceId
+        return (
+          <div
+            key={item.queueItemId}
+            className="flex items-center gap-2 rounded bg-neutral-900 px-2 py-1 text-xs"
+          >
+            <span className="w-5 text-neutral-600">{item.position}</span>
+            <span className="flex-1 text-neutral-300">{agentName}</span>
+            <span className="text-neutral-500">
+              {PRIORITY_LABEL[item.priority] ?? item.priority}
+            </span>
+            <button
+              aria-label="上移"
+              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              disabled={item.position <= 1}
+              onClick={() => manage(item.queueItemId, 'move-earlier')}
+            >
+              ↑
+            </button>
+            <button
+              aria-label="下移"
+              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              disabled={item.position >= queueItems.length}
+              onClick={() => manage(item.queueItemId, 'move-later')}
+            >
+              ↓
+            </button>
+            <button
+              aria-label="提高优先级"
+              className="text-neutral-500 hover:text-neutral-200"
+              onClick={() => manage(item.queueItemId, 'raise-priority')}
+            >
+              ⬆
+            </button>
+            <button
+              aria-label="降低优先级"
+              className="text-neutral-500 hover:text-neutral-200"
+              onClick={() => manage(item.queueItemId, 'lower-priority')}
+            >
+              ⬇
+            </button>
+            <button
+              aria-label="取消排队"
+              className="text-red-400 hover:text-red-300"
+              onClick={() => manage(item.queueItemId, 'cancel')}
+            >
+              取消排队
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

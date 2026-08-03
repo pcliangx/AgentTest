@@ -622,6 +622,82 @@ export class MockScenarioAdapter implements WorkbenchPort {
         })
         return null
       }
+      case 'manage-queue': {
+        const item = this.snapshot.queue.find(
+          (q) => q.queueItemId === command.queueItemId
+        )
+        if (!item) {
+          return this.reject(command, 'invalid-target', '队列项不存在')
+        }
+        switch (command.operation) {
+          case 'cancel': {
+            this.snapshot.queue = this.snapshot.queue.filter(
+              (q) => q.queueItemId !== item.queueItemId
+            )
+            // Decrement the agent's queue depth
+            const agent = this.snapshot.agents.find(
+              (a) => a.agentInstanceId === item.agentInstanceId
+            )
+            if (agent) agent.queueDepth = Math.max(0, agent.queueDepth - 1)
+            this.recomputeQueueCounts()
+            break
+          }
+          case 'move-earlier': {
+            if (item.position > 1) {
+              const prev = this.snapshot.queue.find(
+                (q) =>
+                  q.projectId === item.projectId &&
+                  q.position === item.position - 1
+              )
+              if (prev) {
+                prev.position++
+                item.position--
+              }
+            }
+            break
+          }
+          case 'move-later': {
+            const next = this.snapshot.queue.find(
+              (q) =>
+                q.projectId === item.projectId &&
+                q.position === item.position + 1
+            )
+            if (next) {
+              next.position--
+              item.position++
+            }
+            break
+          }
+          case 'raise-priority':
+            item.priority = 'high'
+            break
+          case 'lower-priority':
+            item.priority = 'low'
+            break
+        }
+        return null
+      }
+      case 'set-terminal-takeover': {
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === command.agentInstanceId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        if (command.operation === 'open') {
+          if (isAgentBusy(agent)) {
+            return this.reject(
+              command,
+              'busy',
+              'Agent 正在运行结构化 Run，不能接管 Terminal'
+            )
+          }
+          agent.terminalState = 'active'
+        } else {
+          agent.terminalState = 'closed'
+        }
+        return null
+      }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
@@ -638,6 +714,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ? globalThis.crypto.randomUUID()
         : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
     return id(uuid, name)
+  }
+
+  /** Recomputes per-project queuedRunCount and global queuedGlobal. */
+  private recomputeQueueCounts(): void {
+    for (const project of this.snapshot.projects) {
+      project.queuedRunCount = this.snapshot.queue.filter(
+        (q) => q.projectId === project.projectId
+      ).length
+    }
+    this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
   }
 
   /**

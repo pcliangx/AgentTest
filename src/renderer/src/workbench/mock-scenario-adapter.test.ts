@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
 import type {
+  AgentInstanceId,
   AgentProviderId,
   CommandId,
   CommandResult,
@@ -10,6 +11,7 @@ import type {
   GlobalSurface,
   ProjectId,
   ProjectSurface,
+  QueueItemId,
   WorkbenchCommand,
   WorkbenchEvent
 } from './contract'
@@ -267,12 +269,9 @@ describe('MockScenarioAdapter — unimplemented commands', () => {
     // manage-queue is still out of scope in Phase 1 #6; it must remain a
     // scenario-read-only rejection rather than silently no-op'ing.
     const result = await adapter.dispatch({
-      kind: 'manage-queue',
+      kind: 'request-quit-preview',
       commandId: cmdId(1),
-      expectedRevision: snap.revision,
-      projectId: agent.projectId,
-      queueItemId: id('queue-x', 'QueueItemId'),
-      operation: 'cancel'
+      expectedRevision: snap.revision
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -1367,5 +1366,199 @@ describe('MockScenarioAdapter — discard-agent-changes', () => {
     const after = await adapter.getSnapshot()
     expect(after.pendingConfirmation).toBeDefined()
     expect(after.pendingConfirmation!.action).toContain('丢弃')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// manage-queue — cancel, reorder, priority (#7)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — manage-queue', () => {
+  function manageQueue(
+    commandId: CommandId,
+    expectedRevision: number,
+    queueItemId: QueueItemId,
+    operation: 'cancel' | 'move-earlier' | 'move-later' | 'raise-priority' | 'lower-priority',
+    projectId: ProjectId = id('proj-sales', 'ProjectId')
+  ): WorkbenchCommand {
+    return {
+      kind: 'manage-queue',
+      commandId,
+      expectedRevision,
+      projectId,
+      queueItemId,
+      operation
+    }
+  }
+
+  it('cancel removes the queue item without creating a Run', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const item = snap.queue[0]
+    const result = await adapter.dispatch(
+      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'cancel')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.queue.find((q) => q.queueItemId === item.queueItemId)).toBeUndefined()
+  })
+
+  it('move-earlier decreases position when not first', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const second = snap.queue.find((q) => q.position === 2)!
+    const result = await adapter.dispatch(
+      manageQueue(cmdId(1), snap.revision, second.queueItemId, 'move-earlier')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const moved = after.queue.find((q) => q.queueItemId === second.queueItemId)!
+    expect(moved.position).toBe(1)
+  })
+
+  it('move-later increases position when not last', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const first = snap.queue.find((q) => q.position === 1)!
+    const result = await adapter.dispatch(
+      manageQueue(cmdId(1), snap.revision, first.queueItemId, 'move-later')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const moved = after.queue.find((q) => q.queueItemId === first.queueItemId)!
+    expect(moved.position).toBe(2)
+  })
+
+  it('raise-priority sets priority to high', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const item = snap.queue[0]
+    const result = await adapter.dispatch(
+      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'raise-priority')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const updated = after.queue.find((q) => q.queueItemId === item.queueItemId)!
+    expect(updated.priority).toBe('high')
+  })
+
+  it('lower-priority sets priority to low', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const item = snap.queue[0]
+    const result = await adapter.dispatch(
+      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'lower-priority')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const updated = after.queue.find((q) => q.queueItemId === item.queueItemId)!
+    expect(updated.priority).toBe('low')
+  })
+
+  it('rejects invalid queue item id', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch(
+      manageQueue(
+        cmdId(1),
+        snap.revision,
+        id('queue-nonexistent', 'QueueItemId'),
+        'cancel'
+      )
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// set-terminal-takeover — execution slot mutual exclusion (#7)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — set-terminal-takeover', () => {
+  function terminalCmd(
+    commandId: CommandId,
+    expectedRevision: number,
+    agentInstanceId: AgentInstanceId,
+    operation: 'open' | 'close',
+    projectId: ProjectId = id('proj-sales', 'ProjectId')
+  ): WorkbenchCommand {
+    return {
+      kind: 'set-terminal-takeover',
+      commandId,
+      expectedRevision,
+      projectId,
+      agentInstanceId,
+      operation
+    }
+  }
+
+  it('open sets terminalState to active for a ready agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cx_review is 'ready' with terminalState 'closed'
+    const ready = snap.agents.find(
+      (a) => a.name === 'cx_review'
+    )!
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, ready.agentInstanceId, 'open')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find((a) => a.agentInstanceId === ready.agentInstanceId)!
+    expect(agent.terminalState).toBe('active')
+  })
+
+  it('open is rejected when agent has an active Run', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cc_data is 'running'
+    const running = snap.agents.find(
+      (a) => a.name === 'cc_data'
+    )!
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, running.agentInstanceId, 'open')
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('busy')
+  })
+
+  it('close sets terminalState back to closed', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cx_anti has terminalState 'active'
+    const active = snap.agents.find(
+      (a) => a.name === 'cx_anti'
+    )!
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, active.agentInstanceId, 'close')
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find((a) => a.agentInstanceId === active.agentInstanceId)!
+    expect(agent.terminalState).toBe('closed')
+  })
+
+  it('after terminal open, send-agent-instruction is rejected as busy', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const ready = snap.agents.find((a) => a.name === 'cx_review')!
+    // Open terminal
+    await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, ready.agentInstanceId, 'open')
+    )
+    const snap2 = await adapter.getSnapshot()
+    // Now try to send instruction
+    const result = await adapter.dispatch({
+      kind: 'send-agent-instruction',
+      commandId: cmdId(2),
+      expectedRevision: snap2.revision,
+      projectId: id('proj-sales', 'ProjectId'),
+      agentInstanceId: ready.agentInstanceId,
+      instruction: 'test',
+      mode: 'start-or-queue'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('busy')
   })
 })

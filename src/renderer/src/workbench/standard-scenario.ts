@@ -69,7 +69,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         repositoryReadiness: 'ready',
         activity: 'active',
         activeRunCount: 1,
-        queuedRunCount: 1,
+        queuedRunCount: 2,
         attentionCount: 2,
         primaryConnectionId: connId,
         resourceBindings: [
@@ -157,6 +157,13 @@ export function createStandardScenario(): WorkbenchViewModel {
         agentInstanceId: cxForecast,
         position: 1,
         priority: 'normal'
+      },
+      {
+        queueItemId: id('queue-002', 'QueueItemId'),
+        projectId,
+        agentInstanceId: ccEtl,
+        position: 2,
+        priority: 'low'
       }
     ],
     permissionRequests: [],
@@ -268,7 +275,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         projectLimit: 3,
         globalLimit: 6,
         activeGlobal: 1,
-        queuedGlobal: 1
+        queuedGlobal: 2
       },
       connections: [
         {
