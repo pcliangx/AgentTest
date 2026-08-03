@@ -11,7 +11,12 @@ import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { createStandardScenario } from './workbench/standard-scenario'
-import type { WorkbenchViewModel } from './workbench/contract'
+import type {
+  CommandResult,
+  WorkbenchCommand,
+  WorkbenchEvent,
+  WorkbenchViewModel
+} from './workbench/contract'
 
 afterEach(() => cleanup())
 
@@ -78,13 +83,15 @@ describe('Global Attention — aggregation (#9)', () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)
 
-    // Pending permission requests form the Permission Center section.
+    // Pending permission requests form the Permission Center section. The
+    // expired cc_sql request was already published as denied by the adapter,
+    // so only cc_data's request remains.
     expect(
       within(drawer).getByRole('region', { name: /cc_data/ })
     ).toHaveTextContent('写入文件')
     expect(
-      within(drawer).getByRole('region', { name: /cc_sql/ })
-    ).toHaveTextContent('读取外部 API')
+      within(drawer).queryByRole('region', { name: /cc_sql/ })
+    ).toBeNull()
 
     // Cross-project items from 销售数据分析 and 用户研究.
     for (const title of [
@@ -155,7 +162,7 @@ describe('Global Attention — deep links (#9)', () => {
     expect(screen.getByRole('tab', { name: /cc_etl/ })).toBeVisible()
   })
 
-  it('links a run target through the owning agent workspace', async () => {
+  it('links a run target through the owning agent workspace and retains the runId', async () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)
     await user.click(
@@ -167,6 +174,37 @@ describe('Global Attention — deep links (#9)', () => {
       await screen.findByRole('region', { name: 'Agent 目录' })
     ).toBeVisible()
     expect(screen.getByRole('tab', { name: /cc_etl/ })).toBeVisible()
+    // The Run detail is not delivered yet: the target stays retained on an
+    // explicit notice instead of silently degrading to the Agent link.
+    expect(
+      await screen.findByText(/已保留目标：Run run-etl-001/)
+    ).toBeVisible()
+  })
+
+  it('opens the target tab even when events arrive after command responses', async () => {
+    // A contract-conformant port: a command response may arrive before its
+    // view-model-updated event (spec 566–568). The deep link must bind the
+    // accepted revision of the first command instead of assuming the event
+    // has already landed.
+    class DeferredEventPort extends MockScenarioAdapter {
+      override subscribe(
+        listener: (event: WorkbenchEvent) => void
+      ): () => void {
+        return super.subscribe((event) => {
+          setTimeout(() => listener(event), 0)
+        })
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new DeferredEventPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_etl 的 Run 失败：连接超时'
+      })
+    )
+    expect(await screen.findByRole('tab', { name: /cc_etl/ })).toBeVisible()
   })
 
   it.each([
@@ -245,18 +283,72 @@ describe('Permission Center — decisions (#9)', () => {
     ).toHaveTextContent('运行中')
   })
 
-  it('treats an expired request as denied: timeout note and disabled actions', async () => {
+  it('publishes expired requests as denied with audit instead of leaving them pending', async () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)
-    const card = within(drawer).getByRole('region', { name: /cc_sql/ })
-    expect(card).toHaveTextContent('已超时，按拒绝处理')
-    expect(within(card).getByRole('button', { name: '拒绝' })).toBeDisabled()
+    // perm-002 expired before the scenario loaded: no card, no actions —
+    // the adapter already published the default-deny transition.
     expect(
-      within(card).getByRole('button', { name: '允许一次' })
-    ).toBeDisabled()
+      within(drawer).queryByRole('region', { name: /cc_sql/ })
+    ).toBeNull()
+    await user.click(screen.getByRole('button', { name: '活动' }))
+    const activity = await screen.findByRole('region', { name: '活动' })
+    expect(activity).toHaveTextContent('权限已决定')
+    expect(activity).toHaveTextContent('已超时，按拒绝处理')
+    expect(activity).toHaveTextContent('读取外部 API')
+  })
+
+  it('shows the deadline as a port-provided fact without inferring state', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    const card = within(drawer).getByRole('region', { name: /cc_data/ })
+    expect(card).toHaveTextContent('默认拒绝截止')
+    // While the request is pending its offered actions stay enabled — the
+    // adapter owns the timeout transition, not this render.
+    expect(within(card).getByRole('button', { name: '拒绝' })).toBeEnabled()
+  })
+
+  it('renders only the decisions the authoritative request offers', async () => {
+    const scenario = createStandardScenario()
+    scenario.permissionRequests[0].decisions = ['deny']
+    const { user } = await renderShell(scenario)
+    const { drawer } = await openDrawer(user)
+    const card = within(drawer).getByRole('region', { name: /cc_data/ })
+    expect(within(card).getByRole('button', { name: '拒绝' })).toBeEnabled()
     expect(
-      within(card).getByRole('button', { name: '允许当前 Run' })
-    ).toBeDisabled()
+      within(card).queryByRole('button', { name: '允许一次' })
+    ).toBeNull()
+    expect(
+      within(card).queryByRole('button', { name: '允许当前 Run' })
+    ).toBeNull()
+  })
+
+  it('shows non-stale answer rejections next to the request', async () => {
+    class RejectingPort extends MockScenarioAdapter {
+      override async dispatch(
+        command: WorkbenchCommand
+      ): Promise<CommandResult> {
+        if (command.kind === 'answer-permission') {
+          return {
+            ok: false,
+            commandId: command.commandId,
+            reason: 'invalid-target',
+            latestRevision: (await this.getSnapshot()).revision,
+            message: '权限请求不存在或已处理'
+          }
+        }
+        return super.dispatch(command)
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new RejectingPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    const card = within(drawer).getByRole('region', { name: /cc_data/ })
+    await user.click(within(card).getByRole('button', { name: '拒绝' }))
+    expect(
+      await within(card).findByText('权限请求不存在或已处理')
+    ).toBeVisible()
   })
 
   it('routes permanent policy to Settings permissions without creating a grant', async () => {
@@ -289,6 +381,23 @@ describe('Permission Center — decisions (#9)', () => {
 })
 
 describe('Global Attention — resolve (#9)', () => {
+  it('does not offer generic resolve on permission-requested items', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    // A permission item may only be resolved by an actual decision —
+    // never by a fourth, audit-bypassing "mark done" action.
+    expect(
+      within(drawer).queryByRole('button', {
+        name: '标记已处理：cc_data 请求写入文件权限'
+      })
+    ).toBeNull()
+    expect(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_data 请求写入文件权限'
+      })
+    ).toBeVisible()
+  })
+
   it('removes a resolved item from pending but keeps it in Project Activity', async () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)

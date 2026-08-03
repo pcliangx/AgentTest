@@ -97,7 +97,9 @@ describe('Agents surface — Agent Directory', () => {
       '最近活动'
     )
     const names = directoryNames(directory)
-    expect(names[0]).toContain('cx_review')
+    // The construction-time permission timeout on cc_sql (#9) is its latest
+    // known activity, so it now leads the recency ordering.
+    expect(names[0]).toContain('cc_sql')
     expect(names[names.length - 1]).toContain('kimi_docs')
   })
 })

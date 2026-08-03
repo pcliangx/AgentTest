@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AgentInstanceId,
   AttentionItemId,
   AttentionTarget,
+  CommandResult,
   PermissionDecision,
+  PermissionRequestId,
   PermissionRequestViewModel,
   ProjectId,
   WorkbenchViewModel
@@ -15,12 +17,39 @@ import { ATTENTION_KIND_LABEL } from './attention-display'
  *
  * A non-modal drawer available from every Project surface and Settings. It
  * aggregates open Attention Items across all Projects and lists pending
- * permission requests with their only valid decisions (deny, allow once,
- * allow current Run). Permanent policy is never created here — the drawer
- * only navigates to Settings. Everything is a projection of the port
+ * permission requests with exactly the decisions the authoritative request
+ * offers (deny, allow once, allow current Run). Permanent policy is never
+ * created here — the drawer only navigates to Settings. Timeout is owned by
+ * the adapter: the drawer renders the port-provided deadline as a fact and
+ * never infers expiry itself. Everything is a projection of the port
  * snapshot: handling an item dispatches the matching command and the next
  * authoritative snapshot updates the lists.
  */
+
+const DECISION_ACTIONS: Array<{
+  decision: PermissionDecision
+  label: string
+  className: string
+}> = [
+  {
+    decision: 'deny',
+    label: '拒绝',
+    className:
+      'rounded bg-red-950 px-2 py-0.5 text-xs text-red-300 hover:bg-red-900'
+  },
+  {
+    decision: 'allow-once',
+    label: '允许一次',
+    className:
+      'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700'
+  },
+  {
+    decision: 'allow-current-run',
+    label: '允许当前 Run',
+    className:
+      'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700'
+  }
+]
 
 export function AttentionDrawer({
   snapshot,
@@ -36,11 +65,29 @@ export function AttentionDrawer({
   onAnswerPermission: (
     request: PermissionRequestViewModel,
     decision: PermissionDecision
-  ) => void
+  ) => Promise<CommandResult>
   onManagePolicy: (projectId: ProjectId) => void
   onResolve: (attentionItemId: AttentionItemId) => void
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
+  const [answerError, setAnswerError] = useState<{
+    requestId: PermissionRequestId
+    message: string
+  } | null>(null)
+
+  const answerPermission = async (
+    request: PermissionRequestViewModel,
+    decision: PermissionDecision
+  ): Promise<void> => {
+    setAnswerError(null)
+    const result = await onAnswerPermission(request, decision)
+    // Stale rejections already trigger a snapshot refetch upstream; only
+    // genuine rejections (e.g. duplicate or unsupported decisions) need an
+    // explanation next to the request.
+    if (!result.ok && result.reason !== 'stale-revision') {
+      setAnswerError({ requestId: request.requestId, message: result.message })
+    }
+  }
 
   useEffect(() => {
     // Non-modal drawer: focus moves in on open and returns to the opener
@@ -97,71 +144,57 @@ export function AttentionDrawer({
             <p className="text-xs text-neutral-600">暂无待处理的权限请求</p>
           ) : (
             <ul className="space-y-2">
-              {snapshot.permissionRequests.map((request) => {
-                const expired = Date.now() > request.expiresAt
-                return (
-                  <li key={request.requestId}>
-                    <section
-                      aria-label={`权限请求：${agentName(request.agentInstanceId)} ${request.action}`}
-                      className="space-y-1.5 rounded bg-neutral-900 px-3 py-2"
+              {snapshot.permissionRequests.map((request) => (
+                <li key={request.requestId}>
+                  <section
+                    aria-label={`权限请求：${agentName(request.agentInstanceId)} ${request.action}`}
+                    className="space-y-1.5 rounded bg-neutral-900 px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-neutral-100">
+                        {agentName(request.agentInstanceId)} · {request.action}
+                      </span>
+                      <span className="text-[10px] text-neutral-500">
+                        {projectName(request.projectId)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      范围：{request.scope}
+                    </p>
+                    <p className="text-xs text-neutral-400">
+                      原因：{request.reason}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      默认拒绝截止：
+                      {new Date(request.expiresAt).toLocaleString()}
+                    </p>
+                    <div className="flex gap-1.5 pt-0.5">
+                      {DECISION_ACTIONS.filter(({ decision }) =>
+                        request.decisions.includes(decision)
+                      ).map(({ decision, label, className }) => (
+                        <button
+                          key={decision}
+                          className={className}
+                          onClick={() => void answerPermission(request, decision)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {answerError?.requestId === request.requestId && (
+                      <p role="alert" className="text-xs text-red-300">
+                        {answerError.message}
+                      </p>
+                    )}
+                    <button
+                      className="block text-left text-xs text-blue-400 hover:text-blue-300"
+                      onClick={() => onManagePolicy(request.projectId)}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-neutral-100">
-                          {agentName(request.agentInstanceId)} ·{' '}
-                          {request.action}
-                        </span>
-                        <span className="text-[10px] text-neutral-500">
-                          {projectName(request.projectId)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-neutral-400">
-                        范围：{request.scope}
-                      </p>
-                      <p className="text-xs text-neutral-400">
-                        原因：{request.reason}
-                      </p>
-                      {expired && (
-                        <p className="text-xs text-amber-400">
-                          已超时，按拒绝处理
-                        </p>
-                      )}
-                      <div className="flex gap-1.5 pt-0.5">
-                        <button
-                          disabled={expired}
-                          className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-300 hover:bg-red-900 disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => onAnswerPermission(request, 'deny')}
-                        >
-                          拒绝
-                        </button>
-                        <button
-                          disabled={expired}
-                          className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() =>
-                            onAnswerPermission(request, 'allow-once')
-                          }
-                        >
-                          允许一次
-                        </button>
-                        <button
-                          disabled={expired}
-                          className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() =>
-                            onAnswerPermission(request, 'allow-current-run')
-                          }
-                        >
-                          允许当前 Run
-                        </button>
-                      </div>
-                      <button
-                        className="block text-left text-xs text-blue-400 hover:text-blue-300"
-                        onClick={() => onManagePolicy(request.projectId)}
-                      >
-                        在 Settings 中管理永久策略
-                      </button>
-                    </section>
-                  </li>
-                )
-              })}
+                      在 Settings 中管理永久策略
+                    </button>
+                  </section>
+                </li>
+              ))}
             </ul>
           )}
           <p className="text-[11px] text-neutral-600">
@@ -199,13 +232,18 @@ export function AttentionDrawer({
                     >
                       打开
                     </button>
-                    <button
-                      aria-label={`标记已处理：${item.title}`}
-                      className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
-                      onClick={() => onResolve(item.attentionItemId)}
-                    >
-                      标记已处理
-                    </button>
+                    {/* Permission items resolve only through an actual
+                        decision — never through a generic mark-done that
+                        would bypass the audit and strand the Run. */}
+                    {item.kind !== 'permission-requested' && (
+                      <button
+                        aria-label={`标记已处理：${item.title}`}
+                        className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
+                        onClick={() => onResolve(item.attentionItemId)}
+                      >
+                        标记已处理
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}

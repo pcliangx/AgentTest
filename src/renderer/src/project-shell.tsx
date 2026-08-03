@@ -238,6 +238,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // Permanent permission policy is managed only in Settings; a request from
   // the Permission Center remounts Settings on its permissions section.
   const [permissionsNavNonce, setPermissionsNavNonce] = useState(0)
+  // Deep-link failures are surfaced, never dropped silently (#9).
+  const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null)
 
   if (!snapshot) {
     return (
@@ -271,11 +273,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
    * Attention deep links (#9). Delivered targets navigate straight to their
    * work entry (overview / unique Agent Tab); undelivered details retain the
    * target and land on the explicit placeholder page of their surface.
+   *
+   * A command response may arrive before its view-model-updated event, so
+   * the follow-up layout command binds the first command's acceptedRevision
+   * instead of assuming the event has already landed. Both results are
+   * checked — a rejection surfaces a notice instead of failing silently.
    */
   const openAgentWorkspace = async (
     targetProject: ProjectViewModel,
-    agentInstanceId: AgentInstanceId
-  ): Promise<void> => {
+    agentInstanceId: AgentInstanceId,
+    baseRevision: number
+  ): Promise<CommandResult> => {
     const panels = Object.entries(targetProject.layout.panels) as Array<
       [PanelId, { tabs: AgentInstanceId[] }]
     >
@@ -283,67 +291,71 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       panel.tabs.includes(agentInstanceId)
     )
     if (holder) {
-      await sendCommand({
-        kind: 'change-layout',
-        projectId: targetProject.projectId,
-        operation: {
-          kind: 'activate-tab',
-          panelId: holder[0],
-          agentInstanceId
-        }
-      })
-      return
+      return sendCommand(
+        {
+          kind: 'change-layout',
+          projectId: targetProject.projectId,
+          operation: {
+            kind: 'activate-tab',
+            panelId: holder[0],
+            agentInstanceId
+          }
+        },
+        baseRevision
+      )
     }
     const targetPanelId =
       targetProject.layout.focusedPanelId ??
       panels[0]?.[0] ??
       id('panel-auto', 'PanelId')
-    await sendCommand({
-      kind: 'change-layout',
-      projectId: targetProject.projectId,
-      operation: { kind: 'open-tab', panelId: targetPanelId, agentInstanceId }
-    })
+    return sendCommand(
+      {
+        kind: 'change-layout',
+        projectId: targetProject.projectId,
+        operation: { kind: 'open-tab', panelId: targetPanelId, agentInstanceId }
+      },
+      baseRevision
+    )
   }
 
   const openAttentionTarget = async (
     target: AttentionTarget
   ): Promise<void> => {
     setShowAttention(false)
+    setDeepLinkNotice(null)
     const targetProject = snapshot.projects.find(
       (p) => p.projectId === target.projectId
     )
     if (!targetProject) return
-    setRetainedDeepLink(
-      target.kind === 'project' || target.kind === 'agent' || target.kind === 'run'
-        ? null
-        : target
-    )
-    switch (target.kind) {
-      case 'project':
-        await navigate(target.projectId, 'overview')
-        return
-      case 'agent':
-      case 'run':
-        await navigate(target.projectId, 'agents')
-        await openAgentWorkspace(targetProject, target.agentInstanceId)
-        return
-      case 'project-task':
-      case 'external-task':
-        await navigate(target.projectId, 'tasks')
-        return
-      case 'knowledge':
-        await navigate(target.projectId, 'knowledge')
-        return
-      case 'handoff':
-        await navigate(target.projectId, 'handoffs')
+    const navResult = await navigate(target.projectId, deepLinkSurface(target))
+    if (!navResult.ok) {
+      setDeepLinkNotice(`无法打开目标：${navResult.message}`)
+      return
     }
+    if (target.kind === 'agent' || target.kind === 'run') {
+      const layoutResult = await openAgentWorkspace(
+        targetProject,
+        target.agentInstanceId,
+        navResult.acceptedRevision
+      )
+      if (!layoutResult.ok) {
+        setDeepLinkNotice(
+          `已到达 Agent 工作面，但未能打开目标 Tab：${layoutResult.message}`
+        )
+      }
+    }
+    // Run details are not delivered yet: the target stays retained on an
+    // explicit notice next to the owning Agent workspace.
+    setRetainedDeepLink(
+      target.kind === 'project' || target.kind === 'agent' ? null : target
+    )
   }
 
   const answerPermission = (
     request: PermissionRequestViewModel,
     decision: PermissionDecision
-  ): void => {
-    void sendCommand({
+  ): Promise<CommandResult> =>
+    sendCommand({
       kind: 'answer-permission',
       projectId: request.projectId,
       agentInstanceId: request.agentInstanceId,
@@ -351,7 +363,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       requestId: request.requestId,
       decision
     })
-  }
 
   // Permanent policy is never created from a request; the Permission Center
   // only navigates into the Settings permissions section (UX-v0.2 §10).
@@ -472,6 +483,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 value={project.projectId}
                 onChange={(e) => {
                   setRetainedDeepLink(null)
+                  setDeepLinkNotice(null)
                   setPermissionsNavNonce(0)
                   const targetId = id(e.target.value, 'ProjectId')
                   const target = snapshot.projects.find(
@@ -499,6 +511,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                   }`}
                   onClick={() => {
                     setRetainedDeepLink(null)
+                    setDeepLinkNotice(null)
                     // The permissions deep link is one-shot: manual surface
                     // navigation consumes it so later Settings visits open
                     // on the default section again.
@@ -513,6 +526,25 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           </nav>
 
           <main className="min-h-0 flex-1 overflow-auto p-4">
+            {deepLinkNotice && (
+              <div
+                role="alert"
+                className="mb-3 rounded bg-red-950/60 px-3 py-1.5 text-xs text-red-300"
+              >
+                {deepLinkNotice}
+              </div>
+            )}
+            {project.currentSurface === 'agents' &&
+              retainedDeepLink?.kind === 'run' &&
+              retainedDeepLink.projectId === project.projectId && (
+                <div
+                  role="status"
+                  className="mb-3 rounded bg-neutral-900 px-3 py-1.5 text-xs text-neutral-400"
+                >
+                  已保留目标：{describeAttentionTarget(retainedDeepLink)}
+                  （Run 详情尚未交付，已打开所属 Agent 工作区）
+                </div>
+              )}
             {project.currentSurface === 'overview' && (
               <OverviewSurface
                 project={project}

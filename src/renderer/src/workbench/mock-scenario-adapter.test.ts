@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
 import { createStandardScenario } from './standard-scenario'
@@ -3145,14 +3145,17 @@ describe('MockScenarioAdapter — answer-permission (#9)', () => {
     )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('invalid-target')
-    // Rejection purity: the request stays pending and nothing is recorded.
+    // Rejection purity: the request stays pending and no decision for it is
+    // recorded (perm-002's construction-swept deny is a separate, prior fact).
     const after = await adapter.getSnapshot()
     expect(
       after.permissionRequests.some((r) => r.requestId === request.requestId)
     ).toBe(true)
-    expect(after.activity.some((a) => a.kind === 'permission-decided')).toBe(
-      false
-    )
+    expect(
+      after.activity.some(
+        (a) => a.kind === 'permission-decided' && a.summary.includes('写入文件')
+      )
+    ).toBe(false)
   })
 
   it('rejects an already-handled request (duplicate response)', async () => {
@@ -3172,13 +3175,13 @@ describe('MockScenarioAdapter — answer-permission (#9)', () => {
       expect(second.reason).toBe('invalid-target')
     }
     // The first decision stands — no extra activity, no state flip-flop.
+    // (perm-002's construction-swept deny is a separate, prior entry.)
     const after = await adapter.getSnapshot()
-    expect(
-      after.activity.filter((a) => a.kind === 'permission-decided')
-    ).toHaveLength(1)
-    expect(
-      after.activity.find((a) => a.kind === 'permission-decided')!.summary
-    ).toContain('已允许一次')
+    const decided = after.activity.filter(
+      (a) => a.kind === 'permission-decided' && a.summary.includes('写入文件')
+    )
+    expect(decided).toHaveLength(1)
+    expect(decided[0].summary).toContain('已允许一次')
   })
 
   it('rejects a request that never existed', async () => {
@@ -3195,25 +3198,131 @@ describe('MockScenarioAdapter — answer-permission (#9)', () => {
     if (!result.ok) expect(result.reason).toBe('invalid-target')
   })
 
-  it('forces deny with a timeout note when the request already expired', async () => {
+  it('publishes already-expired requests as denied at construction instead of leaving them pending', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const expired = findRequest(snap, 'perm-002')
-    expect(expired.expiresAt).toBeLessThan(Date.now())
-
-    const result = await adapter.dispatch(
-      answerPermission(cmdId(1), snap.revision, expired, 'allow-current-run')
-    )
-    expect(result.ok).toBe(true)
-
-    const after = await adapter.getSnapshot()
+    // perm-002 expired before construction: it must never surface as a
+    // pending request, and its default-deny transition must be audited.
     expect(
-      after.permissionRequests.some((r) => r.requestId === expired.requestId)
+      snap.permissionRequests.some(
+        (r) => r.requestId === id('perm-002', 'PermissionRequestId')
+      )
     ).toBe(false)
-    const entry = after.activity.find((a) => a.kind === 'permission-decided')!
-    expect(entry.summary).toContain('超时')
-    expect(entry.summary).toContain('拒绝')
-    expect(entry.summary).not.toContain('已允许当前 Run')
+    const entry = snap.activity.find(
+      (a) => a.kind === 'permission-decided' && a.summary.includes('读取外部 API')
+    )
+    expect(entry).toBeDefined()
+    expect(entry!.summary).toContain('已拒绝')
+    expect(entry!.summary).toContain('请求已超时，按拒绝处理')
+    // cc_sql was never held by the request — its own state is untouched.
+    expect(snap.agents.find((a) => a.name === 'cc_sql')!.runtimeState).toBe(
+      'needs-input'
+    )
+    // Answering the already-swept request is a duplicate response.
+    const ghost = await adapter.dispatch({
+      kind: 'answer-permission',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: snap.projects[0].projectId,
+      agentInstanceId: snap.agents.find((a) => a.name === 'cc_sql')!
+        .agentInstanceId,
+      runId: id('run-sql-001', 'RunId'),
+      requestId: id('perm-002', 'PermissionRequestId'),
+      decision: 'allow-once'
+    })
+    expect(ghost.ok).toBe(false)
+    if (!ghost.ok) expect(ghost.reason).toBe('invalid-target')
+  })
+
+  it('publishes the authoritative deny transition when a pending request expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const adapter = new MockScenarioAdapter()
+      const events: WorkbenchEvent[] = []
+      adapter.subscribe((event) => events.push(event))
+      const before = await adapter.getSnapshot()
+      expect(
+        before.permissionRequests.some(
+          (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+        )
+      ).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(300_001)
+
+      const after = await adapter.getSnapshot()
+      expect(
+        after.permissionRequests.some(
+          (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+        )
+      ).toBe(false)
+      expect(after.revision).toBe(before.revision + 1)
+      const entry = after.activity.find((a) => a.kind === 'permission-decided')!
+      expect(entry.summary).toContain('已拒绝')
+      expect(entry.summary).toContain('请求已超时，按拒绝处理')
+      // The held Run is released and the linked attention item resolves in
+      // the same authoritative transition.
+      expect(after.agents.find((a) => a.name === 'cc_data')!.runtimeState).toBe(
+        'running'
+      )
+      expect(
+        after.attentionItems.find(
+          (item) => item.attentionItemId === id('att-001', 'AttentionItemId')
+        )!.state
+      ).toBe('resolved')
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'view-model-updated' &&
+            event.revision === before.revision + 1
+        )
+      ).toBe(true)
+      expect(
+        events.some(
+          (event) =>
+            event.kind === 'attention-changed' &&
+            event.attentionItemId === id('att-001', 'AttentionItemId')
+        )
+      ).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('collapses an answer landing after the deadline into the same single deny transition', async () => {
+    vi.useFakeTimers()
+    try {
+      const adapter = new MockScenarioAdapter()
+      const snap = await adapter.getSnapshot()
+      const request = findRequest(snap, 'perm-001')
+      // Time passes the deadline, but the expiry timer has not fired yet.
+      vi.setSystemTime(Date.now() + 300_001)
+
+      const result = await adapter.dispatch(
+        answerPermission(cmdId(1), snap.revision, request, 'allow-current-run')
+      )
+      expect(result.ok).toBe(true)
+
+      const after = await adapter.getSnapshot()
+      // Scoped to perm-001's action — perm-002's construction-swept deny is
+      // a separate, prior entry.
+      const decided = after.activity.filter(
+        (a) => a.kind === 'permission-decided' && a.summary.includes('写入文件')
+      )
+      expect(decided).toHaveLength(1)
+      expect(decided[0].summary).toContain('已拒绝')
+      expect(decided[0].summary).toContain('请求已超时，按拒绝处理')
+      // The scheduled expiry timer must not record a second decision.
+      await vi.advanceTimersByTimeAsync(60_000)
+      const later = await adapter.getSnapshot()
+      expect(
+        later.activity.filter(
+          (a) =>
+            a.kind === 'permission-decided' && a.summary.includes('写入文件')
+        )
+      ).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('resolves the linked permission attention item and recomputes attention counts', async () => {
@@ -3372,6 +3481,35 @@ describe('MockScenarioAdapter — resolve-attention (#9)', () => {
     })
     expect(ghost.ok).toBe(false)
     if (!ghost.ok) expect(ghost.reason).toBe('invalid-target')
+  })
+
+  it('rejects direct resolution of permission-requested items (fail-closed)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // att-001 is the permission-requested projection of perm-001: resolving
+    // it directly would bypass the three valid decisions and strand the Run.
+    const result = await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      attentionItemId: id('att-001', 'AttentionItemId')
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invariant-violation')
+    const after = await adapter.getSnapshot()
+    expect(
+      after.attentionItems.find(
+        (item) => item.attentionItemId === id('att-001', 'AttentionItemId')
+      )!.state
+    ).toBe('open')
+    expect(
+      after.permissionRequests.some(
+        (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+      )
+    ).toBe(true)
+    expect(after.activity.some((a) => a.kind === 'attention-resolved')).toBe(
+      false
+    )
   })
 
   it('does not start Agents or dispatch work when resolving attention', async () => {

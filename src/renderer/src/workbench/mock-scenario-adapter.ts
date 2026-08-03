@@ -8,7 +8,7 @@ import type {
   DispatchPlanRequest,
   DispatchPlanResult,
   PanelId,
-  PermissionDecision,
+  PermissionRequestId,
   ProjectId,
   WorkbenchCommand,
   WorkbenchEvent,
@@ -199,6 +199,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private createdAgentCount = 0
   private createdPanelCount = 0
   private createdSplitCount = 0
+  /** Scheduled default-deny transitions for pending permission requests (#9). */
+  private permissionTimers = new Map<
+    PermissionRequestId,
+    ReturnType<typeof setTimeout>
+  >()
   /**
    * ID supply for the shared layout reducer. IDs stay opaque and
    * deterministic per adapter instance (`panel-created-N` /
@@ -239,6 +244,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.recomputeActiveRunCounts()
     // Attention counts are projections of the authoritative item list (#9).
     this.recomputeAttentionCounts()
+    // Requests already past their deadline are published as denied before
+    // the first snapshot ever leaves the adapter — they never surface as
+    // pending, and the default-deny transition is audited from the start.
+    for (const request of [...this.snapshot.permissionRequests]) {
+      if (Date.now() > request.expiresAt) {
+        this.expirePermissionRequest(request, [])
+      }
+    }
+    this.schedulePermissionTimers()
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
@@ -1483,17 +1497,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
             '该权限请求不提供此决定'
           )
         }
-        // Timeout is simulated as denial (UX-v0.2 §10): an expired request
-        // can no longer be allowed — the effective decision collapses to
-        // deny, no matter which action the user clicked.
-        const timedOut = Date.now() > request.expiresAt
-        const effectiveDecision: PermissionDecision = timedOut
-          ? 'deny'
-          : command.decision
+        // Timeout enforcement is an adapter-owned authoritative transition
+        // (UX-v0.2 §10), never a renderer render-time inference. An answer
+        // landing after the deadline collapses into the exact same deny
+        // transition the expiry timer publishes — recorded exactly once.
+        if (Date.now() > request.expiresAt) {
+          this.expirePermissionRequest(request, postEvents)
+          return null
+        }
         this.snapshot.permissionRequests =
           this.snapshot.permissionRequests.filter(
             (candidate) => candidate.requestId !== request.requestId
           )
+        this.cancelPermissionTimer(request.requestId)
         const agent = this.snapshot.agents.find(
           (a) => a.agentInstanceId === request.agentInstanceId
         )
@@ -1505,9 +1521,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
         const decidedAt = Date.now()
         if (agent) agent.lastActivityAt = decidedAt
         const decisionLabel =
-          effectiveDecision === 'deny'
+          command.decision === 'deny'
             ? '已拒绝'
-            : effectiveDecision === 'allow-once'
+            : command.decision === 'allow-once'
               ? '已允许一次'
               : '已允许当前 Run'
         this.snapshot.activity = [
@@ -1517,30 +1533,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
             agentInstanceId: request.agentInstanceId,
             timestamp: decidedAt,
             kind: 'permission-decided',
-            summary: `${agent?.name ?? request.agentInstanceId} 的权限请求${decisionLabel}：${request.action}${timedOut ? '（请求已超时，按拒绝处理）' : ''}`
+            summary: `${agent?.name ?? request.agentInstanceId} 的权限请求${decisionLabel}：${request.action}`
           },
           ...this.snapshot.activity
         ]
-        // A handled request clears its Attention projection in the same
-        // transition: open permission-requested items pointing at this Run
-        // or Agent resolve without a separate user action.
-        for (const item of this.snapshot.attentionItems) {
-          if (item.state !== 'open' || item.kind !== 'permission-requested') {
-            continue
-          }
-          const linked =
-            (item.target.kind === 'run' &&
-              item.target.runId === request.runId) ||
-            (item.target.kind === 'agent' &&
-              item.target.agentInstanceId === request.agentInstanceId)
-          if (!linked) continue
-          item.state = 'resolved'
-          postEvents.push({
-            kind: 'attention-changed',
-            attentionItemId: item.attentionItemId,
-            state: 'resolved'
-          })
-        }
+        this.resolveLinkedPermissionAttention(request, postEvents)
         this.recomputeAttentionCounts()
         return null
       }
@@ -1553,6 +1550,17 @@ export class MockScenarioAdapter implements WorkbenchPort {
             command,
             'invalid-target',
             '关注项不存在或已处理'
+          )
+        }
+        // Fail closed: a permission-requested item is only ever resolved by
+        // an actual permission decision. A direct resolve would be a fourth
+        // action outside deny / allow-once / allow-current-run, strand the
+        // held Run and write a misleading audit record.
+        if (item.kind === 'permission-requested') {
+          return this.reject(
+            command,
+            'invariant-violation',
+            '权限类关注项只能通过权限决定处理'
           )
         }
         item.state = 'resolved'
@@ -1698,6 +1706,113 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.snapshot.global.attentionCount = this.snapshot.attentionItems.filter(
       (item) => item.state === 'open'
     ).length
+  }
+
+  // -- Permission Center (#9) ---------------------------------------------
+
+  /**
+   * The single authoritative timeout transition: deny by default, remove the
+   * request, release the held Run, resolve linked attention items and audit
+   * the outcome. Used by the construction sweep, the expiry timer and an
+   * answer landing after the deadline — always recorded exactly once.
+   */
+  private expirePermissionRequest(
+    request: WorkbenchViewModel['permissionRequests'][number],
+    postEvents: PostDispatchEvent[]
+  ): void {
+    this.snapshot.permissionRequests = this.snapshot.permissionRequests.filter(
+      (candidate) => candidate.requestId !== request.requestId
+    )
+    this.cancelPermissionTimer(request.requestId)
+    const agent = this.snapshot.agents.find(
+      (a) => a.agentInstanceId === request.agentInstanceId
+    )
+    if (agent?.runtimeState === 'permission-requested') {
+      agent.runtimeState = 'running'
+    }
+    const decidedAt = Date.now()
+    if (agent) agent.lastActivityAt = decidedAt
+    this.snapshot.activity = [
+      {
+        activityId: this.freshId('ActivityId'),
+        projectId: request.projectId,
+        agentInstanceId: request.agentInstanceId,
+        timestamp: decidedAt,
+        kind: 'permission-decided',
+        summary: `${agent?.name ?? request.agentInstanceId} 的权限请求已拒绝：${request.action}（请求已超时，按拒绝处理）`
+      },
+      ...this.snapshot.activity
+    ]
+    this.resolveLinkedPermissionAttention(request, postEvents)
+    this.recomputeAttentionCounts()
+  }
+
+  /**
+   * A handled request clears its Attention projection in the same
+   * transition: open permission-requested items pointing at this Run or
+   * Agent resolve without a separate user action.
+   */
+  private resolveLinkedPermissionAttention(
+    request: WorkbenchViewModel['permissionRequests'][number],
+    postEvents: PostDispatchEvent[]
+  ): void {
+    for (const item of this.snapshot.attentionItems) {
+      if (item.state !== 'open' || item.kind !== 'permission-requested') {
+        continue
+      }
+      const linked =
+        (item.target.kind === 'run' && item.target.runId === request.runId) ||
+        (item.target.kind === 'agent' &&
+          item.target.agentInstanceId === request.agentInstanceId)
+      if (!linked) continue
+      item.state = 'resolved'
+      postEvents.push({
+        kind: 'attention-changed',
+        attentionItemId: item.attentionItemId,
+        state: 'resolved'
+      })
+    }
+  }
+
+  /**
+   * Publishes the default-deny transition exactly at each request's
+   * deadline. Timers never hold a Node process open for a mock timeout.
+   */
+  private schedulePermissionTimers(): void {
+    for (const request of this.snapshot.permissionRequests) {
+      const delay = request.expiresAt - Date.now()
+      if (delay <= 0) continue
+      const timer = setTimeout(() => {
+        this.permissionTimers.delete(request.requestId)
+        const pending = this.snapshot.permissionRequests.find(
+          (candidate) => candidate.requestId === request.requestId
+        )
+        if (!pending) return // already decided or expired elsewhere
+        const postEvents: PostDispatchEvent[] = []
+        this.expirePermissionRequest(pending, postEvents)
+        const revision = ++this.snapshot.revision
+        this.emit(
+          {
+            kind: 'view-model-updated',
+            revision,
+            snapshot: structuredClone(this.snapshot)
+          },
+          ...postEvents.map((partial) => ({ ...partial, revision }))
+        )
+      }, delay)
+      if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+        ;(timer as { unref: () => void }).unref()
+      }
+      this.permissionTimers.set(request.requestId, timer)
+    }
+  }
+
+  private cancelPermissionTimer(requestId: PermissionRequestId): void {
+    const timer = this.permissionTimers.get(requestId)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.permissionTimers.delete(requestId)
+    }
   }
 
   /** Renumbers queue items for a project to be sequential 1..N by current position. */
