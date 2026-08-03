@@ -262,8 +262,11 @@ export function validateConfigurationValue(
 ): string | null {
   // Enum options come from the single catalogue descriptor.
   const descriptor = FIELDS_BY_PATH.get(fieldPath)
-  if (descriptor?.options && !descriptor.options.some((o) => o.value === value)) {
-    return `取值必须是：${descriptor.options.map((o) => o.value).join(' / ')}`
+  if (descriptor?.options) {
+    if (!descriptor.options.some((o) => o.value === value)) {
+      return `取值必须是：${descriptor.options.map((o) => o.value).join(' / ')}`
+    }
+    return null
   }
   switch (fieldPath) {
     case 'general.name':

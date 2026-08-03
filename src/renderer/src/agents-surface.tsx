@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import type {
+  AgentOpenMode,
   AgentInstanceViewModel,
   AgentRuntimeState,
+  AgentWorktreeMode,
   CommandResult,
   LayoutOperation,
   ProjectViewModel,
@@ -9,6 +11,7 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { resolveProviderModelSelection } from './workbench/provider-capability'
 import { providerLabel, RUNTIME_STATE_LABEL } from './agent-display'
 import { WorkspaceArea } from './workspace-layout'
 
@@ -390,6 +393,18 @@ function AgentDirectory({
 // New Agent dialog
 // ---------------------------------------------------------------------------
 
+function isAgentOpenMode(value: unknown): value is AgentOpenMode {
+  return (
+    value === 'current-panel' ||
+    value === 'background' ||
+    value === 'new-panel'
+  )
+}
+
+function isAgentWorktreeMode(value: unknown): value is AgentWorktreeMode {
+  return value === 'isolated' || value === 'read-only-shared'
+}
+
 function NewAgentDialog({
   project,
   snapshot,
@@ -404,22 +419,76 @@ function NewAgentDialog({
   const readyProviders = snapshot.global.providers.filter(
     (p) => p.status === 'ready'
   )
+  const projectConfiguration = snapshot.appliedConfigurations.find(
+    (configuration) =>
+      configuration.owner.kind === 'project' &&
+      configuration.owner.projectId === project.projectId
+  )
+  const appliedProviderId = projectConfiguration?.values['defaults.providerId']
+  const appliedModelId = projectConfiguration?.values['defaults.model']
+  const appliedOpenMode = projectConfiguration?.values['defaults.openMode']
+  const appliedWorktreeMode =
+    projectConfiguration?.values['defaults.worktreeMode']
   const [name, setName] = useState('')
   const [providerId, setProviderId] = useState<string>(
-    readyProviders[0]?.providerId ?? ''
+    typeof appliedProviderId === 'string' ? appliedProviderId : ''
   )
-  const [open, setOpen] = useState<
-    'current-panel' | 'background' | 'new-panel'
-  >('current-panel')
+  const [modelId, setModelId] = useState(
+    typeof appliedModelId === 'string' ? appliedModelId : ''
+  )
+  const [open, setOpen] = useState<AgentOpenMode>(
+    isAgentOpenMode(appliedOpenMode) ? appliedOpenMode : 'current-panel'
+  )
+  const [worktreeMode, setWorktreeMode] = useState<AgentWorktreeMode>(
+    isAgentWorktreeMode(appliedWorktreeMode)
+      ? appliedWorktreeMode
+      : 'isolated'
+  )
   const [error, setError] = useState<string | null>(null)
+  const selectedProvider = snapshot.global.providers.find(
+    (provider) => provider.providerId === providerId
+  )
+  const providerSelection = resolveProviderModelSelection(
+    snapshot.global.providers,
+    id(providerId, 'AgentProviderId'),
+    modelId
+  )
+  const capabilityError = providerSelection.ok
+    ? null
+    : providerSelection.message
+  const providerIsSelectable = readyProviders.some(
+    (provider) => provider.providerId === providerId
+  )
+  const modelIsSelectable = Boolean(
+    selectedProvider?.models.some((model) => model.modelId === modelId)
+  )
+
+  const selectProvider = (nextProviderId: string) => {
+    const nextProvider = readyProviders.find(
+      (provider) => provider.providerId === nextProviderId
+    )
+    setProviderId(nextProviderId)
+    setModelId((currentModelId) =>
+      nextProvider?.models.some((model) => model.modelId === currentModelId)
+        ? currentModelId
+        : (nextProvider?.models[0]?.modelId ?? '')
+    )
+    setError(null)
+  }
 
   const submit = async () => {
+    if (!providerSelection.ok) {
+      setError(providerSelection.message)
+      return
+    }
     const result = await sendCommand({
       kind: 'create-agent',
       projectId: project.projectId,
       name,
       providerId: id(providerId, 'AgentProviderId'),
-      open
+      modelId,
+      open,
+      worktreeMode
     })
     if (result.ok) {
       onClose()
@@ -453,11 +522,42 @@ function NewAgentDialog({
             aria-label="Provider"
             className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={providerId}
-            onChange={(e) => setProviderId(e.target.value)}
+            onChange={(e) => selectProvider(e.target.value)}
           >
+            {!providerIsSelectable && (
+              <option value={providerId} disabled>
+                {providerId
+                  ? `${selectedProvider?.displayName ?? providerId}（不可用）`
+                  : '未配置 Provider'}
+              </option>
+            )}
             {readyProviders.map((p) => (
               <option key={p.providerId} value={p.providerId}>
-                {providerLabel(p.providerId)}
+                {p.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-xs text-neutral-400">
+          模型
+          <select
+            aria-label="模型"
+            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            value={modelId}
+            onChange={(e) => {
+              setModelId(e.target.value)
+              setError(null)
+            }}
+          >
+            {!modelIsSelectable && (
+              <option value={modelId} disabled>
+                {modelId ? `${modelId}（不兼容）` : '未配置模型'}
+              </option>
+            )}
+            {selectedProvider?.models.map((model) => (
+              <option key={model.modelId} value={model.modelId}>
+                {model.displayName}
               </option>
             ))}
           </select>
@@ -469,11 +569,7 @@ function NewAgentDialog({
             aria-label="打开方式"
             className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={open}
-            onChange={(e) =>
-              setOpen(
-                e.target.value as 'current-panel' | 'background' | 'new-panel'
-              )
-            }
+            onChange={(e) => setOpen(e.target.value as AgentOpenMode)}
           >
             <option value="current-panel">当前 Panel</option>
             <option value="new-panel">新 Panel</option>
@@ -481,9 +577,24 @@ function NewAgentDialog({
           </select>
         </label>
 
-        {error && (
+        <label className="block text-xs text-neutral-400">
+          worktree 模式
+          <select
+            aria-label="worktree 模式"
+            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            value={worktreeMode}
+            onChange={(e) =>
+              setWorktreeMode(e.target.value as AgentWorktreeMode)
+            }
+          >
+            <option value="isolated">独立 worktree</option>
+            <option value="read-only-shared">共享只读</option>
+          </select>
+        </label>
+
+        {(error ?? capabilityError) && (
           <p role="alert" className="text-xs text-red-400">
-            {error}
+            {error ?? capabilityError}
           </p>
         )}
 
@@ -496,6 +607,7 @@ function NewAgentDialog({
           </button>
           <button
             className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+            disabled={!providerSelection.ok}
             onClick={() => void submit()}
           >
             创建 Agent

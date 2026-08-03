@@ -20,6 +20,7 @@ import {
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
 import {
+  fieldDescriptor,
   fieldPathsFor,
   formatResourceScope,
   normalizeAppliedValue,
@@ -36,6 +37,7 @@ import {
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
+import { resolveProviderModelSelection } from './provider-capability'
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
@@ -76,6 +78,103 @@ type ConfigurationApplyPlan = {
     nextBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
     removedBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
   }
+}
+
+function sameConfigurationValue(
+  current: unknown,
+  previewed: unknown,
+  seen = new WeakMap<object, object>()
+): boolean {
+  if (Object.is(current, previewed)) return true
+  if (
+    current === null ||
+    previewed === null ||
+    typeof current !== 'object' ||
+    typeof previewed !== 'object'
+  ) {
+    return false
+  }
+  const seenPreview = seen.get(current)
+  if (seenPreview) return seenPreview === previewed
+  seen.set(current, previewed)
+
+  if (Array.isArray(current) || Array.isArray(previewed)) {
+    return (
+      Array.isArray(current) &&
+      Array.isArray(previewed) &&
+      current.length === previewed.length &&
+      current.every((value, index) =>
+        sameConfigurationValue(value, previewed[index], seen)
+      )
+    )
+  }
+  if (current instanceof Date || previewed instanceof Date) {
+    return (
+      current instanceof Date &&
+      previewed instanceof Date &&
+      current.getTime() === previewed.getTime()
+    )
+  }
+  // Configuration values are scalar or JSON-shaped. Unsupported structured
+  // objects fail closed instead of making a stale preview appear equal.
+  if (
+    Object.getPrototypeOf(current) !== Object.prototype ||
+    Object.getPrototypeOf(previewed) !== Object.prototype
+  ) {
+    return false
+  }
+  const currentKeys = Object.keys(current)
+  const previewedKeys = Object.keys(previewed)
+  return (
+    currentKeys.length === previewedKeys.length &&
+    currentKeys.every(
+      (key) =>
+        Object.hasOwn(previewed, key) &&
+        sameConfigurationValue(
+          (current as Record<string, unknown>)[key],
+          (previewed as Record<string, unknown>)[key],
+          seen
+        )
+    )
+  )
+}
+
+function sameConfigurationDraft(
+  current: ConfigurationDraftEntry | undefined,
+  previewed: ConfigurationDraftEntry
+): boolean {
+  if (
+    !current ||
+    ownerKey(current.owner) !== ownerKey(previewed.owner) ||
+    current.appliedVersion !== previewed.appliedVersion ||
+    current.changes.length !== previewed.changes.length ||
+    current.validationErrors.length !== previewed.validationErrors.length
+  ) {
+    return false
+  }
+  return (
+    current.changes.every((change, index) => {
+      const expected = previewed.changes[index]
+      return (
+        change.fieldPath === expected.fieldPath &&
+        sameConfigurationValue(change.applied, expected.applied) &&
+        sameConfigurationValue(change.draft, expected.draft)
+      )
+    }) &&
+    current.validationErrors.every((error, index) => {
+      const expected = previewed.validationErrors[index]
+      return (
+        error.fieldPath === expected.fieldPath &&
+        error.message === expected.message
+      )
+    })
+  )
+}
+
+function formatConfirmationValue(value: unknown): string {
+  if (value === null) return '无'
+  if (value === '') return '空'
+  return String(value)
 }
 
 /** Runtime states that occupy the execution slot with an active structured Run. */
@@ -127,6 +226,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         type: 'configuration-apply'
         plan: ConfigurationApplyPlan
         fingerprint: string
+      }
+    | {
+        type: 'discard-configuration'
+        projectId: ProjectId
+        drafts: ConfigurationDraftEntry[]
       }
     | null = null
 
@@ -224,19 +328,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        const provider = this.snapshot.global.providers.find(
-          (p) => p.providerId === command.providerId
+        const selection = resolveProviderModelSelection(
+          this.snapshot.global.providers,
+          command.providerId,
+          command.modelId
         )
-        if (!provider) {
-          return this.reject(command, 'invalid-target', 'Provider 不存在')
-        }
-        if (provider.status !== 'ready') {
+        if (!selection.ok) {
           return this.reject(
             command,
-            'unavailable',
-            'Provider Doctor 未通过，不能创建实例'
+            selection.code === 'provider-unavailable'
+              ? 'unavailable'
+              : 'invalid-target',
+            selection.message
           )
         }
+        const { provider } = selection
         const nameCheck = validateAgentName(command.name)
         if (!nameCheck.ok) {
           return this.reject(command, 'invalid-target', nameCheck.reason!)
@@ -268,22 +374,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
           providerId: provider.providerId,
           runtimeState: 'ready',
           terminalState: 'closed',
+          worktreeMode: command.worktreeMode,
           queueDepth: 0,
           doctor: 'ready',
           lastActivityAt: Date.now()
         })
-        // Every configurable owner needs its applied truth (#13): a created
-        // instance starts at version 1, inheriting the project's applied
-        // defaults — otherwise Settings could never edit it.
-        const projectConfig = this.snapshot.appliedConfigurations.find(
-          (c) => c.owner.kind === 'project' && c.owner.projectId === project.projectId
-        )
+        // Every configurable owner needs its applied truth (#13). The
+        // command carries the user's confirmed creation draft, initially
+        // seeded from the Project's applied defaults by the renderer.
         this.snapshot.appliedConfigurations.push({
           owner: { kind: 'agent', agentInstanceId },
           appliedVersion: 1,
           values: {
             'identity.name': name,
-            'model.id': projectConfig?.values['defaults.model'] ?? '',
+            'model.id': command.modelId,
             'proxy.http': '',
             'env.custom': '',
             'concurrency.priority': 'normal',
@@ -320,13 +424,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'request-connection-deletion': {
-        if (this.snapshot.pendingConfirmation) {
-          return this.reject(
-            command,
-            'busy',
-            '已有待确认操作，请先确认或取消'
-          )
-        }
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const conn = this.snapshot.global.connections.find(
           (c) => c.connectionId === command.connectionId
         )
@@ -382,13 +481,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'merge-agent-changes': {
-        if (this.snapshot.pendingConfirmation) {
-          return this.reject(
-            command,
-            'busy',
-            '已有待确认操作，请先确认或取消'
-          )
-        }
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const changes = this.snapshot.changes.find(
           (c) => c.agentInstanceId === command.agentInstanceId
         )
@@ -426,13 +520,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'discard-agent-changes': {
-        if (this.snapshot.pendingConfirmation) {
-          return this.reject(
-            command,
-            'busy',
-            '已有待确认操作，请先确认或取消'
-          )
-        }
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const changes = this.snapshot.changes.find(
           (c) => c.agentInstanceId === command.agentInstanceId
         )
@@ -464,9 +553,29 @@ export class MockScenarioAdapter implements WorkbenchPort {
             '无效或过期的确认 ID'
           )
         }
+        const pendingAction = this.pendingAction
+        if (!pendingAction) {
+          return this.reject(command, 'invalid-target', '确认操作已过期')
+        }
+        if (
+          pendingAction.type === 'discard-configuration' &&
+          pendingAction.drafts.some((previewed) => {
+            const current = this.snapshot.configurationDrafts.find(
+              (draft) => ownerKey(draft.owner) === ownerKey(previewed.owner)
+            )
+            return !sameConfigurationDraft(current, previewed)
+          })
+        ) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '确认已过期：配置草稿已变化，请重新预览'
+          )
+        }
         const { action, target } = pending
-        if (this.pendingAction?.type === 'configuration-apply') {
-          const frozen = this.pendingAction
+
+        if (pendingAction.type === 'configuration-apply') {
+          const frozen = pendingAction
           const currentFingerprint = this.configurationApplyFingerprint(
             frozen.plan.batchProjectId,
             frozen.plan.ownerKeys
@@ -502,8 +611,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
           })
           return null
         }
-        if (this.pendingAction?.type === 'connection-deletion') {
-          const deletion = this.pendingAction
+
+        if (pendingAction.type === 'connection-deletion') {
+          const deletion = pendingAction
           const currentFingerprint = this.connectionDeletionFingerprint(
             deletion.connectionId,
             deletion.affectedProjectIds
@@ -516,69 +626,88 @@ export class MockScenarioAdapter implements WorkbenchPort {
             )
           }
         }
-        this.snapshot.pendingConfirmation = undefined
+
+        let activityProjectId: ProjectId | undefined
+        let activityAgentInstanceId: AgentInstanceId | undefined
+
         // Execute the pending mock action.
-        if (this.pendingAction) {
-          if (this.pendingAction.type === 'connection-deletion') {
-            const deletion = this.pendingAction
-            const connId = deletion.connectionId
-            const affected = new Set(deletion.affectedProjectIds)
-            this.snapshot.global.connections =
-              this.snapshot.global.connections.filter(
-                (c) => c.connectionId !== connId
-              )
-            for (const proj of this.snapshot.projects) {
-              if (!affected.has(proj.projectId)) continue
-              if (proj.primaryConnectionId === connId) {
-                proj.primaryConnectionId = undefined
-              }
-              // Bindings of the deleted connection die with it.
-              proj.resourceBindings = proj.resourceBindings.filter(
-                (b) => b.connectionId !== connId
-              )
+        if (pendingAction.type === 'connection-deletion') {
+          const deletion = pendingAction
+          const connId = deletion.connectionId
+          const affected = new Set(deletion.affectedProjectIds)
+          this.snapshot.global.connections =
+            this.snapshot.global.connections.filter(
+              (c) => c.connectionId !== connId
+            )
+          for (const proj of this.snapshot.projects) {
+            if (!affected.has(proj.projectId)) continue
+            if (proj.primaryConnectionId === connId) {
+              proj.primaryConnectionId = undefined
             }
-            // Synchronise applied configuration truth in the same
-            // transition: a stale ConnectionId must never be resurrected
-            // by a later configuration apply. The version bump also
-            // stale-rejects drafts based on the old truth.
-            for (const config of this.snapshot.appliedConfigurations) {
-              if (config.owner.kind !== 'project') continue
-              const ownerProjectId = config.owner.projectId
-              if (!affected.has(ownerProjectId)) continue
-              const project = this.snapshot.projects.find(
-                (candidate) => candidate.projectId === ownerProjectId
-              )
-              if (!project) continue
-              const primaryChanged =
-                config.values['integrations.primaryConnectionId'] === connId
-              const nextScope = formatResourceScope(project.resourceBindings)
-              const scopeChanged =
-                config.values['integrations.resourceScope'] !== nextScope
-              if (primaryChanged) {
-                config.values['integrations.primaryConnectionId'] = null
-              }
-              if (scopeChanged) {
-                config.values['integrations.resourceScope'] = nextScope
-              }
-              if (primaryChanged || scopeChanged) {
-                config.appliedVersion += 1
-              }
-            }
-          } else if (
-            this.pendingAction.type === 'merge-changes' ||
-            this.pendingAction.type === 'discard-changes'
-          ) {
-            // merge-changes or discard-changes: both carry agentInstanceId
-            const agentId = this.pendingAction.agentInstanceId
-            this.snapshot.changes = this.snapshot.changes.filter(
-              (c) => c.agentInstanceId !== agentId
+            // Bindings of the deleted connection die with it.
+            proj.resourceBindings = proj.resourceBindings.filter(
+              (b) => b.connectionId !== connId
             )
           }
-          this.pendingAction = null
+          // Synchronise applied configuration truth in the same
+          // transition: a stale ConnectionId must never be resurrected
+          // by a later configuration apply. The version bump also
+          // stale-rejects drafts based on the old truth.
+          for (const config of this.snapshot.appliedConfigurations) {
+            if (config.owner.kind !== 'project') continue
+            const ownerProjectId = config.owner.projectId
+            if (!affected.has(ownerProjectId)) continue
+            const project = this.snapshot.projects.find(
+              (candidate) => candidate.projectId === ownerProjectId
+            )
+            if (!project) continue
+            const primaryChanged =
+              config.values['integrations.primaryConnectionId'] === connId
+            const nextScope = formatResourceScope(project.resourceBindings)
+            const scopeChanged =
+              config.values['integrations.resourceScope'] !== nextScope
+            if (primaryChanged) {
+              config.values['integrations.primaryConnectionId'] = null
+            }
+            if (scopeChanged) {
+              config.values['integrations.resourceScope'] = nextScope
+            }
+            if (primaryChanged || scopeChanged) {
+              config.appliedVersion += 1
+            }
+          }
+        } else if (pendingAction.type === 'discard-configuration') {
+          const drop = new Set(
+            pendingAction.drafts.map((draft) => ownerKey(draft.owner))
+          )
+          this.snapshot.configurationDrafts =
+            this.snapshot.configurationDrafts.filter(
+              (draft) => !drop.has(ownerKey(draft.owner))
+            )
+          activityProjectId = pendingAction.projectId
+          if (
+            pendingAction.drafts.length === 1 &&
+            pendingAction.drafts[0].owner.kind === 'agent'
+          ) {
+            activityAgentInstanceId =
+              pendingAction.drafts[0].owner.agentInstanceId
+          }
+        } else {
+          // merge-changes or discard-changes: both carry agentInstanceId
+          const agentId = pendingAction.agentInstanceId
+          this.snapshot.changes = this.snapshot.changes.filter(
+            (c) => c.agentInstanceId !== agentId
+          )
         }
-        // Record as a global activity — no projectId attribution.
+
+        this.snapshot.pendingConfirmation = undefined
+        this.pendingAction = null
         this.snapshot.activity.unshift({
           activityId: id(crypto.randomUUID(), 'ActivityId'),
+          ...(activityProjectId ? { projectId: activityProjectId } : {}),
+          ...(activityAgentInstanceId
+            ? { agentInstanceId: activityAgentInstanceId }
+            : {}),
           timestamp: Date.now(),
           kind: 'dangerous-action-confirmed',
           summary: `已确认: ${action}（${target}）`
@@ -887,29 +1016,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'discard-configuration': {
-        const frozenOwnerKeys =
-          this.pendingAction?.type === 'configuration-apply'
-            ? this.pendingAction.plan.ownerKeys
-            : null
-        if (
-          frozenOwnerKeys &&
-          command.owners.some((owner) =>
-            frozenOwnerKeys.includes(ownerKey(owner))
-          )
-        ) {
-          return this.reject(
-            command,
-            'busy',
-            '配置草稿正在等待集成影响确认，请先确认或取消'
-          )
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        if (command.owners.length === 0) {
+          return this.reject(command, 'invalid-target', '没有待丢弃的配置草稿')
+        }
+        const ownerKeys = command.owners.map((owner) => ownerKey(owner))
+        if (new Set(ownerKeys).size !== ownerKeys.length) {
+          return this.reject(command, 'invalid-target', 'owner 列表包含重复项')
         }
         // Batches stay inside one project: a Project Settings operation
         // must never touch another project's drafts (US-67, Project-first).
-        const projectIds = new Set(
-          command.owners
-            .map((o) => this.projectIdForOwner(o))
-            .filter((pid) => pid !== undefined)
+        const resolvedProjectIds = command.owners.map((owner) =>
+          this.projectIdForOwner(owner)
         )
+        if (resolvedProjectIds.some((projectId) => projectId === undefined)) {
+          return this.reject(command, 'invalid-target', '配置 owner 不存在')
+        }
+        const projectIds = new Set(resolvedProjectIds)
         if (projectIds.size > 1) {
           return this.reject(
             command,
@@ -917,12 +1041,39 @@ export class MockScenarioAdapter implements WorkbenchPort {
             '一次只能丢弃同一 Project 的配置草稿'
           )
         }
-        // Discard drops drafts only — applied values were never touched.
-        const drop = new Set(command.owners.map((o) => ownerKey(o)))
-        this.snapshot.configurationDrafts =
-          this.snapshot.configurationDrafts.filter(
-            (d) => !drop.has(ownerKey(d.owner))
+        const drafts = command.owners.map((owner) =>
+          this.snapshot.configurationDrafts.find(
+            (draft) => ownerKey(draft.owner) === ownerKey(owner)
           )
+        )
+        if (drafts.some((draft) => !draft || draft.changes.length === 0)) {
+          return this.reject(command, 'invalid-target', '没有待丢弃的配置草稿')
+        }
+        const frozenDrafts = structuredClone(
+          drafts as ConfigurationDraftEntry[]
+        )
+        const target = command.owners
+          .map((owner) => this.ownerLabelFor(owner))
+          .join('、')
+        const changes = frozenDrafts.flatMap((draft) =>
+          draft.changes.map((change) => {
+            const fieldLabel =
+              fieldDescriptor(change.fieldPath)?.label ?? change.fieldPath
+            return `${this.ownerLabelFor(draft.owner)} · ${fieldLabel}：${formatConfirmationValue(change.applied)} → ${formatConfirmationValue(change.draft)}`
+          })
+        )
+        this.pendingAction = {
+          type: 'discard-configuration',
+          projectId: resolvedProjectIds[0]!,
+          drafts: frozenDrafts
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: '丢弃配置草稿',
+          target,
+          impact: `将永久丢弃以下 ${changes.length} 项配置草稿且不可恢复：${changes.join('；')}。`,
+          nonBypassableReason: '丢弃配置草稿需要二次确认，无法跳过'
+        }
         return null
       }
       case 'apply-configuration': {
@@ -1000,8 +1151,36 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
           pending.push({ owner, draft, applied })
         }
-        // Re-validate against the live snapshot — but publish failures ONLY
-        // through this rejection. A rejected command never mutates the
+        // Agent-name validation must observe the atomic batch's FINAL name
+        // set. Stage-time validation still uses the live snapshot for early
+        // feedback, while Apply projects every pending rename together so a
+        // legal swap/cycle is not rejected as a transient collision.
+        const pendingRenames = new Map<AgentInstanceId, string>()
+        for (const { owner, draft } of pending) {
+          if (owner.kind !== 'agent') continue
+          for (const change of draft.changes) {
+            if (
+              change.fieldPath === 'identity.name' &&
+              typeof change.draft === 'string'
+            ) {
+              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
+            }
+          }
+        }
+        const validationSnapshot: WorkbenchViewModel =
+          pendingRenames.size === 0
+            ? this.snapshot
+            : {
+                ...this.snapshot,
+                agents: this.snapshot.agents.map((agent) => {
+                  const finalName = pendingRenames.get(agent.agentInstanceId)
+                  return finalName === undefined
+                    ? agent
+                    : { ...agent, name: finalName }
+                })
+              }
+        // Re-validate against the projected snapshot — but publish failures
+        // ONLY through this rejection. A rejected command never mutates the
         // snapshot (rejection purity), so freshly discovered errors travel
         // in the message instead of being written into drafts invisibly.
         const discovered: string[] = []
@@ -1011,7 +1190,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
               owner,
               change.fieldPath,
               change.draft,
-              this.snapshot
+              validationSnapshot
             )
             if (error) {
               discovered.push(
@@ -1027,22 +1206,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
             `部分字段未通过验证（${discovered.join('；')}），已保留全部草稿`
           )
         }
-        // Batch rename uniqueness: project the FINAL name set after all
-        // pending renames and check case-insensitive duplicates — per-change
-        // validation alone misses collisions between two renames staged in
-        // the same batch (Agent Name is project-unique, ADR-0008).
-        const pendingRenames = new Map<string, string>()
-        for (const { owner, draft } of pending) {
-          if (owner.kind !== 'agent') continue
-          for (const change of draft.changes) {
-            if (
-              change.fieldPath === 'identity.name' &&
-              typeof change.draft === 'string'
-            ) {
-              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
-            }
-          }
-        }
+        // Independently assert the projected FINAL name-set invariant after
+        // all pending renames. This keeps Project-wide, case-insensitive
+        // uniqueness (ADR-0008) explicit even if field validation evolves.
         if (pendingRenames.size > 0) {
           const seen = new Map<string, string>()
           let collision: string | null = null
@@ -1432,6 +1598,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
       (q) => q.projectId === project.projectId
     ).length
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
+  }
+
+  /** A single shared confirmation slot cannot be replaced while pending. */
+  private rejectIfConfirmationPending(
+    command: WorkbenchCommand
+  ): CommandResult | null {
+    if (!this.snapshot.pendingConfirmation && !this.pendingAction) return null
+    return this.reject(command, 'busy', '请先处理当前待确认操作')
   }
 
   /**

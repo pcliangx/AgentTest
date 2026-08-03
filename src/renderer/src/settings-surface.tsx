@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AgentInstanceViewModel,
+  CommandResult,
   ConfigurationOwner,
   ProjectViewModel,
   WorkbenchViewModel
@@ -101,6 +102,54 @@ export function SettingsSurface({
     owners: Array<{ ownerKey: string; targetAppliedVersion: number }>
     ownerCount: number
   } | null>(null)
+  const [pendingStageCount, setPendingStageCount] = useState(0)
+  // Revisions are global, so every stage shares one queue even when owners or
+  // fields differ. Per-field queues could still dispatch the same revision.
+  const stageTailRef = useRef<Promise<void>>(Promise.resolve())
+  const activeRef = useRef(true)
+  const snapshotRevisionRef = useRef(snapshot.revision)
+  const revisionWaitersRef = useRef<
+    Array<{ minimumRevision: number; resolve: () => void }>
+  >([])
+  snapshotRevisionRef.current = snapshot.revision
+
+  // Command responses and view-model events may arrive in either order.
+  // A stage remains pending until its accepted revision has actually rendered,
+  // so Apply cannot build an owner list from an older snapshot.
+  useEffect(() => {
+    const ready: Array<() => void> = []
+    const waiting: typeof revisionWaitersRef.current = []
+    for (const waiter of revisionWaitersRef.current) {
+      if (snapshot.revision >= waiter.minimumRevision) {
+        ready.push(waiter.resolve)
+      } else {
+        waiting.push(waiter)
+      }
+    }
+    revisionWaitersRef.current = waiting
+    ready.forEach((resolve) => resolve())
+  }, [snapshot.revision])
+
+  useEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+      const pending = revisionWaitersRef.current.splice(0)
+      pending.forEach(({ resolve }) => resolve())
+    }
+  }, [])
+
+  const waitForSnapshotRevision = (minimumRevision: number): Promise<void> => {
+    if (
+      !activeRef.current ||
+      snapshotRevisionRef.current >= minimumRevision
+    ) {
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      revisionWaitersRef.current.push({ minimumRevision, resolve })
+    })
+  }
 
   const projectOwner: ConfigurationOwner = {
     kind: 'project',
@@ -164,9 +213,39 @@ export function SettingsSurface({
     owner: ConfigurationOwner,
     fieldPath: string,
     value: unknown
-  ) => {
+  ): Promise<CommandResult> => {
     setFeedback(null)
-    void sendCommand({ kind: 'stage-configuration', owner, fieldPath, value })
+    setPendingStageCount((count) => count + 1)
+    const request = stageTailRef.current.then(async () => {
+      const result = await sendCommand({
+        kind: 'stage-configuration',
+        owner,
+        fieldPath,
+        value
+      })
+      if (result.ok) {
+        await waitForSnapshotRevision(result.acceptedRevision)
+      } else {
+        if (result.reason === 'stale-revision') {
+          await waitForSnapshotRevision(result.latestRevision)
+        }
+        if (activeRef.current) {
+          setFeedback({ kind: 'alert', message: result.message })
+        }
+      }
+      return result
+    })
+    const tail = request.then(
+      () => undefined,
+      () => undefined
+    )
+    stageTailRef.current = tail
+    void tail.then(() => {
+      if (activeRef.current) {
+        setPendingStageCount((count) => count - 1)
+      }
+    })
+    return request
   }
 
   // Drafts shown, applied or discarded here are scoped to THIS project —
@@ -220,6 +299,13 @@ export function SettingsSurface({
   }, [applyAttempt, snapshot])
 
   const confirmApply = async () => {
+    if (pendingStageCount > 0) {
+      setFeedback({
+        kind: 'alert',
+        message: '仍有修改正在暂存，请等待完成后再应用'
+      })
+      return
+    }
     // The concurrency baseline is the version the DRAFT was captured at —
     // never the latest applied value, which would let a stale draft
     // overwrite a newer applied truth.
@@ -255,7 +341,7 @@ export function SettingsSurface({
       <ul className="space-y-3">
         {fieldPaths.map((fieldPath) => (
           <ConfigFieldRow
-            key={fieldPath}
+            key={`${ownerKey(owner)}:${fieldPath}`}
             fieldPath={fieldPath}
             descriptor={fieldDescriptor(fieldPath)!}
             appliedValue={applied.values[fieldPath]}
@@ -410,6 +496,7 @@ export function SettingsSurface({
 
       <aside
         aria-label="待应用摘要"
+        aria-busy={pendingStageCount > 0}
         className="flex w-72 shrink-0 flex-col rounded border border-neutral-800 p-3"
       >
         <h3 className="mb-2 text-sm font-medium text-neutral-200">待应用摘要</h3>
@@ -447,7 +534,9 @@ export function SettingsSurface({
         )}
         <button
           className="mt-3 rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-100 hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={draftsWithChanges.length === 0}
+          disabled={
+            draftsWithChanges.length === 0 || pendingStageCount > 0
+          }
           onClick={() => {
             setFeedback(null)
             setShowApplyDialog(true)
@@ -455,6 +544,11 @@ export function SettingsSurface({
         >
           应用全部变更
         </button>
+        {pendingStageCount > 0 && (
+          <p role="status" className="mt-2 text-xs text-neutral-400">
+            正在暂存 {pendingStageCount} 项修改…
+          </p>
+        )}
         {feedback && (
           <p
             role={feedback.kind === 'alert' ? 'alert' : 'status'}
@@ -506,6 +600,7 @@ export function SettingsSurface({
               </button>
               <button
                 className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+                disabled={pendingStageCount > 0}
                 onClick={() => void confirmApply()}
               >
                 确认应用
@@ -541,14 +636,36 @@ function ConfigFieldRow({
   error?: string
   options: Array<{ value: string; label: string }>
   formatValue: (value: unknown) => string
-  onStage: (value: unknown) => void
+  onStage: (value: unknown) => Promise<CommandResult>
 }) {
   const shown =
-    draftChange !== undefined ? String(draftChange.draft ?? '') : String(appliedValue ?? '')
+    draftChange !== undefined
+      ? String(draftChange.draft ?? '')
+      : String(appliedValue ?? '')
   const [value, setValue] = useState(shown)
+  const [pendingAttemptCount, setPendingAttemptCount] = useState(0)
+  const shownRef = useRef(shown)
+  const stageAttemptRef = useRef(0)
+  shownRef.current = shown
   // Re-sync only when the underlying truth (draft or applied) changes —
-  // in-progress typing is local and survives unrelated re-renders.
-  useEffect(() => setValue(shown), [shown])
+  // in-progress typing is local and survives unrelated or intermediate stage
+  // events. The latest queued edit remains visible until it settles.
+  useEffect(() => {
+    if (pendingAttemptCount === 0) setValue(shown)
+  }, [shown, pendingAttemptCount])
+
+  const commitStage = async (nextValue: unknown) => {
+    const attempt = ++stageAttemptRef.current
+    setPendingAttemptCount((count) => count + 1)
+    try {
+      const result = await onStage(nextValue)
+      if (!result.ok && attempt === stageAttemptRef.current) {
+        setValue(shownRef.current)
+      }
+    } finally {
+      setPendingAttemptCount((count) => count - 1)
+    }
+  }
 
   return (
     <li className="space-y-1">
@@ -560,15 +677,16 @@ function ConfigFieldRow({
           <select
             aria-label={descriptor.label}
             className="w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
-            value={shown}
-            onChange={(e) =>
-              onStage(
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value)
+              void commitStage(
                 fieldPath === 'integrations.primaryConnectionId' &&
                   e.target.value === ''
                   ? null
                   : e.target.value
               )
-            }
+            }}
           >
             {options.map((o) => (
               <option key={o.value} value={o.value}>
@@ -583,8 +701,10 @@ function ConfigFieldRow({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onBlur={() => {
-              if (value === shown) return
-              onStage(descriptor.kind === 'number' ? Number(value) : value)
+              if (value === shown && pendingAttemptCount === 0) return
+              void commitStage(
+                descriptor.kind === 'number' ? Number(value) : value
+              )
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur()
