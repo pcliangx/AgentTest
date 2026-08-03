@@ -189,9 +189,15 @@ function formatConfirmationValue(value: unknown): string {
  * Phase 1 uses this adapter to drive the full renderer without any real
  * Agent, PTY, Git, Feishu or persistence side effects. Future real adapters
  * (main/preload) must satisfy the same contract suite.
+ *
+ * Deadlines and audit timestamps share one injected time source (default
+ * `Date.now`): scenario data, the construction sweep and the permission
+ * timers always observe the same clock, so a frozen-clock scenario stays
+ * deterministic and never mixes in the process wall clock (#9).
  */
 export class MockScenarioAdapter implements WorkbenchPort {
   private snapshot: WorkbenchViewModel
+  private readonly clock: () => number
   private listeners = new Set<(event: WorkbenchEvent) => void>()
   private resultsByCommandId = new Map<CommandId, CommandResult>()
   private eventQueue: WorkbenchEvent[] = []
@@ -236,7 +242,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
     | null = null
 
-  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+  constructor(
+    snapshot: WorkbenchViewModel = createStandardScenario(),
+    options: { now?: () => number } = {}
+  ) {
+    this.clock = options.now ?? Date.now
     this.snapshot = structuredClone(snapshot)
     // Agent runtime states are authoritative. Scenario summary fields are
     // projections and may arrive stale, so repair them before exposing or
@@ -248,7 +258,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
     // the first snapshot ever leaves the adapter — they never surface as
     // pending, and the default-deny transition is audited from the start.
     for (const request of [...this.snapshot.permissionRequests]) {
-      if (Date.now() > request.expiresAt) {
+      if (this.clock() >= request.expiresAt) {
         this.expirePermissionRequest(request, [])
       }
     }
@@ -400,7 +410,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           worktreeMode: command.worktreeMode,
           queueDepth: 0,
           doctor: 'ready',
-          lastActivityAt: Date.now()
+          lastActivityAt: this.clock()
         })
         // Every configurable owner needs its applied truth (#13). The
         // command carries the user's confirmed creation draft, initially
@@ -628,7 +638,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           this.snapshot.activity.unshift({
             activityId: this.freshId('ActivityId'),
             projectId: frozen.plan.batchProjectId,
-            timestamp: Date.now(),
+            timestamp: this.clock(),
             kind: 'dangerous-action-confirmed',
             summary: `已确认: ${action}（${target}）`
           })
@@ -731,7 +741,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           ...(activityAgentInstanceId
             ? { agentInstanceId: activityAgentInstanceId }
             : {}),
-          timestamp: Date.now(),
+          timestamp: this.clock(),
           kind: 'dangerous-action-confirmed',
           summary: `已确认: ${action}（${target}）`
         })
@@ -862,13 +872,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
             activityId: this.freshId('ActivityId'),
             projectId: agent.projectId,
             agentInstanceId: agent.agentInstanceId,
-            timestamp: Date.now(),
+            timestamp: this.clock(),
             kind: 'instruction-sent',
             summary: `${agent.name} 收到指令：${command.instruction}`
           },
           ...this.snapshot.activity
         ]
-        agent.lastActivityAt = Date.now()
+        agent.lastActivityAt = this.clock()
         // #7 AC1: start-or-queue checks per-instance, Project and Global
         // capacity. Busy agents enqueue. Idle agents start if capacity
         // allows; otherwise they also enqueue.
@@ -915,7 +925,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // Date.now()+index, so two commands in the same millisecond cannot
         // share an id (#6 P1-2).
         const dispatchIds = targets.map(() => this.freshId('DispatchId'))
-        const now = Date.now()
+        const now = this.clock()
         const newActivity = targets.map((a) => ({
           activityId: this.freshId('ActivityId'),
           projectId: project.projectId,
@@ -1392,7 +1402,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
             this.snapshot.queue = this.snapshot.queue.filter(
               (q) => q.queueItemId !== item.queueItemId
             )
-            const cancelledAt = Date.now()
+            const cancelledAt = this.clock()
             if (agent) {
               agent.queueDepth = this.snapshot.queue.filter(
                 (queueItem) =>
@@ -1501,7 +1511,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // (UX-v0.2 §10), never a renderer render-time inference. An answer
         // landing after the deadline collapses into the exact same deny
         // transition the expiry timer publishes — recorded exactly once.
-        if (Date.now() > request.expiresAt) {
+        if (this.clock() >= request.expiresAt) {
           this.expirePermissionRequest(request, postEvents)
           return null
         }
@@ -1513,12 +1523,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
         const agent = this.snapshot.agents.find(
           (a) => a.agentInstanceId === request.agentInstanceId
         )
-        // The decision releases the held Run back to running; it never
-        // starts or stops work by itself.
-        if (agent?.runtimeState === 'permission-requested') {
+        // The decision releases the held Run only when no other pending
+        // request still holds this Agent — the contract does not limit a
+        // Run to a single outstanding request.
+        const stillHeld = this.snapshot.permissionRequests.some(
+          (candidate) => candidate.agentInstanceId === request.agentInstanceId
+        )
+        if (agent?.runtimeState === 'permission-requested' && !stillHeld) {
           agent.runtimeState = 'running'
         }
-        const decidedAt = Date.now()
+        const decidedAt = this.clock()
         if (agent) agent.lastActivityAt = decidedAt
         const decisionLabel =
           command.decision === 'deny'
@@ -1570,7 +1584,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           {
             activityId: this.freshId('ActivityId'),
             projectId: item.target.projectId,
-            timestamp: Date.now(),
+            timestamp: this.clock(),
             kind: 'attention-resolved',
             summary: `已处理关注：${item.title}`
           },
@@ -1647,7 +1661,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
     const uuid =
       typeof globalThis.crypto?.randomUUID === 'function'
         ? globalThis.crypto.randomUUID()
-        : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        : `id-${this.clock()}-${Math.random().toString(36).slice(2)}`
     return id(uuid, name)
   }
 
@@ -1712,9 +1726,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
   /**
    * The single authoritative timeout transition: deny by default, remove the
-   * request, release the held Run, resolve linked attention items and audit
-   * the outcome. Used by the construction sweep, the expiry timer and an
-   * answer landing after the deadline — always recorded exactly once.
+   * request, release the held Run when nothing else holds it, resolve the
+   * request's own attention reminder and audit the outcome. Used by the
+   * construction sweep, the expiry timer and an answer landing after the
+   * deadline — always recorded exactly once.
    */
   private expirePermissionRequest(
     request: WorkbenchViewModel['permissionRequests'][number],
@@ -1727,10 +1742,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
     const agent = this.snapshot.agents.find(
       (a) => a.agentInstanceId === request.agentInstanceId
     )
-    if (agent?.runtimeState === 'permission-requested') {
+    // Another pending request on the same Agent keeps the Run held.
+    const stillHeld = this.snapshot.permissionRequests.some(
+      (candidate) => candidate.agentInstanceId === request.agentInstanceId
+    )
+    if (agent?.runtimeState === 'permission-requested' && !stillHeld) {
       agent.runtimeState = 'running'
     }
-    const decidedAt = Date.now()
+    const decidedAt = this.clock()
     if (agent) agent.lastActivityAt = decidedAt
     this.snapshot.activity = [
       {
@@ -1748,9 +1767,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
   }
 
   /**
-   * A handled request clears its Attention projection in the same
-   * transition: open permission-requested items pointing at this Run or
-   * Agent resolve without a separate user action.
+   * A handled request clears only its own Attention projection in the same
+   * transition: the open permission-requested item linked to exactly this
+   * PermissionRequestId resolves. Concurrent requests keep their own
+   * reminders — a broad Run/Agent match would clear them prematurely.
    */
   private resolveLinkedPermissionAttention(
     request: WorkbenchViewModel['permissionRequests'][number],
@@ -1760,11 +1780,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
       if (item.state !== 'open' || item.kind !== 'permission-requested') {
         continue
       }
-      const linked =
-        (item.target.kind === 'run' && item.target.runId === request.runId) ||
-        (item.target.kind === 'agent' &&
-          item.target.agentInstanceId === request.agentInstanceId)
-      if (!linked) continue
+      if (item.permissionRequestId !== request.requestId) continue
       item.state = 'resolved'
       postEvents.push({
         kind: 'attention-changed',
@@ -1776,11 +1792,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
   /**
    * Publishes the default-deny transition exactly at each request's
-   * deadline. Timers never hold a Node process open for a mock timeout.
+   * deadline. The callback re-checks the shared clock so an injected,
+   * non-advancing clock never expires anything. Timers never hold a Node
+   * process open for a mock timeout.
    */
   private schedulePermissionTimers(): void {
     for (const request of this.snapshot.permissionRequests) {
-      const delay = request.expiresAt - Date.now()
+      const delay = request.expiresAt - this.clock()
       if (delay <= 0) continue
       const timer = setTimeout(() => {
         this.permissionTimers.delete(request.requestId)
@@ -1788,6 +1806,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           (candidate) => candidate.requestId === request.requestId
         )
         if (!pending) return // already decided or expired elsewhere
+        if (this.clock() < pending.expiresAt) return // clock not there yet
         const postEvents: PostDispatchEvent[] = []
         this.expirePermissionRequest(pending, postEvents)
         const revision = ++this.snapshot.revision
@@ -2088,7 +2107,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ...(singleAgentOwner
           ? { agentInstanceId: singleAgentOwner.agentInstanceId }
           : {}),
-        timestamp: Date.now(),
+        timestamp: this.clock(),
         kind: 'configuration-applied',
         summary: `已原子应用 ${plan.commits.length} 个 owner 的配置变更`
       },

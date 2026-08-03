@@ -293,6 +293,7 @@ export function createStandardScenario(
       {
         attentionItemId: id('att-001', 'AttentionItemId'),
         kind: 'permission-requested',
+        permissionRequestId: id('perm-001', 'PermissionRequestId'),
         target: {
           kind: 'run',
           projectId,

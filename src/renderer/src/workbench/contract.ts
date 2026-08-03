@@ -242,6 +242,12 @@ export interface AttentionItemViewModel {
   target: AttentionTarget
   state: 'open' | 'resolved'
   title: string
+  /**
+   * Exact link from a permission-requested item to its request. The item
+   * resolves only when THIS request is decided — never via a broad
+   * Run/Agent match, so concurrent requests keep their own reminders (#9).
+   */
+  permissionRequestId?: PermissionRequestId
 }
 
 export interface ConfirmationViewModel {

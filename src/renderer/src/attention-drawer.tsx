@@ -66,14 +66,16 @@ export function AttentionDrawer({
     request: PermissionRequestViewModel,
     decision: PermissionDecision
   ) => Promise<CommandResult>
-  onManagePolicy: (projectId: ProjectId) => void
-  onResolve: (attentionItemId: AttentionItemId) => void
+  onManagePolicy: (projectId: ProjectId) => Promise<CommandResult>
+  onResolve: (attentionItemId: AttentionItemId) => Promise<CommandResult>
 }) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const [answerError, setAnswerError] = useState<{
     requestId: PermissionRequestId
     message: string
   } | null>(null)
+  const [resolveError, setResolveError] = useState<string | null>(null)
+  const [policyError, setPolicyError] = useState<string | null>(null)
 
   const answerPermission = async (
     request: PermissionRequestViewModel,
@@ -86,6 +88,28 @@ export function AttentionDrawer({
     // explanation next to the request.
     if (!result.ok && result.reason !== 'stale-revision') {
       setAnswerError({ requestId: request.requestId, message: result.message })
+    }
+  }
+
+  const resolveItem = async (
+    attentionItemId: AttentionItemId
+  ): Promise<void> => {
+    setResolveError(null)
+    const result = await onResolve(attentionItemId)
+    // A rejected resolve must not look resolved: keep the item and show a
+    // retryable explanation (spec 632–633).
+    if (!result.ok && result.reason !== 'stale-revision') {
+      setResolveError(result.message)
+    }
+  }
+
+  const managePolicy = async (projectId: ProjectId): Promise<void> => {
+    setPolicyError(null)
+    const result = await onManagePolicy(projectId)
+    // The shell commits its local close/remount only on success; here we
+    // just surface the failure without losing the request context.
+    if (!result.ok && result.reason !== 'stale-revision') {
+      setPolicyError(result.message)
     }
   }
 
@@ -140,6 +164,11 @@ export function AttentionDrawer({
           <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
             权限请求
           </h3>
+          {policyError && (
+            <p role="alert" className="text-xs text-red-300">
+              {policyError}
+            </p>
+          )}
           {snapshot.permissionRequests.length === 0 ? (
             <p className="text-xs text-neutral-600">暂无待处理的权限请求</p>
           ) : (
@@ -188,7 +217,7 @@ export function AttentionDrawer({
                     )}
                     <button
                       className="block text-left text-xs text-blue-400 hover:text-blue-300"
-                      onClick={() => onManagePolicy(request.projectId)}
+                      onClick={() => void managePolicy(request.projectId)}
                     >
                       在 Settings 中管理永久策略
                     </button>
@@ -206,6 +235,11 @@ export function AttentionDrawer({
           <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
             关注事项
           </h3>
+          {resolveError && (
+            <p role="alert" className="text-xs text-red-300">
+              {resolveError}
+            </p>
+          )}
           {openItems.length === 0 ? (
             <p className="text-xs text-neutral-600">暂无待处理的关注项</p>
           ) : (
@@ -239,7 +273,7 @@ export function AttentionDrawer({
                       <button
                         aria-label={`标记已处理：${item.title}`}
                         className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
-                        onClick={() => onResolve(item.attentionItemId)}
+                        onClick={() => void resolveItem(item.attentionItemId)}
                       >
                         标记已处理
                       </button>

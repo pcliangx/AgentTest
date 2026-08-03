@@ -11,10 +11,14 @@ import { UI_SMOKE_SCENARIO } from '../../shared/ui-smoke-scenario'
  * main/preload adapter that satisfies the same contract.
  */
 const scenario = new URLSearchParams(window.location.search).get('scenario')
+// The smoke scenario freezes the UI clock; the adapter must observe the
+// same time source so permission deadlines and audit timestamps stay
+// deterministic instead of mixing in the process wall clock (#9).
 const adapter =
   scenario === UI_SMOKE_SCENARIO.id
     ? new MockScenarioAdapter(
-        createStandardScenario(UI_SMOKE_SCENARIO.clock)
+        createStandardScenario(UI_SMOKE_SCENARIO.clock),
+        { now: () => UI_SMOKE_SCENARIO.clock }
       )
     : new MockScenarioAdapter()
 

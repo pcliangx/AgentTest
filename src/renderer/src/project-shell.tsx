@@ -366,15 +366,23 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   // Permanent policy is never created from a request; the Permission Center
   // only navigates into the Settings permissions section (UX-v0.2 §10).
-  const managePermanentPolicy = (projectId: ProjectId): void => {
-    setShowAttention(false)
-    setPermissionsNavNonce((nonce) => nonce + 1)
-    void navigate(projectId, 'settings')
+  // Local state (drawer close, section remount) commits only after the
+  // navigation is actually accepted — a rejection keeps the drawer context.
+  const managePermanentPolicy = async (
+    projectId: ProjectId
+  ): Promise<CommandResult> => {
+    const result = await navigate(projectId, 'settings')
+    if (result.ok) {
+      setShowAttention(false)
+      setPermissionsNavNonce((nonce) => nonce + 1)
+    }
+    return result
   }
 
-  const resolveAttention = (attentionItemId: AttentionItemId): void => {
-    void sendCommand({ kind: 'resolve-attention', attentionItemId })
-  }
+  const resolveAttention = (
+    attentionItemId: AttentionItemId
+  ): Promise<CommandResult> =>
+    sendCommand({ kind: 'resolve-attention', attentionItemId })
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">

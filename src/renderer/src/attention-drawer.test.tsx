@@ -421,3 +421,98 @@ describe('Global Attention — resolve (#9)', () => {
     expect(activity).toHaveTextContent('关注已处理')
   })
 })
+
+describe('Global Attention — review hardening (#9)', () => {
+  it('keeps the frozen-clock smoke scene deterministic', async () => {
+    const FROZEN = 1_700_000_000_000
+    const adapter = new MockScenarioAdapter(createStandardScenario(FROZEN), {
+      now: () => FROZEN
+    })
+    const user = userEvent.setup()
+    render(<ProjectShell port={adapter} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    // The frozen clock never reaches perm-001's deadline: the Permission
+    // Center scene survives instead of being swept by the wall clock.
+    expect(
+      within(drawer).getByRole('region', { name: /cc_data/ })
+    ).toHaveTextContent('写入文件')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    const directory = await screen.findByRole('region', { name: 'Agent 目录' })
+    expect(
+      within(directory).getByRole('button', { name: /^cc_data/ })
+    ).toHaveTextContent('等待权限')
+  })
+
+  it('keeps the item and explains when a resolve is rejected', async () => {
+    class RejectResolvePort extends MockScenarioAdapter {
+      override async dispatch(
+        command: WorkbenchCommand
+      ): Promise<CommandResult> {
+        if (command.kind === 'resolve-attention') {
+          return {
+            ok: false,
+            commandId: command.commandId,
+            reason: 'unavailable',
+            latestRevision: (await this.getSnapshot()).revision,
+            message: '暂时无法处理该关注项，请重试'
+          }
+        }
+        return super.dispatch(command)
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new RejectResolvePort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '标记已处理：cx_review 已完成客户流失复核'
+      })
+    )
+    // The rejection is visible and the item stays pending — no silent drop.
+    expect(
+      await within(drawer).findByText('暂时无法处理该关注项，请重试')
+    ).toBeVisible()
+    expect(
+      within(drawer).getByText('cx_review 已完成客户流失复核')
+    ).toBeVisible()
+  })
+
+  it('keeps the drawer open and explains when the Settings navigation fails', async () => {
+    class RejectSettingsNavPort extends MockScenarioAdapter {
+      override async dispatch(
+        command: WorkbenchCommand
+      ): Promise<CommandResult> {
+        if (command.kind === 'navigate' && command.surface === 'settings') {
+          return {
+            ok: false,
+            commandId: command.commandId,
+            reason: 'unavailable',
+            latestRevision: (await this.getSnapshot()).revision,
+            message: '暂时无法打开设置，请重试'
+          }
+        }
+        return super.dispatch(command)
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new RejectSettingsNavPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    const card = within(drawer).getByRole('region', { name: /cc_data/ })
+    await user.click(
+      within(card).getByRole('button', { name: '在 Settings 中管理永久策略' })
+    )
+    // Navigation failed: the drawer stays open with an explanation instead
+    // of closing onto an unchanged surface.
+    expect(
+      await within(drawer).findByText('暂时无法打开设置，请重试')
+    ).toBeVisible()
+    expect(drawer).toBeVisible()
+    expect(
+      screen.queryByRole('region', { name: '项目设置' })
+    ).toBeNull()
+  })
+})

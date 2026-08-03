@@ -3606,3 +3606,147 @@ describe('MockScenarioAdapter — attention scenario data (#9)', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// Permission Center — injected clock & multi-request precision (#9 review)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — permission clock and multi-request handling', () => {
+  it('honours an injected clock: frozen time keeps pending requests and deterministic audit', async () => {
+    const FROZEN = 1_700_000_000_000
+    const adapter = new MockScenarioAdapter(createStandardScenario(FROZEN), {
+      now: () => FROZEN
+    })
+    const snap = await adapter.getSnapshot()
+    // perm-001's deadline is still ahead of the frozen clock.
+    expect(
+      snap.permissionRequests.some(
+        (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+      )
+    ).toBe(true)
+    expect(snap.agents.find((a) => a.name === 'cc_data')!.runtimeState).toBe(
+      'permission-requested'
+    )
+    // perm-002 was past its deadline even on the frozen clock: swept with a
+    // deterministic frozen timestamp — never the process wall clock.
+    expect(
+      snap.permissionRequests.some(
+        (r) => r.requestId === id('perm-002', 'PermissionRequestId')
+      )
+    ).toBe(false)
+    const entry = snap.activity.find(
+      (a) =>
+        a.kind === 'permission-decided' && a.summary.includes('读取外部 API')
+    )!
+    expect(entry.timestamp).toBe(FROZEN)
+  })
+
+  it('drives the expiry timer from the injected clock', async () => {
+    vi.useFakeTimers()
+    try {
+      let now = 1_700_000_000_000
+      const adapter = new MockScenarioAdapter(createStandardScenario(now), {
+        now: () => now
+      })
+      const before = await adapter.getSnapshot()
+      expect(
+        before.permissionRequests.some(
+          (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+        )
+      ).toBe(true)
+
+      now += 300_001
+      await vi.advanceTimersByTimeAsync(300_001)
+
+      const after = await adapter.getSnapshot()
+      expect(
+        after.permissionRequests.some(
+          (r) => r.requestId === id('perm-001', 'PermissionRequestId')
+        )
+      ).toBe(false)
+      const entry = after.activity.find(
+        (a) => a.kind === 'permission-decided' && a.summary.includes('写入文件')
+      )!
+      expect(entry.summary).toContain('请求已超时，按拒绝处理')
+      expect(entry.timestamp).toBe(now)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the Run held and other reminders open while another request is pending', async () => {
+    const scenario = createStandardScenario()
+    const project = scenario.projects[0]
+    const ccData = scenario.agents.find((a) => a.name === 'cc_data')!
+    const runId = id('run-001', 'RunId')
+    scenario.permissionRequests.push({
+      requestId: id('perm-extra', 'PermissionRequestId'),
+      projectId: project.projectId,
+      agentInstanceId: ccData.agentInstanceId,
+      runId,
+      action: '删除临时文件',
+      scope: 'worktree 内 tmp/**',
+      reason: '清理中间产物',
+      expiresAt: Date.now() + 300_000,
+      decisions: ['deny', 'allow-once', 'allow-current-run']
+    })
+    scenario.attentionItems.push({
+      attentionItemId: id('att-extra', 'AttentionItemId'),
+      kind: 'permission-requested',
+      permissionRequestId: id('perm-extra', 'PermissionRequestId'),
+      target: {
+        kind: 'run',
+        projectId: project.projectId,
+        agentInstanceId: ccData.agentInstanceId,
+        runId
+      },
+      state: 'open',
+      title: 'cc_data 请求删除临时文件'
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+
+    const first = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, findRequest(snap, 'perm-001'), 'deny')
+    )
+    expect(first.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    // The Run stays held — perm-extra is still pending on the same Agent.
+    expect(after.agents.find((a) => a.name === 'cc_data')!.runtimeState).toBe(
+      'permission-requested'
+    )
+    // Only the handled request's reminder resolved; the other stays open.
+    expect(
+      after.attentionItems.find(
+        (i) => i.attentionItemId === id('att-001', 'AttentionItemId')
+      )!.state
+    ).toBe('resolved')
+    expect(
+      after.attentionItems.find(
+        (i) => i.attentionItemId === id('att-extra', 'AttentionItemId')
+      )!.state
+    ).toBe('open')
+
+    // Handling the second request releases the Run and its own reminder.
+    const mid = await adapter.getSnapshot()
+    const second = await adapter.dispatch(
+      answerPermission(
+        cmdId(2),
+        mid.revision,
+        findRequest(mid, 'perm-extra'),
+        'allow-current-run'
+      )
+    )
+    expect(second.ok).toBe(true)
+    const final = await adapter.getSnapshot()
+    expect(final.agents.find((a) => a.name === 'cc_data')!.runtimeState).toBe(
+      'running'
+    )
+    expect(
+      final.attentionItems.find(
+        (i) => i.attentionItemId === id('att-extra', 'AttentionItemId')
+      )!.state
+    ).toBe('resolved')
+  })
+})
