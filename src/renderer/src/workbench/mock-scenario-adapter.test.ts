@@ -1649,3 +1649,108 @@ describe('MockScenarioAdapter — set-terminal-takeover ownership', () => {
     if (!result.ok) expect(result.reason).toBe('invalid-target')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Concurrency limits — per-instance, Project (3), Global (6) (#7 AC1)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — concurrency enforcement', () => {
+  it('dispatch to idle agent starts a mock Run and increments counters', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const beforeActive = project.activeRunCount
+    const beforeGlobal = snap.global.concurrency.activeGlobal
+    const idle = snap.agents.find((a) => a.name === 'cx_review')!
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: project.projectId,
+      targets: [idle.agentInstanceId],
+      instruction: 'work'
+    })
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find(
+      (a) => a.agentInstanceId === idle.agentInstanceId
+    )!
+    expect(agent.runtimeState).toBe('running')
+    expect(agent.activeRunId).toBeDefined()
+    expect(after.projects[0].activeRunCount).toBe(beforeActive + 1)
+    expect(after.global.concurrency.activeGlobal).toBe(beforeGlobal + 1)
+  })
+
+  it('send-agent-instruction to idle agent starts a mock Run', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    const idle = snap.agents.find((a) => a.name === 'kimi_visual')!
+
+    await adapter.dispatch({
+      kind: 'send-agent-instruction',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: project.projectId,
+      agentInstanceId: idle.agentInstanceId,
+      instruction: 'do work',
+      mode: 'start-or-queue'
+    })
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find(
+      (a) => a.agentInstanceId === idle.agentInstanceId
+    )!
+    expect(agent.runtimeState).toBe('running')
+    expect(agent.activeRunId).toBeDefined()
+  })
+
+  it('dispatch enqueues when Project limit (3) is reached', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const project = snap.projects[0]
+    // cc_data is already running (1 active). Dispatch to cx_review and
+    // kimi_visual to reach the Project limit of 3.
+    let rev = snap.revision
+    for (const name of ['cx_review', 'kimi_visual']) {
+      const a = snap.agents.find((x) => x.name === name)!
+      await adapter.dispatch({
+        kind: 'confirm-dispatch',
+        commandId: cmdId(rev),
+        expectedRevision: rev,
+        projectId: project.projectId,
+        targets: [a.agentInstanceId],
+        instruction: 'work'
+      })
+      rev++
+    }
+    // Project now has 3 active runs. Create a new idle agent and dispatch.
+    await adapter.dispatch({
+      kind: 'create-agent',
+      commandId: cmdId(rev),
+      expectedRevision: rev,
+      projectId: project.projectId,
+      name: 'test_overflow',
+      providerId: id('claude-code', 'AgentProviderId'),
+      open: 'background'
+    })
+    rev++
+    const snap2 = await adapter.getSnapshot()
+    const newAgent = snap2.agents.find((a) => a.name === 'test_overflow')!
+    const beforeQueue = snap2.queue.length
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(rev),
+      expectedRevision: rev,
+      projectId: project.projectId,
+      targets: [newAgent.agentInstanceId],
+      instruction: 'overflow'
+    })
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find((a) => a.name === 'test_overflow')!
+    // Should be queued, not running
+    expect(agent.runtimeState).not.toBe('running')
+    expect(after.queue.length).toBe(beforeQueue + 1)
+    expect(after.projects[0].activeRunCount).toBe(3) // unchanged
+  })
+})

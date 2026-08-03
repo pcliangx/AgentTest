@@ -519,11 +519,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
           ...this.snapshot.activity
         ]
         agent.lastActivityAt = Date.now()
-        // start-or-queue to a busy agent must enter the same observable queue
-        // as a dispatch — otherwise the composer would silently drop work
-        // (#6 P1-2).
-        if (command.mode === 'start-or-queue' && isAgentBusy(agent)) {
-          this.enqueue(agent)
+        // #7 AC1: start-or-queue checks per-instance, Project and Global
+        // capacity. Busy agents enqueue. Idle agents start if capacity
+        // allows; otherwise they also enqueue.
+        if (command.mode === 'start-or-queue') {
+          if (isAgentBusy(agent) || !this.canStartRun(agent.projectId)) {
+            this.enqueue(agent)
+          } else {
+            this.startMockRun(agent, agent.projectId)
+          }
         }
         return null
       }
@@ -615,12 +619,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
         for (const a of targets) {
           a.lastActivityAt = now
-          // Authoritative queue projection (#6 P1-2): a dispatch to a busy
-          // agent (including one holding a Terminal takeover) enqueues through
-          // one shared transition that keeps the
-          // per-instance depth, the QueueItem list and the Project/global
-          // summaries consistent. Idle agents start immediately (no queue).
-          if (isAgentBusy(a)) this.enqueue(a)
+          // #7 AC1: enforce per-instance (via isAgentBusy), Project (3) and
+          // Global (6) limits. Busy agents enqueue. Idle agents start if
+          // capacity is available; otherwise they also enqueue.
+          if (isAgentBusy(a) || !this.canStartRun(project.projectId)) {
+            this.enqueue(a)
+          } else {
+            this.startMockRun(a, project.projectId)
+          }
         }
         // Queue a dispatch-created event to be emitted at the authoritative
         // revision after the success bump. Duplicate dispatch of the same
@@ -774,6 +780,37 @@ export class MockScenarioAdapter implements WorkbenchPort {
       ).length
     }
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
+  }
+
+  /** True if Project and Global concurrency limits allow a new active Run. */
+  private canStartRun(projectId: ProjectId): boolean {
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === projectId
+    )
+    if (!project) return false
+    const { projectLimit, globalLimit } = this.snapshot.global.concurrency
+    if (project.activeRunCount >= projectLimit) return false
+    if (this.snapshot.global.concurrency.activeGlobal >= globalLimit) return false
+    return true
+  }
+
+  /** Occupies the execution slot: sets runtimeState, activeRunId, increments
+   *  Project and Global active counters. Does NOT record a `run-started`
+   *  activity — Phase 1 does not create real Runs (#6 P1-3). */
+  private startMockRun(
+    agent: WorkbenchViewModel['agents'][number],
+    projectId: ProjectId
+  ): void {
+    agent.runtimeState = 'running'
+    agent.activeRunId = this.freshId('RunId')
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === projectId
+    )
+    if (project) {
+      project.activeRunCount++
+      project.activity = 'active'
+    }
+    this.snapshot.global.concurrency.activeGlobal++
   }
 
   /** Renumbers queue items for a project to be sequential 1..N by current position. */
