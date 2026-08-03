@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   CommandResult,
@@ -59,13 +66,16 @@ class RecordingPort implements WorkbenchPort {
   private readonly inner: MockScenarioAdapter
   readonly commands: WorkbenchCommand[] = []
 
-  constructor() {
-    this.inner = new MockScenarioAdapter()
+  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+    this.inner = new MockScenarioAdapter(snapshot)
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
     return this.inner.getSnapshot()
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
 
   async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
@@ -100,6 +110,9 @@ class DeferredCommandPort implements WorkbenchPort {
   getSnapshot(): Promise<WorkbenchViewModel> {
     return this.inner.getSnapshot()
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
 
   dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
@@ -142,6 +155,9 @@ class DeferredMutableSnapshotPort implements WorkbenchPort {
   async getSnapshot(): Promise<WorkbenchViewModel> {
     return structuredClone(this.snapshot)
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    new MockScenarioAdapter(this.snapshot).planDispatch(request)
 
   dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
@@ -193,6 +209,9 @@ class SnapshotRecordingPort implements WorkbenchPort {
     return structuredClone(this.snapshot)
   }
 
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    new MockScenarioAdapter(this.snapshot).planDispatch(request)
+
   async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
     return {
@@ -220,6 +239,9 @@ class MutableSnapshotRecordingPort implements WorkbenchPort {
   async getSnapshot(): Promise<WorkbenchViewModel> {
     return structuredClone(this.snapshot)
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    new MockScenarioAdapter(this.snapshot).planDispatch(request)
 
   async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     this.commands.push(command)
@@ -251,10 +273,176 @@ class MutableSnapshotRecordingPort implements WorkbenchPort {
   }
 }
 
+/** Controls plan response order independently from authoritative snapshots. */
+class DeferredPlanPort implements WorkbenchPort {
+  private snapshot: WorkbenchViewModel
+  private readonly listeners = new Set<(event: WorkbenchEvent) => void>()
+  private readonly pendingPlans: Array<{
+    request: Parameters<WorkbenchPort['planDispatch']>[0]
+    snapshot: WorkbenchViewModel
+    resolve: (
+      result: Awaited<ReturnType<WorkbenchPort['planDispatch']>>
+    ) => void
+  }> = []
+  readonly commands: WorkbenchCommand[] = []
+
+  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+    this.snapshot = structuredClone(snapshot)
+  }
+
+  get pendingPlanCount(): number {
+    return this.pendingPlans.length
+  }
+
+  async getSnapshot(): Promise<WorkbenchViewModel> {
+    return structuredClone(this.snapshot)
+  }
+
+  planDispatch(
+    request: Parameters<WorkbenchPort['planDispatch']>[0]
+  ): ReturnType<WorkbenchPort['planDispatch']> {
+    return new Promise((resolve) => {
+      this.pendingPlans.push({
+        request,
+        snapshot: structuredClone(this.snapshot),
+        resolve
+      })
+    })
+  }
+
+  async resolvePlan(index: number): Promise<void> {
+    const pending = this.pendingPlans[index]
+    if (!pending) throw new Error(`Missing pending plan ${index}`)
+    pending.resolve(
+      await new MockScenarioAdapter(pending.snapshot).planDispatch(
+        pending.request
+      )
+    )
+    await Promise.resolve()
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return {
+      ok: true,
+      commandId: command.commandId,
+      acceptedRevision: this.snapshot.revision + 1
+    }
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  publish(mutate: (snapshot: WorkbenchViewModel) => void): void {
+    const next = structuredClone(this.snapshot)
+    mutate(next)
+    next.revision += 1
+    this.snapshot = next
+    const event: WorkbenchEvent = {
+      kind: 'view-model-updated',
+      revision: next.revision,
+      snapshot: structuredClone(next)
+    }
+    for (const listener of [...this.listeners]) listener(event)
+  }
+}
+
+/** Rejects one plan query so the UI's explicit retry path is observable. */
+class RejectOncePlanPort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private rejected = false
+
+  getSnapshot(): Promise<WorkbenchViewModel> {
+    return this.inner.getSnapshot()
+  }
+
+  async planDispatch(
+    request: Parameters<WorkbenchPort['planDispatch']>[0]
+  ): ReturnType<WorkbenchPort['planDispatch']> {
+    if (!this.rejected) {
+      this.rejected = true
+      const snapshot = await this.inner.getSnapshot()
+      return {
+        ok: false,
+        reason: 'unavailable',
+        latestRevision: snapshot.revision,
+        message: '规划服务暂时不可用'
+      }
+    }
+    return this.inner.planDispatch(request)
+  }
+
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    return this.inner.dispatch(command)
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void): () => void {
+    return this.inner.subscribe(listener)
+  }
+}
+
+/** Forces a stale plan response without an event; the shell must refresh. */
+class StalePlanRefreshPort implements WorkbenchPort {
+  private readonly initial = createStandardScenario()
+  private readonly latest = (() => {
+    const next = structuredClone(this.initial)
+    const project = next.projects[0]
+    const target = next.agents.find((agent) => agent.name === 'cc_data')!
+    next.revision += 1
+    next.queue.push({
+      queueItemId: id('queue-refresh', 'QueueItemId'),
+      projectId: project.projectId,
+      agentInstanceId: target.agentInstanceId,
+      position: 3,
+      priority: 'normal'
+    })
+    project.queuedRunCount = 3
+    next.global.concurrency.queuedGlobal = next.queue.length
+    return next
+  })()
+  private serveLatest = false
+  readonly plannedRevisions: number[] = []
+  readonly commands: WorkbenchCommand[] = []
+
+  async getSnapshot(): Promise<WorkbenchViewModel> {
+    return structuredClone(this.serveLatest ? this.latest : this.initial)
+  }
+
+  async planDispatch(
+    request: Parameters<WorkbenchPort['planDispatch']>[0]
+  ): ReturnType<WorkbenchPort['planDispatch']> {
+    this.plannedRevisions.push(request.expectedRevision)
+    if (!this.serveLatest) {
+      this.serveLatest = true
+      return {
+        ok: false,
+        reason: 'stale-revision',
+        latestRevision: this.latest.revision,
+        message: 'revision 已过期'
+      }
+    }
+    return new MockScenarioAdapter(this.latest).planDispatch(request)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    this.commands.push(command)
+    return {
+      ok: true,
+      commandId: command.commandId,
+      acceptedRevision: this.latest.revision + 1
+    }
+  }
+
+  subscribe(): () => void {
+    return () => {}
+  }
+}
+
 /** Renders the shell, navigates to the Agents surface and returns helpers. */
-async function gotoAgentsSurface() {
+async function gotoAgentsSurface(port = new RecordingPort()) {
   const user = userEvent.setup()
-  const port = new RecordingPort()
   render(<ProjectShell port={port} />)
   await screen.findByRole('button', { name: '概览' })
   await user.click(screen.getByRole('button', { name: 'Agent' }))
@@ -280,6 +468,77 @@ async function openPicker(user: ReturnType<typeof userEvent.setup>) {
 // ---------------------------------------------------------------------------
 
 describe('Dispatch — Agent Tab composer', () => {
+  it('previews and executes the Project queue position for a Ready Agent at capacity', async () => {
+    const scenario = createStandardScenario()
+    scenario.agents.find((agent) => agent.name === 'cc_etl')!.runtimeState =
+      'finishing'
+    const port = new RecordingPort(scenario)
+    const { user } = await gotoAgentsSurface(port)
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(
+      within(directory).getByRole('button', { name: /^cx_review/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '对话' }))
+
+    expect(
+      within(view).getByRole('log', { name: '对话记录' })
+    ).toHaveTextContent('当前 Project 已有 2 项排队；新指令将进入第 3 位。')
+    const plannedRevision = (await port.getSnapshot()).revision
+
+    await user.type(
+      within(view).getByRole('textbox', { name: '发送给当前 Agent' }),
+      'queue from composer'
+    )
+    await user.click(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    )
+
+    const after = await port.getSnapshot()
+    const target = after.agents.find((agent) => agent.name === 'cx_review')!
+    expect(target.runtimeState).toBe('queued')
+    expect(
+      port.commands.find(
+        (command) => command.kind === 'send-agent-instruction'
+      )?.expectedRevision
+    ).toBe(plannedRevision)
+    expect(
+      after.queue.find(
+        (item) => item.agentInstanceId === target.agentInstanceId
+      )?.position
+    ).toBe(3)
+  })
+
+  it('retries a failed Composer plan before enabling send', async () => {
+    const port = new RejectOncePlanPort()
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+
+    expect(await within(view).findByRole('alert')).toHaveTextContent(
+      '规划服务暂时不可用'
+    )
+    const composer = within(view).getByRole('textbox', {
+      name: '发送给当前 Agent'
+    })
+    await user.type(composer, 'retry from composer')
+    expect(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    ).toBeDisabled()
+
+    await user.click(within(view).getByRole('button', { name: '重新计算' }))
+    await waitFor(() =>
+      expect(
+        within(view).getByRole('log', { name: '对话记录' })
+      ).toHaveTextContent('新指令将进入第 3 位')
+    )
+    expect(
+      within(view).getByRole('button', { name: '发送给当前 Agent' })
+    ).toBeEnabled()
+  })
+
   it('sends an instruction addressed only to the currently open AgentInstanceId', async () => {
     const { user, port } = await gotoAgentsSurface()
     // cc_data is open and active by default in the standard scenario.
@@ -545,6 +804,186 @@ describe('Dispatch — Agent Tab composer', () => {
 // ---------------------------------------------------------------------------
 
 describe('Dispatch — Agent Picker and @@ routing', () => {
+  it('shows unique capacity-aware queue positions for an ordered busy batch', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const before = await port.getSnapshot()
+    const dialog = await openPicker(user)
+
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cc_data/ })
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cx_anti/ })
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'queue in order'
+    )
+
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    expect(preview).toHaveTextContent('cc_data: 第 3 位')
+    expect(preview).toHaveTextContent('cx_anti: 第 4 位')
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    const command = port.commands.find(
+      (candidate) => candidate.kind === 'confirm-dispatch'
+    )!
+    expect(command.expectedRevision).toBe(before.revision)
+    const after = await port.getSnapshot()
+    expect(
+      after.queue
+        .filter((item) =>
+          command.targets.includes(item.agentInstanceId)
+        )
+        .map((item) => item.position)
+    ).toEqual([3, 4])
+  })
+
+  it('previews and executes a batch that crosses the final Project slot', async () => {
+    const { user, port } = await gotoAgentsSurface()
+    const dialog = await openPicker(user)
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cx_review/ })
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: /^kimi_visual/ })
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'cross the final slot'
+    )
+
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    expect(preview).toHaveTextContent('cx_review: 无需排队')
+    expect(preview).toHaveTextContent('kimi_visual: 第 3 位')
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    const after = await port.getSnapshot()
+    expect(
+      after.agents.find((agent) => agent.name === 'cx_review')!.runtimeState
+    ).toBe('running')
+    expect(
+      after.queue.find(
+        (item) =>
+          item.agentInstanceId ===
+          after.agents.find((agent) => agent.name === 'kimi_visual')!
+            .agentInstanceId
+      )?.position
+    ).toBe(3)
+  })
+
+  it('ignores an older plan response and confirms against the visible plan revision', async () => {
+    const initial = createStandardScenario()
+    const project = initial.projects[0]
+    const target = initial.agents.find((agent) => agent.name === 'cc_data')!
+    const port = new DeferredPlanPort(initial)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cc_data/ })
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'use the visible plan'
+    )
+    await waitFor(() => expect(port.pendingPlanCount).toBe(1))
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    const planStatus = within(preview).getByRole('status', {
+      name: '派发计划状态'
+    })
+    expect(preview).not.toHaveAttribute('aria-live')
+    expect(planStatus).toHaveAttribute('aria-live', 'polite')
+    expect(planStatus).toHaveAttribute('aria-busy', 'true')
+
+    await act(() =>
+      port.publish((next) => {
+        next.queue.push({
+          queueItemId: id('queue-external', 'QueueItemId'),
+          projectId: project.projectId,
+          agentInstanceId: target.agentInstanceId,
+          position: 3,
+          priority: 'normal'
+        })
+        next.projects[0].queuedRunCount = 3
+        next.global.concurrency.queuedGlobal = next.queue.length
+      })
+    )
+    await waitFor(() => expect(port.pendingPlanCount).toBe(2))
+
+    await act(() => port.resolvePlan(1))
+    await waitFor(() => expect(preview).toHaveTextContent('cc_data: 第 4 位'))
+    expect(planStatus).toHaveAttribute('aria-busy', 'false')
+
+    await act(() => port.resolvePlan(0))
+    expect(preview).toHaveTextContent('cc_data: 第 4 位')
+    expect(preview).not.toHaveTextContent('cc_data: 第 3 位')
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    expect(
+      port.commands.find((command) => command.kind === 'confirm-dispatch')
+        ?.expectedRevision
+    ).toBe(initial.revision + 1)
+  })
+
+  it('keeps confirmation blocked after a plan failure and offers an explicit retry', async () => {
+    const port = new RejectOncePlanPort()
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cc_data/ })
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'retry the plan'
+    )
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      '规划服务暂时不可用'
+    )
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeDisabled()
+
+    await user.click(within(dialog).getByRole('button', { name: '重新计算' }))
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('region', { name: '派发预览' })
+      ).toHaveTextContent('cc_data: 第 3 位')
+    )
+    expect(
+      within(dialog).getByRole('button', { name: '确认派发' })
+    ).toBeEnabled()
+  })
+
+  it('refreshes the snapshot after a stale plan response even when no event arrives', async () => {
+    const port = new StalePlanRefreshPort()
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+    await screen.findByRole('button', { name: '概览' })
+    const dialog = await openPicker(user)
+    await user.click(
+      within(dialog).getByRole('button', { name: /^cc_data/ })
+    )
+    await user.type(
+      within(dialog).getByRole('textbox', { name: '指令' }),
+      'refresh stale planning state'
+    )
+
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    await waitFor(() => expect(preview).toHaveTextContent('cc_data: 第 4 位'))
+    expect(port.plannedRevisions).toEqual([0, 1])
+
+    await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
+    expect(
+      port.commands.find((command) => command.kind === 'confirm-dispatch')
+        ?.expectedRevision
+    ).toBe(1)
+  })
+
   it('opens the Agent Picker, selects multiple targets shown as chips, previews, and confirms creating one dispatch per target', async () => {
     const { user, port } = await gotoAgentsSurface()
     const dialog = await openPicker(user)
@@ -885,7 +1324,7 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
       expansion.some((c) => c.textContent?.includes('cx_anti'))
     ).toBe(true)
     expect(dialog).toHaveTextContent('kimi_docs（不可派发）')
-    expect(dialog).toHaveTextContent('cx_anti: 第 3 位')
+    expect(dialog).toHaveTextContent('cx_anti: 待全部目标可派发')
 
     // Atomic broadcast cannot proceed while one of the explicit targets is
     // unavailable; the user must fix availability or choose a narrower set.
@@ -900,8 +1339,21 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
   it('requires a second confirmation when every @@all target can accept a dispatch', async () => {
     const snapshot = createStandardScenario()
     const project = snapshot.projects[0]
-    snapshot.agents.find((agent) => agent.name === 'kimi_docs')!.runtimeState =
-      'ready'
+    for (const agent of snapshot.agents.filter(
+      (candidate) => candidate.projectId === project.projectId
+    )) {
+      agent.runtimeState = 'ready'
+      agent.terminalState = 'closed'
+      agent.queueDepth = 0
+      delete agent.activeRunId
+    }
+    snapshot.queue = snapshot.queue.filter(
+      (item) => item.projectId !== project.projectId
+    )
+    project.activeRunCount = 0
+    project.queuedRunCount = 0
+    snapshot.global.concurrency.activeGlobal = 0
+    snapshot.global.concurrency.queuedGlobal = 0
     const port = new SnapshotRecordingPort(snapshot)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
@@ -915,6 +1367,19 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(
       within(dialog).getAllByRole('listitem', { name: /已选目标/ })
     ).toHaveLength(8)
+    const preview = within(dialog).getByRole('region', { name: '派发预览' })
+    for (const name of ['cc_data', 'cc_sql', 'cc_etl']) {
+      expect(preview).toHaveTextContent(`${name}: 无需排队`)
+    }
+    for (const [name, position] of [
+      ['cx_anti', 1],
+      ['cx_forecast', 2],
+      ['cx_review', 3],
+      ['kimi_visual', 4],
+      ['kimi_docs', 5]
+    ] as const) {
+      expect(preview).toHaveTextContent(`${name}: 第 ${position} 位`)
+    }
 
     await user.click(within(dialog).getByRole('button', { name: '确认派发' }))
     const broadcastDialog = await screen.findByRole('dialog', {
@@ -931,7 +1396,8 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     expect(confirms).toHaveLength(1)
     expect(confirms[0]).toMatchObject({
       projectId: project.projectId,
-      instruction: 'stand up'
+      instruction: 'stand up',
+      expectedRevision: snapshot.revision
     })
     expect(confirms[0].targets).toHaveLength(8)
   })

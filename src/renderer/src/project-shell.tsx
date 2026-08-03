@@ -75,6 +75,22 @@ function useWorkbench(port: WorkbenchPort) {
     [port, applySnapshot]
   )
 
+  const planDispatch = useCallback<WorkbenchPort['planDispatch']>(
+    (request) => {
+      const result = port.planDispatch(request)
+      void result.then(
+        (planned) => {
+          if (!planned.ok && planned.reason === 'stale-revision') {
+            void port.getSnapshot().then(applySnapshot, () => {})
+          }
+        },
+        () => {}
+      )
+      return result
+    },
+    [port, applySnapshot]
+  )
+
   const navigate = useCallback(
     (projectId: ProjectId, surface: ProjectSurface): Promise<CommandResult> =>
       sendCommand({ kind: 'navigate', projectId, surface }),
@@ -136,6 +152,7 @@ function useWorkbench(port: WorkbenchPort) {
   return {
     snapshot,
     navigate,
+    planDispatch,
     sendCommand,
     navigateGlobal,
     requestConnectionDeletion,
@@ -201,6 +218,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const {
     snapshot,
     navigate,
+    planDispatch,
     sendCommand,
     navigateGlobal,
     requestConnectionDeletion,
@@ -390,6 +408,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 key={project.projectId}
                 project={project}
                 snapshot={snapshot}
+                planDispatch={planDispatch}
                 sendCommand={sendCommand}
                 onDispatch={() => setShowPicker(true)}
               />
@@ -423,6 +442,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <DispatchPicker
           project={project}
           snapshot={snapshot}
+          planDispatch={planDispatch}
           sendCommand={sendCommand}
           onClose={() => setShowPicker(false)}
         />

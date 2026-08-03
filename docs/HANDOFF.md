@@ -1,6 +1,6 @@
 # Agent Squad HQ — Claude Code / Codex 续开发文档
 
-> 更新日期：2026-08-02 · 结构化通道基线：`ba49614` · 分支：`main`
+> 更新日期：2026-08-03 · 结构化通道基线：`ba49614` · 分支：`main`
 >
 > 本文是 Claude Code 与 Codex 共用的当前状态说明；实时 HEAD 和工作树状态以
 > `git log` / `git status` 为准。
@@ -181,7 +181,18 @@ turn complete、warning、error 和 process exited。
 - Terminal PTY 活跃时不能发起同一 agent 的 structured run；
 - PTY 只承载原生 TUI，不参与默认 `@@` 路由和语义解析。
 
-### 5.5 IPC
+### 5.5 Dispatch 规划合同
+
+- Picker、`@@all` 和 Agent Composer 通过 `WorkbenchPort.planDispatch()` 获取
+  revision 绑定的只读计划，不在 renderer 内推断容量或队位；
+- planner 以活动 runtime state 为容量 truth，严格按目标顺序虚拟占用 Project/
+  Global 容量，并给入队项分配唯一的 Project-scoped position；
+- 查询不修改 snapshot、不增加 revision、不创建业务 ID、不发事件，也不预留容量；
+- 确认命令显式携带计划 revision，adapter 在相同 revision 下用同一 planner 原子
+  执行；状态变化后必须 `stale-revision`，不能静默按新状态重算；
+- `reply-current-run` 不是新 Run，不需要 Dispatch plan。
+
+### 5.6 IPC
 
 renderer → main：
 
@@ -258,6 +269,7 @@ src/renderer/src/
   project-shell.tsx            Project Shell 组件 + useWorkbench hook
   workbench/
     contract.ts                WorkbenchPort 合同（品牌化 ID、ViewModel、Command、Event）
+    dispatch-planner.ts        revision 绑定的容量与 Project 队位规划
     mock-scenario-adapter.ts   MockScenarioAdapter（in-memory port 实现）
     standard-scenario.ts       标准场景数据
   chat-state.ts                纯事件 reducer（v0.1 保留，Phase 1 不再渲染）

@@ -195,6 +195,8 @@ describe('ProjectShell — stale snapshot safety', () => {
     async getSnapshot() {
       return this.promise
     }
+    planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+      new MockScenarioAdapter().planDispatch(request)
     async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
       return { ok: true, commandId: command.commandId, acceptedRevision: 0 }
     }
@@ -417,6 +419,7 @@ describe('ProjectShell — empty project', () => {
       async getSnapshot() {
         return strip(await inner.getSnapshot())
       },
+      planDispatch: (request) => inner.planDispatch(request),
       dispatch: (cmd) => inner.dispatch(cmd),
       subscribe(fn) {
         return inner.subscribe((event) => {
@@ -538,6 +541,7 @@ describe('ProjectShell — focus restoration', () => {
       async getSnapshot() {
         return inner.getSnapshot()
       },
+      planDispatch: (request) => inner.planDispatch(request),
       dispatch(cmd) {
         if (cmd.kind === 'confirm-dangerous-action') {
           return Promise.resolve({
@@ -606,6 +610,7 @@ describe('ProjectShell — focus restoration', () => {
       async getSnapshot() {
         return inner.getSnapshot()
       },
+      planDispatch: (request) => inner.planDispatch(request),
       dispatch(cmd) {
         if (cmd.kind === 'confirm-dangerous-action') {
           confirmCount++

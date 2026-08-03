@@ -73,6 +73,17 @@ Project 的明确实例列表并确认。assistant 输出中的 `@@` 永不触�
 占用该实例的执行槽并与 structured Run 互斥。调整并发或预算需显式应用并显示资源/
 成本提示。
 
+派发预览必须通过 `WorkbenchPort` 的只读规划查询取得 revision 绑定的不可变计划，
+renderer 不得根据 Agent 状态、汇总计数或当前队列长度自行推断 start/queue。规划严格
+保留目标顺序，以活动 runtime state 为容量 truth，在批内虚拟占用 Project/Global
+容量，并为所有入队目标分配唯一的 Project-scoped 队位。规划查询不增加 revision、
+不创建 Run/Dispatch/QueueItem、不发事件，也不预留容量。
+
+确认派发或发送新的 `start-or-queue` 指令时，命令必须携带产生预览的 revision；
+adapter 在该 revision 下调用同一个确定性 planner 后原子执行。revision 已变化时必须
+以 `stale-revision` 拒绝，不能在新状态上静默重算后继续执行。`reply-current-run` 不
+创建下一 Run，因此不需要 Dispatch plan。
+
 ### 后台、退出与 handoff
 
 - 切换 Project 不停止后台 Run，也不弹阻断确认；全局 Attention Center 显示运行与
@@ -131,5 +142,7 @@ Project 资源授权、飞书同步方向、并发和预算。应用后，Agent 
 - Electron 生命周期必须区分 close-window 与 quit-app，并统一管理结构化进程、PTY、
   handoff 和 crash recovery。
 - Attention Center 成为跨 Project 的操作入口，但不取代 Project 层级。
+- Picker、`@@all` 和 Agent Composer 只格式化同一份 Dispatch plan；容量、批次偏移、
+  队位与确认时原子执行集中在 port 后的 planner 中。
 - 自由布局、后台运行和退出 handoff 增加状态空间，必须用纯状态转换、迁移测试和
   Electron GUI checklist 验证。

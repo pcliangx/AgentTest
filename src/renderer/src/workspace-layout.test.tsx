@@ -97,6 +97,10 @@ class DeferredTerminalEventPort implements WorkbenchPort {
     return this.inner.getSnapshot()
   }
 
+  planDispatch(request: Parameters<WorkbenchPort['planDispatch']>[0]) {
+    return this.inner.planDispatch(request)
+  }
+
   async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     if (command.kind !== 'set-terminal-takeover') {
       return this.inner.dispatch(command)
@@ -382,6 +386,8 @@ describe('Workspace layout — divider', () => {
       getSnapshot() {
         return this.inner.getSnapshot()
       }
+      planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+        this.inner.planDispatch(request)
       subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
         return this.inner.subscribe(listener)
       }
@@ -665,6 +671,8 @@ describe('Workspace layout — rejection recovery', () => {
       getSnapshot() {
         return this.inner.getSnapshot()
       }
+      planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+        this.inner.planDispatch(request)
       subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
         return this.inner.subscribe(listener)
       }

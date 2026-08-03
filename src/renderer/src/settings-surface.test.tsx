@@ -68,6 +68,9 @@ class RevisionRaceStagePort implements WorkbenchPort {
     return this.inner.getSnapshot()
   }
 
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
+
   subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
     return this.inner.subscribe(listener)
   }
@@ -97,6 +100,9 @@ class RejectingStagePort implements WorkbenchPort {
   getSnapshot() {
     return this.inner.getSnapshot()
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
 
   subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
     return this.inner.subscribe(listener)
@@ -145,6 +151,9 @@ class ResponseBeforeStageEventPort implements WorkbenchPort {
     return this.inner.getSnapshot()
   }
 
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
+
   subscribe(listener: (event: WorkbenchEvent) => void) {
     this.listeners.add(listener)
     return () => {
@@ -188,6 +197,9 @@ class DeferredStagePort implements WorkbenchPort {
   getSnapshot() {
     return this.inner.getSnapshot()
   }
+
+  planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+    this.inner.planDispatch(request)
 
   subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
     return this.inner.subscribe(listener)

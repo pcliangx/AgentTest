@@ -441,6 +441,38 @@ export type CommandResult =
       message: string
     }
 
+export type DispatchPlanEntry =
+  | {
+      readonly agentInstanceId: AgentInstanceId
+      readonly outcome: 'start'
+    }
+  | {
+      readonly agentInstanceId: AgentInstanceId
+      readonly outcome: 'queue'
+      readonly position: number
+    }
+
+export interface DispatchPlan {
+  readonly revision: number
+  readonly projectId: ProjectId
+  readonly entries: readonly DispatchPlanEntry[]
+}
+
+export interface DispatchPlanRequest {
+  readonly expectedRevision: number
+  readonly projectId: ProjectId
+  readonly targets: readonly AgentInstanceId[]
+}
+
+export type DispatchPlanResult =
+  | { readonly ok: true; readonly plan: DispatchPlan }
+  | {
+      readonly ok: false
+      readonly reason: CommandRejectionReason
+      readonly latestRevision: number
+      readonly message: string
+    }
+
 export type WorkbenchEvent =
   | {
       kind: 'view-model-updated'
@@ -508,6 +540,7 @@ export type WorkbenchEvent =
 
 export interface WorkbenchPort {
   getSnapshot(): Promise<WorkbenchViewModel>
+  planDispatch(request: DispatchPlanRequest): Promise<DispatchPlanResult>
   dispatch(command: WorkbenchCommand): Promise<CommandResult>
   subscribe(listener: (event: WorkbenchEvent) => void): () => void
 }

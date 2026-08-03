@@ -8,6 +8,7 @@ import type {
   LayoutOperation,
   ProjectViewModel,
   WorkbenchCommandBody,
+  WorkbenchPort,
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
@@ -29,6 +30,8 @@ export type SendCommand = (
   expectedRevision?: number
 ) => Promise<CommandResult>
 
+export type PlanDispatch = WorkbenchPort['planDispatch']
+
 // ---------------------------------------------------------------------------
 // Agents surface
 // ---------------------------------------------------------------------------
@@ -36,11 +39,13 @@ export type SendCommand = (
 export function AgentsSurface({
   project,
   snapshot,
+  planDispatch,
   sendCommand,
   onDispatch
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
+  planDispatch: PlanDispatch
   sendCommand: SendCommand
   /** Open the shell-level unified Dispatch Picker. */
   onDispatch?: () => void
@@ -120,6 +125,7 @@ export function AgentsSurface({
         project={project}
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
+        planDispatch={planDispatch}
         sendLayout={sendLayout}
         sendCommand={sendCommand}
       />

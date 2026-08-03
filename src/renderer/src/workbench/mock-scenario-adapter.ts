@@ -5,6 +5,8 @@ import type {
   CommandRejectionReason,
   CommandResult,
   ConnectionId,
+  DispatchPlanRequest,
+  DispatchPlanResult,
   PanelId,
   ProjectId,
   WorkbenchCommand,
@@ -32,13 +34,13 @@ import {
 import type { ConfigurationOwner } from './contract'
 import type { ProjectDispatchBlockReason } from './dispatchability'
 import {
-  getDispatchBlockReason,
   getProjectDispatchBlockReason,
   isActiveStructuredRunState,
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
 import { resolveProviderModelSelection } from './provider-capability'
+import { buildDispatchPlan } from './dispatch-planner'
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
@@ -236,6 +238,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
     return structuredClone(this.snapshot)
+  }
+
+  async planDispatch(
+    request: DispatchPlanRequest
+  ): Promise<DispatchPlanResult> {
+    return structuredClone(buildDispatchPlan(this.snapshot, request))
   }
 
   async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
@@ -812,6 +820,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ) {
           return this.reject(command, 'invalid-target', '指令不能为空')
         }
+        const planResult =
+          command.mode === 'start-or-queue'
+            ? buildDispatchPlan(this.snapshot, {
+                expectedRevision: command.expectedRevision,
+                projectId: command.projectId,
+                targets: [command.agentInstanceId]
+              })
+            : null
+        if (planResult && !planResult.ok) {
+          return this.reject(
+            command,
+            planResult.reason,
+            planResult.message
+          )
+        }
         // Phase 1 has no real runtime: recording the instruction is the only
         // side effect. No Run is created — we record an instruction-sent fact,
         // never a fake `run-started` (#6 P1-3).
@@ -830,8 +853,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // #7 AC1: start-or-queue checks per-instance, Project and Global
         // capacity. Busy agents enqueue. Idle agents start if capacity
         // allows; otherwise they also enqueue.
-        if (command.mode === 'start-or-queue') {
-          if (isAgentBusy(agent) || !this.canStartRun(agent.projectId)) {
+        if (planResult?.ok) {
+          if (planResult.plan.entries[0].outcome === 'queue') {
             this.enqueue(agent)
           } else {
             this.startMockRun(agent, agent.projectId)
@@ -840,23 +863,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'confirm-dispatch': {
-        const project = this.snapshot.projects.find(
-          (p) => p.projectId === command.projectId
-        )
-        if (!project) {
-          return this.reject(command, 'invalid-target', 'Project 不存在')
-        }
-        const projectBlockReason = getProjectDispatchBlockReason(project)
-        if (projectBlockReason) {
+        const planResult = buildDispatchPlan(this.snapshot, {
+          expectedRevision: command.expectedRevision,
+          projectId: command.projectId,
+          targets: command.targets
+        })
+        if (!planResult.ok) {
           return this.reject(
             command,
-            'unavailable',
-            projectExecutionUnavailableMessage(
-              projectBlockReason,
-              '创建新派发'
-            )
+            planResult.reason,
+            planResult.message
           )
         }
+        const { plan } = planResult
+        const project = this.snapshot.projects.find(
+          (candidate) => candidate.projectId === plan.projectId
+        )!
         // Instruction must be non-empty (#6 P2-5).
         if (
           command.instruction === undefined ||
@@ -864,51 +886,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ) {
           return this.reject(command, 'invalid-target', '指令不能为空')
         }
-        // Targets must be non-empty and unique (#6 P2-5). Duplicates would
-        // otherwise create multiple DispatchIds for the same instance.
-        if (command.targets.length === 0) {
-          return this.reject(command, 'invalid-target', '目标不能为空')
-        }
-        const dedup = new Set(command.targets as string[])
-        if (dedup.size !== command.targets.length) {
-          return this.reject(
-            command,
-            'invalid-target',
-            '目标不能包含重复 Agent'
-          )
-        }
-        // Atomic target validation: every requested target must exist, belong
-        // to this project AND be dispatchable. A mixed valid/invalid set is
-        // rejected as a whole — we never partially dispatch (#6 P2-5).
-        const projectAgents = this.snapshot.agents.filter(
-          (a) => a.projectId === project.projectId
+        const targets = plan.entries.map(
+          (entry) =>
+            this.snapshot.agents.find(
+              (agent) => agent.agentInstanceId === entry.agentInstanceId
+            )!
         )
-        const byId = new Map(
-          projectAgents.map((a) => [a.agentInstanceId, a] as const)
-        )
-        let missing = false
-        let nonDispatchable = false
-        for (const tid of command.targets) {
-          const a = byId.get(tid)
-          if (!a) {
-            missing = true
-          } else if (getDispatchBlockReason(a)) nonDispatchable = true
-        }
-        if (missing) {
-          return this.reject(
-            command,
-            'invalid-target',
-            '部分目标 Agent 不存在，已拒绝整单派发'
-          )
-        }
-        if (nonDispatchable) {
-          return this.reject(
-            command,
-            'unavailable',
-            '部分目标 Agent 不可派发，已拒绝整单派发'
-          )
-        }
-        const targets = command.targets.map((tid) => byId.get(tid)!)
         // One stable, collision-free DispatchId per target — UUID, not
         // Date.now()+index, so two commands in the same millisecond cannot
         // share an id (#6 P1-2).
@@ -925,12 +908,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
           summary: `${a.name} 收到派发：${command.instruction}`
         }))
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
-        for (const a of targets) {
+        for (const [index, a] of targets.entries()) {
           a.lastActivityAt = now
-          // #7 AC1: enforce per-instance (via isAgentBusy), Project (3) and
-          // Global (6) limits. Busy agents enqueue. Idle agents start if
-          // capacity is available; otherwise they also enqueue.
-          if (isAgentBusy(a) || !this.canStartRun(project.projectId)) {
+          if (plan.entries[index].outcome === 'queue') {
             this.enqueue(a)
           } else {
             this.startMockRun(a, project.projectId)
@@ -1518,26 +1498,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
       ).length
     }
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
-  }
-
-  /** True if Project and Global concurrency limits allow a new active Run. */
-  private canStartRun(projectId: ProjectId): boolean {
-    const project = this.snapshot.projects.find(
-      (p) => p.projectId === projectId
-    )
-    if (!project) return false
-    const { projectLimit, globalLimit } = this.snapshot.global.concurrency
-    const projectActive = this.snapshot.agents.filter(
-      (agent) =>
-        agent.projectId === projectId &&
-        isActiveStructuredRunState(agent.runtimeState)
-    ).length
-    const globalActive = this.snapshot.agents.filter((agent) =>
-      isActiveStructuredRunState(agent.runtimeState)
-    ).length
-    if (projectActive >= projectLimit) return false
-    if (globalActive >= globalLimit) return false
-    return true
   }
 
   /** Occupies the execution slot: sets runtimeState and activeRunId, then
