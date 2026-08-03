@@ -7,6 +7,7 @@
  * rejects, so the predicate lives in the domain layer and is imported by both.
  */
 import type {
+  AgentRuntimeState,
   AgentInstanceViewModel,
   ProjectViewModel,
   TerminalState
@@ -17,6 +18,22 @@ export type ProjectDispatchBlockReason =
   | 'project-archived'
   | 'project-root-unavailable'
   | 'project-repository-not-ready'
+
+/** Runtime states that consume an Agent's structured execution slot. */
+const ACTIVE_STRUCTURED_RUN_STATES: ReadonlySet<AgentRuntimeState> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
+
+/** The shared source of truth for active structured Run accounting. */
+export function isActiveStructuredRunState(
+  state: AgentRuntimeState
+): boolean {
+  return ACTIVE_STRUCTURED_RUN_STATES.has(state)
+}
 
 /** Returns why a Project cannot accept new execution-producing commands. */
 export function getProjectDispatchBlockReason(
@@ -68,21 +85,15 @@ export function isDispatchable(a: AgentInstanceViewModel): boolean {
  * its stricter Terminal mutex before consulting this helper.
  */
 export function isAgentBusy(a: {
-  runtimeState: string
+  runtimeState: AgentRuntimeState
   terminalState?: TerminalState
-  activeRunId?: unknown
   queueDepth?: number
 }): boolean {
   return (
     (a.terminalState !== undefined &&
       isTerminalExecutionSlotOccupied(a.terminalState)) ||
-    a.activeRunId !== undefined ||
     (a.queueDepth ?? 0) > 0 ||
-    a.runtimeState === 'running' ||
-    a.runtimeState === 'starting' ||
-    a.runtimeState === 'finishing' ||
-    a.runtimeState === 'needs-input' ||
-    a.runtimeState === 'permission-requested' ||
+    isActiveStructuredRunState(a.runtimeState) ||
     a.runtimeState === 'queued'
   )
 }

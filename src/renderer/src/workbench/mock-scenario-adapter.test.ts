@@ -6,6 +6,7 @@ import type {
   AgentInstanceId,
   AgentOpenMode,
   AgentProviderId,
+  AgentRuntimeState,
   AgentWorktreeMode,
   CommandId,
   CommandResult,
@@ -1750,6 +1751,54 @@ describe('MockScenarioAdapter — set-terminal-takeover ownership', () => {
 // Concurrency limits — per-instance, Project (3), Global (6) (#7 AC1)
 // ---------------------------------------------------------------------------
 
+const ACTIVE_STRUCTURED_STATES: readonly AgentRuntimeState[] = [
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+]
+
+function isActiveStructuredState(state: AgentRuntimeState): boolean {
+  return ACTIVE_STRUCTURED_STATES.includes(state)
+}
+
+function expectActiveRunSummary(snapshot: WorkbenchViewModel): void {
+  let globalActive = 0
+  for (const project of snapshot.projects) {
+    const active = snapshot.agents.filter(
+      (agent) =>
+        agent.projectId === project.projectId &&
+        isActiveStructuredState(agent.runtimeState)
+    ).length
+    expect(project.activeRunCount).toBe(active)
+    expect(project.activeRunCount).toBeLessThanOrEqual(
+      snapshot.global.concurrency.projectLimit
+    )
+    globalActive += active
+  }
+  expect(snapshot.global.concurrency.activeGlobal).toBe(globalActive)
+  expect(snapshot.global.concurrency.activeGlobal).toBeLessThanOrEqual(
+    snapshot.global.concurrency.globalLimit
+  )
+}
+
+function resetExecutionFacts(snapshot: WorkbenchViewModel): void {
+  for (const agent of snapshot.agents) {
+    agent.runtimeState = 'ready'
+    agent.terminalState = 'closed'
+    agent.queueDepth = 0
+    delete agent.activeRunId
+  }
+  snapshot.queue = []
+  for (const project of snapshot.projects) {
+    project.activeRunCount = 0
+    project.queuedRunCount = 0
+  }
+  snapshot.global.concurrency.activeGlobal = 0
+  snapshot.global.concurrency.queuedGlobal = 0
+}
+
 function createProjectCapacityScenario() {
   const scenario = createStandardScenario()
   const project = scenario.projects[0]
@@ -1836,6 +1885,282 @@ function expectQueueProjection(snapshot: WorkbenchViewModel): void {
 }
 
 describe('MockScenarioAdapter — concurrency enforcement', () => {
+  it('ships a standard scenario whose summaries equal active Agent states', () => {
+    const snapshot = createStandardScenario()
+    expect(
+      snapshot.agents
+        .filter((agent) => isActiveStructuredState(agent.runtimeState))
+        .map((agent) => agent.name)
+    ).toEqual(['cc_data', 'cc_sql'])
+    expectActiveRunSummary(snapshot)
+    expect(snapshot.projects[0].activeRunCount).toBe(2)
+    expect(snapshot.global.concurrency.activeGlobal).toBe(2)
+  })
+
+  it('uses state truth when a batch crosses the third Project slot', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const first = before.agents.find((agent) => agent.name === 'cx_review')!
+    const overflow = before.agents.find(
+      (agent) => agent.name === 'kimi_visual'
+    )!
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(100),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [first.agentInstanceId, overflow.agentInstanceId],
+      instruction: 'cross the project boundary'
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === first.agentInstanceId
+      )!.runtimeState
+    ).toBe('running')
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === overflow.agentInstanceId
+      )
+    ).toBe(true)
+    expect(after.projects[0].activeRunCount).toBe(3)
+    expectActiveRunSummary(after)
+  })
+
+  it('uses the same Project capacity truth for a single composer target', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const third = before.agents.find((agent) => agent.name === 'cx_review')!
+    const overflow = before.agents.find(
+      (agent) => agent.name === 'kimi_visual'
+    )!
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(101),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [third.agentInstanceId],
+      instruction: 'occupy the third slot'
+    })
+    const atLimit = await adapter.getSnapshot()
+
+    await adapter.dispatch({
+      kind: 'send-agent-instruction',
+      commandId: cmdId(102),
+      expectedRevision: atLimit.revision,
+      projectId: project.projectId,
+      agentInstanceId: overflow.agentInstanceId,
+      instruction: 'queue after the project limit',
+      mode: 'start-or-queue'
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === overflow.agentInstanceId
+      )
+    ).toBe(true)
+    expect(after.projects[0].activeRunCount).toBe(3)
+    expectActiveRunSummary(after)
+  })
+
+  for (const state of ACTIVE_STRUCTURED_STATES) {
+    it(`${state} occupies Project capacity even when cached counts say zero`, async () => {
+      const scenario = createStandardScenario()
+      resetExecutionFacts(scenario)
+      const project = scenario.projects[0]
+      const projectAgents = scenario.agents.filter(
+        (agent) => agent.projectId === project.projectId
+      )
+      for (const agent of projectAgents.slice(0, 3)) {
+        agent.runtimeState = state
+      }
+      const overflow = projectAgents[3]
+      const adapter = new MockScenarioAdapter(scenario)
+      const normalised = await adapter.getSnapshot()
+      expect(normalised.projects[0].activeRunCount).toBe(3)
+      expectActiveRunSummary(normalised)
+
+      await adapter.dispatch({
+        kind: 'confirm-dispatch',
+        commandId: cmdId(200 + ACTIVE_STRUCTURED_STATES.indexOf(state)),
+        expectedRevision: normalised.revision,
+        projectId: project.projectId,
+        targets: [overflow.agentInstanceId],
+        instruction: `respect ${state}`
+      })
+      const after = await adapter.getSnapshot()
+      expect(
+        after.queue.some(
+          (item) => item.agentInstanceId === overflow.agentInstanceId
+        )
+      ).toBe(true)
+      expectActiveRunSummary(after)
+    })
+  }
+
+  it('repairs stale high summaries instead of falsely queueing idle capacity', async () => {
+    const scenario = createStandardScenario()
+    resetExecutionFacts(scenario)
+    scenario.projects[0].activeRunCount = 3
+    scenario.global.concurrency.activeGlobal = 6
+    const target = scenario.agents.find(
+      (agent) => agent.projectId === scenario.projects[0].projectId
+    )!
+    const adapter = new MockScenarioAdapter(scenario)
+    const normalised = await adapter.getSnapshot()
+    expect(normalised.projects[0].activeRunCount).toBe(0)
+    expect(normalised.global.concurrency.activeGlobal).toBe(0)
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(300),
+      expectedRevision: normalised.revision,
+      projectId: scenario.projects[0].projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'use real idle capacity'
+    })
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === target.agentInstanceId
+      )!.runtimeState
+    ).toBe('running')
+    expectActiveRunSummary(after)
+  })
+
+  it('does not treat a stale Run ID as a second active-state truth', async () => {
+    const scenario = createStandardScenario()
+    resetExecutionFacts(scenario)
+    const project = scenario.projects[0]
+    const target = scenario.agents.find(
+      (agent) => agent.projectId === project.projectId
+    )!
+    target.activeRunId = id('stale-run-id', 'RunId')
+
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(302),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'trust the ready runtime state'
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === target.agentInstanceId
+      )!.runtimeState
+    ).toBe('running')
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === target.agentInstanceId
+      )
+    ).toBe(false)
+    expect(after.projects[0].activeRunCount).toBe(1)
+    expect(after.global.concurrency.activeGlobal).toBe(1)
+    expectActiveRunSummary(after)
+  })
+
+  it('starts the sixth global Run then queues the next target in the same batch', async () => {
+    const scenario = createStandardScenario()
+    resetExecutionFacts(scenario)
+    const sales = scenario.projects[0]
+    const research = scenario.projects[1]
+    const salesAgents = scenario.agents.filter(
+      (agent) => agent.projectId === sales.projectId
+    )
+    const researchAgents = scenario.agents.filter(
+      (agent) => agent.projectId === research.projectId
+    )
+    const activeStates: AgentRuntimeState[] = [
+      'running',
+      'needs-input',
+      'finishing'
+    ]
+    salesAgents.slice(0, 3).forEach((agent, index) => {
+      agent.runtimeState = activeStates[index]
+    })
+    researchAgents.forEach((agent, index) => {
+      agent.runtimeState = activeStates[index]
+    })
+
+    const overflowProjectId = id('proj-global-overflow', 'ProjectId')
+    scenario.projects.push({
+      ...structuredClone(research),
+      projectId: overflowProjectId,
+      name: '全局容量测试',
+      activeRunCount: 0,
+      queuedRunCount: 0,
+      layout: { root: null, panels: {} }
+    })
+    const sixthAgent = {
+      ...structuredClone(salesAgents[3]),
+      agentInstanceId: id('inst-global-sixth', 'AgentInstanceId'),
+      projectId: overflowProjectId,
+      name: 'global_sixth',
+      runtimeState: 'ready' as const,
+      terminalState: 'closed' as const,
+      queueDepth: 0
+    }
+    const overflowAgent = {
+      ...structuredClone(salesAgents[4]),
+      agentInstanceId: id('inst-global-overflow', 'AgentInstanceId'),
+      projectId: overflowProjectId,
+      name: 'global_overflow',
+      runtimeState: 'ready' as const,
+      terminalState: 'closed' as const,
+      queueDepth: 0
+    }
+    delete sixthAgent.activeRunId
+    delete overflowAgent.activeRunId
+    scenario.agents.push(sixthAgent, overflowAgent)
+
+    const adapter = new MockScenarioAdapter(scenario)
+    const normalised = await adapter.getSnapshot()
+    expect(normalised.global.concurrency.activeGlobal).toBe(5)
+    expect(
+      normalised.projects.find(
+        (project) => project.projectId === overflowProjectId
+      )!.activeRunCount
+    ).toBe(0)
+    expectActiveRunSummary(normalised)
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(301),
+      expectedRevision: normalised.revision,
+      projectId: overflowProjectId,
+      targets: [sixthAgent.agentInstanceId, overflowAgent.agentInstanceId],
+      instruction: 'cross the global limit in one batch'
+    })
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === sixthAgent.agentInstanceId
+      )!.runtimeState
+    ).toBe('running')
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === overflowAgent.agentInstanceId
+      )
+    ).toBe(true)
+    expect(
+      after.projects.find(
+        (project) => project.projectId === overflowProjectId
+      )!.activeRunCount
+    ).toBe(1)
+    expect(after.global.concurrency.activeGlobal).toBe(6)
+    expectActiveRunSummary(after)
+  })
+
   it('queues a ready Agent with a stale Run ID at Project capacity and restores Ready after cancellation', async () => {
     const scenario = createProjectCapacityScenario()
     scenario.agents.find(
@@ -2111,8 +2436,8 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const project = snap.projects[0]
-    // cc_data is already running (1 active). Dispatch to cx_review and
-    // kimi_visual to reach the Project limit of 3.
+    // cc_data is running and cc_sql needs input (2 active). Dispatching
+    // cx_review fills the third slot; kimi_visual must already queue.
     let rev = snap.revision
     for (const name of ['cx_review', 'kimi_visual']) {
       const a = snap.agents.find((x) => x.name === name)!

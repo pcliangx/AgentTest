@@ -119,7 +119,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         'defaults.worktreeMode': 'isolated',
         'integrations.primaryConnectionId': primaryConnectionId,
         'integrations.resourceScope':
-          ownerProjectId === projectId ? '销售团队任务清单、产品知识库' : '',
+          ownerProjectId === projectId ? '销售团队任务清单、销售知识库' : '',
         'permissions.defaultPolicy': 'ask-each-time'
       }
     }
@@ -183,7 +183,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         rootAvailability: 'available',
         repositoryReadiness: 'ready',
         activity: 'active',
-        activeRunCount: 1,
+        activeRunCount: 2,
         queuedRunCount: 2,
         attentionCount: 2,
         primaryConnectionId: connId,
@@ -373,7 +373,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         perAgentLimit: 1,
         projectLimit: 3,
         globalLimit: 6,
-        activeGlobal: 1,
+        activeGlobal: 2,
         queuedGlobal: 2
       },
       connections: [
