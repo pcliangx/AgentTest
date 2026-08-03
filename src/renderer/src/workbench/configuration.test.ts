@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
+import { createStandardScenario } from './standard-scenario'
 import type {
   CommandId,
   ConfigurationOwner,
@@ -381,20 +382,58 @@ describe('apply-configuration — effect timing', () => {
 // ---------------------------------------------------------------------------
 
 describe('apply-configuration — primary connection', () => {
-  it('supports clearing the primary connection (0 connections)', async () => {
+  it('starts with applied resource scope projected from structured bindings', async () => {
+    const snap = await new MockScenarioAdapter().getSnapshot()
+    const labels = snap.projects[0].resourceBindings.map(
+      (binding) => binding.label
+    )
+    expect(
+      appliedOf(snap, projectOwner).values['integrations.resourceScope']
+    ).toBe(labels.join('、'))
+  })
+
+  it('previews every binding invalidated by clearing the primary connection', async () => {
     const adapter = new MockScenarioAdapter()
     await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
     const result = await applyAll(adapter, [projectOwner])
     expect(result.ok).toBe(true)
 
     const snap = await adapter.getSnapshot()
-    expect(snap.projects[0].primaryConnectionId).toBeUndefined()
+    expect(snap.pendingConfirmation).toBeDefined()
+    expect(snap.pendingConfirmation!.action).toContain('集成')
+    expect(snap.pendingConfirmation!.impact).toContain('销售团队任务清单')
+    expect(snap.pendingConfirmation!.impact).toContain('销售知识库')
+    // Requesting the transition is side-effect free until confirmation.
+    expect(snap.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
+    expect(snap.projects[0].resourceBindings).toHaveLength(2)
     expect(
       appliedOf(snap, projectOwner).values['integrations.primaryConnectionId']
-    ).toBeNull()
+    ).toBe(CONN_PRIMARY)
+    expect(appliedOf(snap, projectOwner).appliedVersion).toBe(2)
+    expect(draftOf(snap, projectOwner)).toBeDefined()
   })
 
-  it('supports rebinding to exactly one other connection', async () => {
+  it('requires connection-difference confirmation even with zero bindings', async () => {
+    const scenario = createStandardScenario()
+    scenario.projects[0].resourceBindings = []
+    const applied = appliedOf(scenario, projectOwner)
+    applied.values['integrations.resourceScope'] = ''
+    const adapter = new MockScenarioAdapter(scenario)
+
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    const requested = await applyAll(adapter, [projectOwner])
+    expect(requested.ok).toBe(true)
+
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation).toBeDefined()
+    expect(preview.pendingConfirmation!.target).toContain('无连接')
+    expect(preview.pendingConfirmation!.impact).toContain('0 个')
+    expect(preview.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
+    expect(appliedOf(preview, projectOwner).appliedVersion).toBe(2)
+    expect(draftOf(preview, projectOwner)).toBeDefined()
+  })
+
+  it('atomically switches connection, bindings and applied scope after confirmation', async () => {
     const adapter = new MockScenarioAdapter()
     await stage(
       adapter,
@@ -405,8 +444,343 @@ describe('apply-configuration — primary connection', () => {
     const result = await applyAll(adapter, [projectOwner])
     expect(result.ok).toBe(true)
 
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation).toBeDefined()
+    expect(preview.pendingConfirmation!.target).toContain('飞书 · 产品团队')
+    expect(preview.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
+
+    const confirmed = await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+    expect(confirmed.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeUndefined()
+    expect(after.projects[0].primaryConnectionId).toBe(CONN_PRODUCT)
+    expect(after.projects[0].resourceBindings).toEqual([])
+    expect(
+      appliedOf(after, projectOwner).values['integrations.primaryConnectionId']
+    ).toBe(CONN_PRODUCT)
+    expect(
+      appliedOf(after, projectOwner).values['integrations.resourceScope']
+    ).toBe('')
+    expect(appliedOf(after, projectOwner).appliedVersion).toBe(3)
+    expect(draftOf(after, projectOwner)).toBeUndefined()
+  })
+
+  it('preserves a trusted target-connection binding during a switch', async () => {
+    const scenario = createStandardScenario()
+    const targetBinding = {
+      bindingId: id('binding-product-plan', 'ResourceBindingId'),
+      connectionId: CONN_PRODUCT,
+      resourceType: 'document' as const,
+      label: '产品规划文档',
+      allowedOperations: ['read', 'update'] as const
+    }
+    scenario.projects[0].resourceBindings.push({
+      ...targetBinding,
+      allowedOperations: [...targetBinding.allowedOperations]
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.primaryConnectionId',
+      CONN_PRODUCT
+    )
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      targetBinding.label
+    )
+    const staged = await adapter.getSnapshot()
+    expect(draftOf(staged, projectOwner)!.validationErrors).toEqual([])
+
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation!.impact).not.toContain(
+      targetBinding.label
+    )
+    await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].primaryConnectionId).toBe(CONN_PRODUCT)
+    expect(after.projects[0].resourceBindings).toEqual([
+      {
+        ...targetBinding,
+        allowedOperations: [...targetBinding.allowedOperations]
+      }
+    ])
+    expect(
+      appliedOf(after, projectOwner).values['integrations.resourceScope']
+    ).toBe(targetBinding.label)
+  })
+
+  it('freezes every owner in a destructive integration apply batch', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await stage(adapter, ccSqlOwner, 'model.id', 'model-after-confirmation')
+    const before = await adapter.getSnapshot()
+
+    await applyAll(adapter, [projectOwner, ccSqlOwner])
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation).toBeDefined()
+    expect(preview.projects).toEqual(before.projects)
+    expect(preview.appliedConfigurations).toEqual(before.appliedConfigurations)
+    expect(preview.configurationDrafts).toEqual(before.configurationDrafts)
+
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const confirmationCommandId = cmd()
+    const confirmationCommand: WorkbenchCommand = {
+      kind: 'confirm-dangerous-action',
+      commandId: confirmationCommandId,
+      expectedRevision: preview.revision,
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    }
+    const confirmationResult = await adapter.dispatch(confirmationCommand)
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].primaryConnectionId).toBeUndefined()
+    expect(appliedOf(after, projectOwner).appliedVersion).toBe(3)
+    expect(appliedOf(after, ccSqlOwner).appliedVersion).toBe(
+      appliedOf(before, ccSqlOwner).appliedVersion + 1
+    )
+    expect(appliedOf(after, ccSqlOwner).values['model.id']).toBe(
+      'model-after-confirmation'
+    )
+    expect(draftOf(after, projectOwner)).toBeUndefined()
+    expect(draftOf(after, ccSqlOwner)).toBeUndefined()
+    const appliedEvents = events.filter(
+      (event): event is Extract<WorkbenchEvent, { kind: 'configuration-applied' }> =>
+        event.kind === 'configuration-applied'
+    )
+    expect(appliedEvents).toHaveLength(1)
+    expect(appliedEvents[0].owners).toHaveLength(2)
+    expect(appliedEvents[0].correlationId).toBe(confirmationCommandId)
+
+    // CommandId replay returns the cached result without another commit,
+    // event, version bump or audit record.
+    expect(await adapter.dispatch(confirmationCommand)).toEqual(
+      confirmationResult
+    )
+    expect(await adapter.getSnapshot()).toEqual(after)
+    expect(
+      events.filter((event) => event.kind === 'configuration-applied')
+    ).toHaveLength(1)
+  })
+
+  it('blocks a frozen owner from being applied as a partial second batch', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await stage(adapter, ccSqlOwner, 'model.id', 'model-after-confirmation')
+    await applyAll(adapter, [projectOwner, ccSqlOwner])
+    const preview = await adapter.getSnapshot()
+
+    const result = await applyAll(adapter, [ccSqlOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('busy')
+
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toEqual(preview.pendingConfirmation)
+    expect(after.projects).toEqual(preview.projects)
+    expect(after.appliedConfigurations).toEqual(preview.appliedConfigurations)
+    expect(after.configurationDrafts).toEqual(preview.configurationDrafts)
+  })
+
+  it('keeps the complete transition draft and truth when confirmation is cancelled', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await applyAll(adapter, [projectOwner])
+
+    const preview = await adapter.getSnapshot()
+    const before = {
+      project: structuredClone(preview.projects[0]),
+      applied: structuredClone(appliedOf(preview, projectOwner)),
+      draft: structuredClone(draftOf(preview, projectOwner))
+    }
+    const dismissed = await send(adapter, { kind: 'dismiss-confirmation' })
+    expect(dismissed.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeUndefined()
+    expect(after.projects[0]).toEqual(before.project)
+    expect(appliedOf(after, projectOwner)).toEqual(before.applied)
+    expect(draftOf(after, projectOwner)).toEqual(before.draft)
+  })
+
+  it('rejects an expired confirmation without changing transition truth', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+
+    const result = await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: id('expired-integration-confirmation', 'ConfirmationId')
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects).toEqual(preview.projects)
+    expect(after.appliedConfigurations).toEqual(preview.appliedConfigurations)
+    expect(after.configurationDrafts).toEqual(preview.configurationDrafts)
+    expect(after.pendingConfirmation).toEqual(preview.pendingConfirmation)
+  })
+
+  it('fails closed when the frozen transition draft changes before confirmation', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.primaryConnectionId',
+      CONN_PRODUCT
+    )
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+
+    // Drift the same owner after the impact preview was frozen.
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      '销售团队任务清单'
+    )
+    const drifted = await adapter.getSnapshot()
+    const failed = await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+    expect(failed.ok).toBe(false)
+    if (!failed.ok) expect(failed.reason).toBe('invalid-target')
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects).toEqual(drifted.projects)
+    expect(after.appliedConfigurations).toEqual(drifted.appliedConfigurations)
+    expect(after.configurationDrafts).toEqual(drifted.configurationDrafts)
+    expect(after.pendingConfirmation).toEqual(drifted.pendingConfirmation)
+  })
+
+  it('does not let another dangerous request overwrite a frozen transition', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+
+    const result = await applyAll(adapter, [projectOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('busy')
+
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toEqual(preview.pendingConfirmation)
+    expect(after.projects).toEqual(preview.projects)
+    expect(after.appliedConfigurations).toEqual(preview.appliedConfigurations)
+    expect(after.configurationDrafts).toEqual(preview.configurationDrafts)
+  })
+
+  it('does not let discard remove drafts frozen by a pending transition', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+
+    const result = await send(adapter, {
+      kind: 'discard-configuration',
+      owners: [projectOwner]
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('busy')
+
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toEqual(preview.pendingConfirmation)
+    expect(after.configurationDrafts).toEqual(preview.configurationDrafts)
+  })
+
+  it('synchronises a narrowed resource scope with structured bindings', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const trustedBinding = structuredClone(before.projects[0].resourceBindings[0])
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      '销售团队任务清单'
+    )
+    const requested = await applyAll(adapter, [projectOwner])
+    expect(requested.ok).toBe(true)
+
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation!.impact).toContain('销售知识库')
+    await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].resourceBindings).toEqual([trustedBinding])
+    expect(
+      appliedOf(after, projectOwner).values['integrations.resourceScope']
+    ).toBe('销售团队任务清单')
+  })
+
+  it('rejects a resource scope that is not backed by a structured binding', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      '不存在的资源'
+    )
     const snap = await adapter.getSnapshot()
-    expect(snap.projects[0].primaryConnectionId).toBe(CONN_PRODUCT)
+    expect(draftOf(snap, projectOwner)!.validationErrors[0].message).toContain(
+      '未绑定'
+    )
+
+    const beforeApply = await adapter.getSnapshot()
+    const result = await applyAll(adapter, [projectOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invariant-violation')
+    const afterApply = await adapter.getSnapshot()
+    expect(afterApply).toEqual(beforeApply)
+  })
+
+  it('rejects duplicate resource labels instead of ambiguously collapsing them', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      '销售知识库、销售知识库'
+    )
+    const snap = await adapter.getSnapshot()
+    expect(draftOf(snap, projectOwner)!.validationErrors[0].message).toContain(
+      '重复'
+    )
+  })
+
+  it('rejects an ambiguous label shared by two structured bindings', async () => {
+    const scenario = createStandardScenario()
+    scenario.projects[0].resourceBindings.push({
+      ...scenario.projects[0].resourceBindings[0],
+      bindingId: id('binding-sales-tasks-duplicate', 'ResourceBindingId')
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.resourceScope',
+      '销售团队任务清单'
+    )
+    const snap = await adapter.getSnapshot()
+    expect(draftOf(snap, projectOwner)!.validationErrors[0].message).toContain(
+      '不唯一'
+    )
   })
 
   it('flags an unknown connection as a validation error on stage', async () => {
@@ -568,6 +942,83 @@ describe('primary connection — atomic truth across transitions', () => {
     expect(after.projects[0].primaryConnectionId).toBeUndefined()
     // Bindings of the deleted connection are invalid — they go with it.
     expect(after.projects[0].resourceBindings).toEqual([])
+    expect(
+      appliedOf(after, projectOwner).values['integrations.resourceScope']
+    ).toBe('')
+  })
+
+  it('does not canonicalise an unrelated project during connection deletion', async () => {
+    const scenario = createStandardScenario()
+    const unrelated = appliedOf(scenario, researchOwner)
+    unrelated.values['integrations.resourceScope'] = '独立离线范围'
+    const before = structuredClone(unrelated)
+    const adapter = new MockScenarioAdapter(scenario)
+
+    const snap = await adapter.getSnapshot()
+    await send(adapter, {
+      kind: 'request-connection-deletion',
+      connectionId: CONN_PRIMARY
+    })
+    const preview = await adapter.getSnapshot()
+    await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(appliedOf(after, researchOwner)).toEqual(before)
+    expect(after.projects.find((project) => project.projectId === RESEARCH)).toEqual(
+      snap.projects.find((project) => project.projectId === RESEARCH)
+    )
+  })
+
+  it('previews a legacy binding reference even when it is not the primary connection', async () => {
+    const scenario = createStandardScenario()
+    const research = scenario.projects.find(
+      (project) => project.projectId === RESEARCH
+    )!
+    research.resourceBindings.push({
+      bindingId: id('binding-research-legacy', 'ResourceBindingId'),
+      connectionId: CONN_PRIMARY,
+      resourceType: 'document',
+      label: '遗留研究文档',
+      allowedOperations: ['read']
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+
+    await send(adapter, {
+      kind: 'request-connection-deletion',
+      connectionId: CONN_PRIMARY
+    })
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation!.impact).toContain(research.name)
+    expect(preview.pendingConfirmation!.impact).toContain('遗留研究文档')
+  })
+
+  it('fails closed when an affected project changes after deletion preview', async () => {
+    const adapter = new MockScenarioAdapter()
+    await send(adapter, {
+      kind: 'request-connection-deletion',
+      connectionId: CONN_PRIMARY
+    })
+    const preview = await adapter.getSnapshot()
+    await stage(adapter, projectOwner, 'general.name', '删除预览后的草稿')
+    const drifted = await adapter.getSnapshot()
+
+    const result = await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+
+    const after = await adapter.getSnapshot()
+    expect(after.global.connections).toEqual(drifted.global.connections)
+    expect(after.projects).toEqual(drifted.projects)
+    expect(after.appliedConfigurations).toEqual(drifted.appliedConfigurations)
+    expect(after.configurationDrafts).toEqual(drifted.configurationDrafts)
+    expect(after.pendingConfirmation).toEqual(drifted.pendingConfirmation)
+    expect(after.activity).toEqual(drifted.activity)
   })
 
   it('applying a primary-connection change invalidates the old bindings', async () => {
@@ -576,9 +1027,14 @@ describe('primary connection — atomic truth across transitions', () => {
     const result = await applyAll(adapter, [projectOwner])
     expect(result.ok).toBe(true)
 
-    const snap = await adapter.getSnapshot()
-    expect(snap.projects[0].primaryConnectionId).toBeUndefined()
-    expect(snap.projects[0].resourceBindings).toEqual([])
+    const preview = await adapter.getSnapshot()
+    await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].primaryConnectionId).toBeUndefined()
+    expect(after.projects[0].resourceBindings).toEqual([])
   })
 
   it('stale-rejects a draft whose base version the deletion advanced', async () => {

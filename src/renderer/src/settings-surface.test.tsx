@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { id } from './workbench/contract'
 import type { WorkbenchPort } from './workbench/contract'
 
 /**
@@ -246,6 +254,34 @@ describe('Settings A — atomic apply', () => {
     expect(screen.getByText(/当前 Run 配置快照：v3/)).toBeDefined()
     expect(screen.getByText('当前：claude-opus-4（v4）')).toBeDefined()
   })
+
+  it('reports an immediate apply as complete despite an unrelated confirmation', async () => {
+    const adapter = new MockScenarioAdapter()
+    const initial = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-connection-deletion',
+      commandId: id('cmd-unrelated-confirmation', 'CommandId'),
+      expectedRevision: initial.revision,
+      connectionId: initial.global.connections[1].connectionId
+    })
+    const { user } = await gotoSettingsSurface(adapter)
+    await stageText(user, '项目名称', '销售分析 v2')
+
+    await user.click(screen.getByRole('button', { name: '应用全部变更' }))
+    const applyDialog = screen.getByRole('dialog', { name: '应用配置变更' })
+    await user.click(
+      within(applyDialog).getByRole('button', { name: '确认应用' })
+    )
+
+    await waitFor(() =>
+      expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    )
+    expect(screen.getByRole('status')).toHaveTextContent(/已应用/)
+    expect(screen.getByText('当前：销售分析 v2（v3）')).toBeDefined()
+    expect(
+      screen.getByRole('dialog', { name: '删除连接' })
+    ).toBeDefined()
+  })
 })
 
 describe('Settings A — integrations', () => {
@@ -262,6 +298,44 @@ describe('Settings A — integrations', () => {
     expect(
       screen.getByText('当前：飞书 · 销售团队（v2）')
     ).toBeDefined()
+  })
+
+  it('keeps destructive integration changes pending until the binding impact is confirmed', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '集成' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '主连接' }),
+      'conn-feishu-product'
+    )
+
+    await user.click(screen.getByRole('button', { name: '应用全部变更' }))
+    const applyDialog = await screen.findByRole('dialog', {
+      name: '应用配置变更'
+    })
+    await user.click(
+      within(applyDialog).getByRole('button', { name: '确认应用' })
+    )
+
+    const impactDialog = await screen.findByRole('dialog', {
+      name: /集成/
+    })
+    within(impactDialog).getByText(/销售团队任务清单/)
+    within(impactDialog).getByText(/销售知识库/)
+    // `ok` means the request was accepted, not that destructive unbinding
+    // has committed. Applied rows and drafts remain authoritative here.
+    expect(screen.getByRole('status')).toHaveTextContent(/等待确认/)
+    expect(screen.getByText('当前：飞书 · 销售团队（v2）')).toBeDefined()
+    expect(within(summaryPanel()).queryByText('暂无待应用变更')).toBeNull()
+
+    await user.click(
+      within(impactDialog).getByRole('button', { name: '确认' })
+    )
+    await waitFor(() =>
+      expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    )
+    expect(screen.getByRole('status')).toHaveTextContent(/已应用/)
+    expect(screen.getByText('当前：飞书 · 产品团队（v3）')).toBeDefined()
+    expect(screen.getByText('当前：（v3）')).toBeDefined()
   })
 })
 

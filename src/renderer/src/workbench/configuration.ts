@@ -1,5 +1,9 @@
 import { validateAgentName } from './agent-name'
-import type { ConfigurationOwner, WorkbenchViewModel } from './contract'
+import type {
+  ConfigurationOwner,
+  ProjectViewModel,
+  WorkbenchViewModel
+} from './contract'
 
 /**
  * Configuration field catalogue and validation (#13).
@@ -217,6 +221,35 @@ export function sameOwner(
   return ownerKey(a) === ownerKey(b)
 }
 
+export type ParsedResourceScope =
+  | { ok: true; labels: string[] }
+  | { ok: false; message: string }
+
+/**
+ * Parses the Phase 1 text projection of Resource Bindings. The text is never
+ * an identity source: callers may only resolve these exact labels back to
+ * already-authoritative structured bindings.
+ */
+export function parseResourceScope(value: string): ParsedResourceScope {
+  const labels = value
+    .split(/[、,，;；\n]+/)
+    .map((label) => label.trim())
+    .filter(Boolean)
+  const duplicate = labels.find(
+    (label, index) => labels.indexOf(label) !== index
+  )
+  return duplicate
+    ? { ok: false, message: `资源范围包含重复项：${duplicate}` }
+    : { ok: true, labels }
+}
+
+/** Canonical Settings projection of the structured binding truth. */
+export function formatResourceScope(
+  bindings: ProjectViewModel['resourceBindings']
+): string {
+  return bindings.map((binding) => binding.label).join('、')
+}
+
 /**
  * Validates a staged value for an owner's field. Returns an error message
  * or null when the value is acceptable.
@@ -279,9 +312,41 @@ export function validateConfigurationValue(
       return typeof value === 'string' && value.trim().length > 0
         ? null
         : '模型不能为空'
+    case 'integrations.resourceScope': {
+      if (typeof value !== 'string') return '取值必须是文本'
+      if (owner.kind !== 'project') return '字段不属于该 owner'
+      const parsed = parseResourceScope(value)
+      if (!parsed.ok) return parsed.message
+      const project = snapshot.projects.find(
+        (candidate) => candidate.projectId === owner.projectId
+      )
+      if (!project) return 'Project 不存在'
+      const draft = snapshot.configurationDrafts.find((candidate) =>
+        sameOwner(candidate.owner, owner)
+      )
+      const primaryChange = draft?.changes.find(
+        (change) =>
+          change.fieldPath === 'integrations.primaryConnectionId'
+      )
+      const primary = primaryChange
+        ? primaryChange.draft
+        : project.primaryConnectionId
+      const trusted = project.resourceBindings.filter(
+        (binding) => binding.connectionId === primary
+      )
+      for (const label of parsed.labels) {
+        const matches = trusted.filter((binding) => binding.label === label)
+        if (matches.length === 0) {
+          return `资源未绑定到所选主连接：${label}`
+        }
+        if (matches.length > 1) {
+          return `资源名称不唯一，无法安全识别：${label}`
+        }
+      }
+      return null
+    }
     case 'proxy.http':
     case 'env.custom':
-    case 'integrations.resourceScope':
       return typeof value === 'string' ? null : '取值必须是文本'
     default:
       return '字段不存在'

@@ -96,6 +96,11 @@ export function SettingsSurface({
   const [feedback, setFeedback] = useState<
     { kind: 'status' | 'alert'; message: string } | null
   >(null)
+  const [applyAttempt, setApplyAttempt] = useState<{
+    acceptedRevision: number
+    owners: Array<{ ownerKey: string; targetAppliedVersion: number }>
+    ownerCount: number
+  } | null>(null)
 
   const projectOwner: ConfigurationOwner = {
     kind: 'project',
@@ -175,6 +180,45 @@ export function SettingsSurface({
     (d) => d.changes.length > 0 && isCurrentProjectOwner(d.owner)
   )
 
+  useEffect(() => {
+    if (!applyAttempt || snapshot.revision < applyAttempt.acceptedRevision) {
+      return
+    }
+    const allApplied = applyAttempt.owners.every((target) =>
+      snapshot.appliedConfigurations.some(
+        (applied) =>
+          ownerKey(applied.owner) === target.ownerKey &&
+          applied.appliedVersion >= target.targetAppliedVersion
+      )
+    )
+    const pendingOwner = snapshot.configurationDrafts.some((draft) =>
+      applyAttempt.owners.some(
+        (target) => target.ownerKey === ownerKey(draft.owner)
+      )
+    )
+    if (allApplied) {
+      setFeedback({
+        kind: 'status',
+        message: `已应用 ${applyAttempt.ownerCount} 个 owner 的配置变更`
+      })
+      setApplyAttempt(null)
+      return
+    }
+    if (snapshot.pendingConfirmation && pendingOwner) {
+      setFeedback({
+        kind: 'status',
+        message: '配置尚未应用，正在等待确认集成绑定影响'
+      })
+      return
+    }
+    setFeedback(
+      pendingOwner
+        ? { kind: 'status', message: '已取消确认，配置草稿仍保留' }
+        : { kind: 'alert', message: '配置未应用；草稿已取消或失效' }
+    )
+    setApplyAttempt(null)
+  }, [applyAttempt, snapshot])
+
   const confirmApply = async () => {
     // The concurrency baseline is the version the DRAFT was captured at —
     // never the latest applied value, which would let a stale draft
@@ -189,11 +233,16 @@ export function SettingsSurface({
     // latest rendered snapshot.
     setShowApplyDialog(false)
     if (result.ok) {
-      setFeedback({
-        kind: 'status',
-        message: `已应用 ${owners.length} 个 owner 的配置变更`
+      setApplyAttempt({
+        acceptedRevision: result.acceptedRevision,
+        owners: owners.map(({ owner, expectedAppliedVersion }) => ({
+          ownerKey: ownerKey(owner),
+          targetAppliedVersion: expectedAppliedVersion + 1
+        })),
+        ownerCount: owners.length
       })
     } else {
+      setApplyAttempt(null)
       setFeedback({ kind: 'alert', message: result.message })
     }
   }
