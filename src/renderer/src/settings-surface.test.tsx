@@ -264,3 +264,68 @@ describe('Settings A — integrations', () => {
     ).toBeDefined()
   })
 })
+
+describe('Settings A — project scoping', () => {
+  it('shows and applies only the current project drafts', async () => {
+    const { user } = await gotoSettingsSurface()
+    await stageText(user, '项目名称', '销售分析 v2')
+    expect(
+      within(summaryPanel()).getByText(/销售数据分析.*1 项变更/)
+    ).toBeDefined()
+
+    // Switch to the other project: another project's drafts must not leak
+    // into this summary, and there is nothing to apply here.
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    await user.selectOptions(
+      within(nav).getByRole('combobox', { name: '切换项目' }),
+      '用户研究'
+    )
+    await user.click(screen.getByRole('button', { name: '设置' }))
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
+  })
+
+  it('resets the instance selection when switching projects', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '选择实例' }),
+      'cc_sql'
+    )
+
+    // Put BOTH projects on the Settings surface, so switching projects
+    // reuses the mounted SettingsSurface instead of unmounting it.
+    const nav = screen.getByRole('navigation', { name: '主导航' })
+    await user.selectOptions(
+      within(nav).getByRole('combobox', { name: '切换项目' }),
+      '用户研究'
+    )
+    await user.click(screen.getByRole('button', { name: '设置' }))
+
+    // Back to sales (still on Settings) and pick cc_sql again.
+    await user.selectOptions(
+      within(nav).getByRole('combobox', { name: '切换项目' }),
+      '销售数据分析'
+    )
+    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '选择实例' }),
+      'cc_sql'
+    )
+
+    // Switch to research while both stay on Settings: the selection must
+    // be rebuilt for the research project, never left dangling on cc_sql.
+    await user.selectOptions(
+      within(nav).getByRole('combobox', { name: '切换项目' }),
+      '用户研究'
+    )
+    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
+
+    expect(screen.getByRole('combobox', { name: '选择实例' })).toHaveValue(
+      'inst-cc-report'
+    )
+    expect(screen.getByRole('textbox', { name: 'Agent 名称' })).toHaveValue(
+      'cc_report'
+    )
+  })
+})

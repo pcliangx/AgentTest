@@ -6,6 +6,7 @@ import type {
   CommandResult,
   PanelId,
   ConnectionId,
+  ProjectId,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -235,6 +236,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
           doctor: 'ready',
           lastActivityAt: Date.now()
         })
+        // Every configurable owner needs its applied truth (#13): a created
+        // instance starts at version 1, inheriting the project's applied
+        // defaults — otherwise Settings could never edit it.
+        const projectConfig = this.snapshot.appliedConfigurations.find(
+          (c) => c.owner.kind === 'project' && c.owner.projectId === project.projectId
+        )
+        this.snapshot.appliedConfigurations.push({
+          owner: { kind: 'agent', agentInstanceId },
+          appliedVersion: 1,
+          values: {
+            'identity.name': name,
+            'model.id': projectConfig?.values['defaults.model'] ?? '',
+            'proxy.http': '',
+            'env.custom': '',
+            'concurrency.priority': 'normal',
+            'budget.maxTokens': 200000
+          }
+        })
         // Creation never produces a Run; opening only changes the layout,
         // through the same shared reducer as any other layout command.
         if (command.open === 'current-panel') {
@@ -383,6 +402,23 @@ export class MockScenarioAdapter implements WorkbenchPort {
             for (const proj of this.snapshot.projects) {
               if (proj.primaryConnectionId === connId) {
                 proj.primaryConnectionId = undefined
+              }
+              // Bindings of the deleted connection die with it.
+              proj.resourceBindings = proj.resourceBindings.filter(
+                (b) => b.connectionId !== connId
+              )
+            }
+            // Synchronise applied configuration truth in the same
+            // transition: a stale ConnectionId must never be resurrected
+            // by a later configuration apply. The version bump also
+            // stale-rejects drafts based on the old truth.
+            for (const config of this.snapshot.appliedConfigurations) {
+              if (
+                config.owner.kind === 'project' &&
+                config.values['integrations.primaryConnectionId'] === connId
+              ) {
+                config.values['integrations.primaryConnectionId'] = null
+                config.appliedVersion += 1
               }
             }
           } else {
@@ -703,6 +739,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'discard-configuration': {
+        // Batches stay inside one project: a Project Settings operation
+        // must never touch another project's drafts (US-67, Project-first).
+        const projectIds = new Set(
+          command.owners
+            .map((o) => this.projectIdForOwner(o))
+            .filter((pid) => pid !== undefined)
+        )
+        if (projectIds.size > 1) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '一次只能丢弃同一 Project 的配置草稿'
+          )
+        }
         // Discard drops drafts only — applied values were never touched.
         const drop = new Set(command.owners.map((o) => ownerKey(o)))
         this.snapshot.configurationDrafts =
@@ -716,6 +766,25 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (new Set(keys).size !== keys.length) {
           return this.reject(command, 'invalid-target', 'owner 列表包含重复项')
         }
+        if (command.owners.length === 0) {
+          return this.reject(command, 'invalid-target', '没有待应用的草稿')
+        }
+        // Batches stay inside one project: a Project Settings operation
+        // must never mutate another project's applied truth.
+        const batchProjectIds = new Set(
+          command.owners.map((o) => this.projectIdForOwner(o.owner))
+        )
+        if (batchProjectIds.has(undefined)) {
+          return this.reject(command, 'invalid-target', '配置 owner 不存在')
+        }
+        if (batchProjectIds.size > 1) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '一次只能应用同一 Project 的配置变更'
+          )
+        }
+        const batchProjectId = [...batchProjectIds][0]!
         // Resolve and re-validate EVERY owner before mutating anything —
         // one failure aborts the whole apply with all drafts kept (US-70).
         const pending: Array<{
@@ -741,11 +810,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
           if (!draft || draft.changes.length === 0) {
             return this.reject(command, 'invalid-target', '没有待应用的草稿')
           }
+          // The draft's own captured base is the real concurrency baseline:
+          // a draft based on an older truth must never overwrite a newer
+          // applied configuration, even when the caller claims otherwise.
+          if (draft.appliedVersion !== applied.appliedVersion) {
+            return this.reject(
+              command,
+              'stale-revision',
+              '配置草稿基于过期的版本，请丢弃后重新暂存'
+            )
+          }
           pending.push({ owner, draft, applied })
         }
-        let hasErrors = false
+        // Re-validate against the live snapshot — but publish failures ONLY
+        // through this rejection. A rejected command never mutates the
+        // snapshot (rejection purity), so freshly discovered errors travel
+        // in the message instead of being written into drafts invisibly.
+        const discovered: string[] = []
         for (const { owner, draft } of pending) {
-          draft.validationErrors = []
           for (const change of draft.changes) {
             const error = validateConfigurationValue(
               owner,
@@ -754,20 +836,57 @@ export class MockScenarioAdapter implements WorkbenchPort {
               this.snapshot
             )
             if (error) {
-              draft.validationErrors.push({
-                fieldPath: change.fieldPath,
-                message: error
-              })
-              hasErrors = true
+              discovered.push(
+                `${this.ownerLabelFor(owner)} · ${change.fieldPath}：${error}`
+              )
             }
           }
         }
-        if (hasErrors) {
+        if (discovered.length > 0) {
           return this.reject(
             command,
             'invariant-violation',
-            '部分字段未通过验证，已保留全部草稿'
+            `部分字段未通过验证（${discovered.join('；')}），已保留全部草稿`
           )
+        }
+        // Batch rename uniqueness: project the FINAL name set after all
+        // pending renames and check case-insensitive duplicates — per-change
+        // validation alone misses collisions between two renames staged in
+        // the same batch (Agent Name is project-unique, ADR-0008).
+        const pendingRenames = new Map<string, string>()
+        for (const { owner, draft } of pending) {
+          if (owner.kind !== 'agent') continue
+          for (const change of draft.changes) {
+            if (
+              change.fieldPath === 'identity.name' &&
+              typeof change.draft === 'string'
+            ) {
+              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
+            }
+          }
+        }
+        if (pendingRenames.size > 0) {
+          const seen = new Map<string, string>()
+          let collision: string | null = null
+          for (const agent of this.snapshot.agents.filter(
+            (a) => a.projectId === batchProjectId
+          )) {
+            const finalName =
+              pendingRenames.get(agent.agentInstanceId) ?? agent.name
+            const key = finalName.toLowerCase()
+            if (seen.has(key)) {
+              collision = finalName
+              break
+            }
+            seen.set(key, finalName)
+          }
+          if (collision) {
+            return this.reject(
+              command,
+              'invariant-violation',
+              `应用后 Agent 名称 "${collision}" 在 Project 内重复`
+            )
+          }
         }
         // Commit: move draft values into applied truth, bump each owner's
         // version exactly once, then clear the consumed drafts.
@@ -791,9 +910,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
           this.snapshot.configurationDrafts.filter(
             (d) => !consumed.has(ownerKey(d.owner))
           )
+        // Configuration audit must be attributable: Project Activity filters
+        // by projectId, so an entry without one would vanish from the UI
+        // (US-61). Batches are single-project by construction.
+        const singleAgentOwner =
+          pending.length === 1 && pending[0].owner.kind === 'agent'
+            ? pending[0].owner
+            : null
         this.snapshot.activity = [
           {
             activityId: this.freshId('ActivityId'),
+            projectId: batchProjectId,
+            ...(singleAgentOwner
+              ? { agentInstanceId: singleAgentOwner.agentInstanceId }
+              : {}),
             timestamp: Date.now(),
             kind: 'configuration-applied',
             summary: `已原子应用 ${pending.length} 个 owner 的配置变更`
@@ -866,6 +996,35 @@ export class MockScenarioAdapter implements WorkbenchPort {
     )
   }
 
+  /** Resolves which project an owner belongs to (undefined when unknown). */
+  private projectIdForOwner(owner: ConfigurationOwner): ProjectId | undefined {
+    if (owner.kind === 'project') {
+      return this.snapshot.projects.some(
+        (p) => p.projectId === owner.projectId
+      )
+        ? owner.projectId
+        : undefined
+    }
+    return this.snapshot.agents.find(
+      (a) => a.agentInstanceId === owner.agentInstanceId
+    )?.projectId
+  }
+
+  /** Display label for rejection messages — never an identifier. */
+  private ownerLabelFor(owner: ConfigurationOwner): string {
+    if (owner.kind === 'project') {
+      return (
+        this.snapshot.projects.find((p) => p.projectId === owner.projectId)
+          ?.name ?? owner.projectId
+      )
+    }
+    return (
+      this.snapshot.agents.find(
+        (a) => a.agentInstanceId === owner.agentInstanceId
+      )?.name ?? owner.agentInstanceId
+    )
+  }
+
   /**
    * Applies the immediate effects of a committed configuration (US-91):
    * identity and routing metadata take effect at once. Run configuration
@@ -895,12 +1054,18 @@ export class MockScenarioAdapter implements WorkbenchPort {
     if (typeof projectName === 'string' && projectName.trim()) {
       project.name = projectName.trim()
     }
-    // The primary connection is an optional 0..1 reference (US-72).
+    // The primary connection is an optional 0..1 reference (US-72). Scope
+    // moves with it atomically: bindings of the old connection are invalid
+    // under the new one and are dropped in the same transition.
     const connection = values['integrations.primaryConnectionId']
-    project.primaryConnectionId =
+    const nextPrimary =
       typeof connection === 'string'
         ? id(connection, 'ConnectionId')
         : undefined
+    project.resourceBindings = project.resourceBindings.filter(
+      (b) => b.connectionId === nextPrimary
+    )
+    project.primaryConnectionId = nextPrimary
   }
 
   private reject(

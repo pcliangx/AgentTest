@@ -17,17 +17,24 @@ import type {
  */
 
 const PROJECT = id('proj-sales', 'ProjectId')
+const RESEARCH = id('proj-research', 'ProjectId')
 const CC_DATA = id('inst-cc-data', 'AgentInstanceId')
 const CC_SQL = id('inst-cc-sql', 'AgentInstanceId')
+const CC_ETL = id('inst-cc-etl', 'AgentInstanceId')
 const CONN_PRIMARY = id('conn-feishu-primary', 'ConnectionId')
 const CONN_PRODUCT = id('conn-feishu-product', 'ConnectionId')
 
 const projectOwner: ConfigurationOwner = { kind: 'project', projectId: PROJECT }
+const researchOwner: ConfigurationOwner = {
+  kind: 'project',
+  projectId: RESEARCH
+}
 const ccDataOwner: ConfigurationOwner = {
   kind: 'agent',
   agentInstanceId: CC_DATA
 }
 const ccSqlOwner: ConfigurationOwner = { kind: 'agent', agentInstanceId: CC_SQL }
+const ccEtlOwner: ConfigurationOwner = { kind: 'agent', agentInstanceId: CC_ETL }
 
 let commandCounter = 0
 function cmd(): CommandId {
@@ -414,5 +421,268 @@ describe('apply-configuration — primary connection', () => {
     expect(
       draftOf(snap, projectOwner)!.validationErrors
     ).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PR #27 review fixes
+// ---------------------------------------------------------------------------
+
+describe('apply/discard — single-project batches only', () => {
+  it('rejects an apply batch spanning multiple projects without side effects', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'general.name', '销售分析 v2')
+    await stage(adapter, researchOwner, 'general.name', '用户研究 v2')
+
+    const result = await applyAll(adapter, [projectOwner, researchOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+
+    // Nothing applied anywhere; both drafts survive untouched.
+    const snap = await adapter.getSnapshot()
+    expect(snap.projects[0].name).toBe('销售数据分析')
+    expect(snap.projects[1].name).toBe('用户研究')
+    expect(draftOf(snap, projectOwner)).toBeDefined()
+    expect(draftOf(snap, researchOwner)).toBeDefined()
+  })
+
+  it('rejects a discard batch spanning multiple projects', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'general.name', '销售分析 v2')
+    await stage(adapter, researchOwner, 'general.name', '用户研究 v2')
+
+    const result = await send(adapter, {
+      kind: 'discard-configuration',
+      owners: [projectOwner, researchOwner]
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+
+    const snap = await adapter.getSnapshot()
+    expect(draftOf(snap, projectOwner)).toBeDefined()
+    expect(draftOf(snap, researchOwner)).toBeDefined()
+  })
+
+  it('accepts a batch of one project plus its own instances', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'general.name', '销售分析 v2')
+    await stage(adapter, ccDataOwner, 'model.id', 'claude-opus-4')
+    const result = await applyAll(adapter, [projectOwner, ccDataOwner])
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('apply-configuration — batch rename uniqueness', () => {
+  it('rejects the batch when pending renames collide case-insensitively', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccSqlOwner, 'identity.name', 'duplicate')
+    await stage(adapter, ccEtlOwner, 'identity.name', 'DUPLICATE')
+
+    const result = await applyAll(adapter, [ccSqlOwner, ccEtlOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invariant-violation')
+
+    // No rename happened; the project name set stays valid.
+    const snap = await adapter.getSnapshot()
+    expect(snap.agents.find((a) => a.agentInstanceId === CC_SQL)!.name).toBe(
+      'cc_sql'
+    )
+    expect(snap.agents.find((a) => a.agentInstanceId === CC_ETL)!.name).toBe(
+      'cc_etl'
+    )
+  })
+
+  it('accepts renames whose final set is unique', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccSqlOwner, 'identity.name', 'cc_sql_v2')
+    await stage(adapter, ccEtlOwner, 'identity.name', 'cc_etl_v2')
+    const result = await applyAll(adapter, [ccSqlOwner, ccEtlOwner])
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('create-agent — configuration initialisation', () => {
+  it('creates an applied configuration from project defaults, editable at once', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const created = await adapter.dispatch({
+      kind: 'create-agent',
+      commandId: cmd(),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      name: 'cc_new',
+      providerId: id('claude-code', 'AgentProviderId'),
+      open: 'background'
+    })
+    expect(created.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const instance = after.agents.find((a) => a.name === 'cc_new')!
+    const config = after.appliedConfigurations.find(
+      (c) =>
+        c.owner.kind === 'agent' &&
+        c.owner.agentInstanceId === instance.agentInstanceId
+    )
+    // Full agent field set at version 1, model inherited from defaults.
+    expect(config).toBeDefined()
+    expect(config!.appliedVersion).toBe(1)
+    expect(config!.values['identity.name']).toBe('cc_new')
+    expect(config!.values['model.id']).toBe('claude-sonnet-4')
+
+    // The new instance is immediately editable through Settings commands.
+    const staged = await stage(
+      adapter,
+      { kind: 'agent', agentInstanceId: instance.agentInstanceId },
+      'model.id',
+      'claude-opus-4'
+    )
+    expect(staged.ok).toBe(true)
+  })
+})
+
+describe('primary connection — atomic truth across transitions', () => {
+  it('connection deletion synchronises applied truth and drops its bindings', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-connection-deletion',
+      commandId: cmd(),
+      expectedRevision: snap.revision,
+      connectionId: CONN_PRIMARY
+    })
+    const snap2 = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmd(),
+      expectedRevision: snap2.revision,
+      confirmationId: snap2.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    // Applied truth follows the deletion: no stale connection id can be
+    // resurrected by a later configuration apply.
+    expect(
+      appliedOf(after, projectOwner).values['integrations.primaryConnectionId']
+    ).toBeNull()
+    expect(appliedOf(after, projectOwner).appliedVersion).toBe(3)
+    expect(after.projects[0].primaryConnectionId).toBeUndefined()
+    // Bindings of the deleted connection are invalid — they go with it.
+    expect(after.projects[0].resourceBindings).toEqual([])
+  })
+
+  it('applying a primary-connection change invalidates the old bindings', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    const result = await applyAll(adapter, [projectOwner])
+    expect(result.ok).toBe(true)
+
+    const snap = await adapter.getSnapshot()
+    expect(snap.projects[0].primaryConnectionId).toBeUndefined()
+    expect(snap.projects[0].resourceBindings).toEqual([])
+  })
+
+  it('stale-rejects a draft whose base version the deletion advanced', async () => {
+    const adapter = new MockScenarioAdapter()
+    // Draft based on applied v2…
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.primaryConnectionId',
+      CONN_PRODUCT
+    )
+    // …then the global deletion advances the applied truth to v3.
+    const snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-connection-deletion',
+      commandId: cmd(),
+      expectedRevision: snap.revision,
+      connectionId: CONN_PRIMARY
+    })
+    const snap2 = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmd(),
+      expectedRevision: snap2.revision,
+      confirmationId: snap2.pendingConfirmation!.confirmationId
+    })
+
+    // Even sending the draft's captured base, the apply must stale-reject —
+    // the v2 draft must never silently overwrite v3.
+    const result = await send(adapter, {
+      kind: 'apply-configuration',
+      owners: [{ owner: projectOwner, expectedAppliedVersion: 2 }]
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('stale-revision')
+
+    const after = await adapter.getSnapshot()
+    expect(
+      appliedOf(after, projectOwner).values['integrations.primaryConnectionId']
+    ).toBeNull()
+    expect(draftOf(after, projectOwner)).toBeDefined()
+  })
+})
+
+describe('apply-configuration — rejection purity', () => {
+  it('publishes validation failure via the rejection, never by mutating the snapshot', async () => {
+    const adapter = new MockScenarioAdapter()
+    // Stage a valid rebind…
+    await stage(
+      adapter,
+      projectOwner,
+      'integrations.primaryConnectionId',
+      CONN_PRODUCT
+    )
+    // …then delete the target connection: the staged value turns invalid
+    // AFTER it was recorded.
+    const snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-connection-deletion',
+      commandId: cmd(),
+      expectedRevision: snap.revision,
+      connectionId: CONN_PRODUCT
+    })
+    const snap2 = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmd(),
+      expectedRevision: snap2.revision,
+      confirmationId: snap2.pendingConfirmation!.confirmationId
+    })
+
+    const before = await adapter.getSnapshot()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((e) => events.push(e))
+    const result = await applyAll(adapter, [projectOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invariant-violation')
+      // The rejection itself carries the discovered error.
+      expect(result.message).toContain('连接不存在')
+    }
+
+    const after = await adapter.getSnapshot()
+    // Rejection purity: no revision bump, no silent draft mutation, no
+    // view-model update at a stale revision.
+    expect(after.revision).toBe(before.revision)
+    expect(draftOf(after, projectOwner)!.validationErrors).toEqual([])
+    expect(
+      events.every((e) => e.kind !== 'view-model-updated')
+    ).toBe(true)
+    // The draft itself survives for the user to fix.
+    expect(draftOf(after, projectOwner)!.changes).toHaveLength(1)
+  })
+})
+
+describe('apply-configuration — audit attribution', () => {
+  it('records the activity entry with its project attribution', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccSqlOwner, 'model.id', 'model-b')
+    await applyAll(adapter, [ccSqlOwner])
+
+    const snap = await adapter.getSnapshot()
+    const entry = snap.activity[0]
+    expect(entry.kind).toBe('configuration-applied')
+    expect(entry.projectId).toBe(PROJECT)
   })
 })

@@ -5,7 +5,13 @@ import type {
   ProjectViewModel,
   WorkbenchViewModel
 } from './workbench/contract'
-import { ownerKey } from './workbench/configuration'
+import {
+  CONFIGURATION_FIELDS,
+  fieldDescriptor,
+  ownerKey,
+  type ConfigurationFieldDescriptor,
+  type ConfigurationFieldTiming
+} from './workbench/configuration'
 import type { SendCommand } from './agents-surface'
 
 /**
@@ -14,111 +20,15 @@ import type { SendCommand } from './agents-surface'
  * Six stable sections plus the pending-changes summary. Editing only ever
  * stages drafts through the port; applied truth, active Runs and identity
  * change solely via an explicit atomic apply. The renderer owns no
- * configuration rules: field values, versions, drafts and validation
+ * configuration rules: the field catalogue is shared with the adapter
+ * (`CONFIGURATION_FIELDS`), and values, versions, drafts and validation
  * errors all come from the WorkbenchViewModel.
  */
 
-type FieldTiming = 'immediate' | 'next-run' | 'new-agent'
-
-interface FieldMeta {
-  label: string
-  kind: 'text' | 'number' | 'select'
-  timing: FieldTiming
-  options?: Array<{ value: string; label: string }>
-}
-
-const TIMING_LABEL: Record<FieldTiming, string> = {
+const TIMING_LABEL: Record<ConfigurationFieldTiming, string> = {
   immediate: '立即生效',
   'next-run': '下一 Run 生效',
   'new-agent': '新建 Agent 生效'
-}
-
-const PROJECT_FIELD_META: Record<string, FieldMeta> = {
-  'general.name': { label: '项目名称', kind: 'text', timing: 'immediate' },
-  'general.landingSurface': {
-    label: '默认落点工作面',
-    kind: 'select',
-    timing: 'immediate',
-    options: [
-      { value: 'overview', label: '概览' },
-      { value: 'agents', label: 'Agent' }
-    ]
-  },
-  'defaults.providerId': {
-    label: '默认 Provider',
-    kind: 'select',
-    timing: 'new-agent'
-  },
-  'defaults.model': { label: '默认模型', kind: 'text', timing: 'new-agent' },
-  'defaults.openMode': {
-    label: '新建 Agent 打开方式',
-    kind: 'select',
-    timing: 'new-agent',
-    options: [
-      { value: 'current-panel', label: '当前 Panel' },
-      { value: 'new-panel', label: '新 Panel' },
-      { value: 'background', label: '后台打开' }
-    ]
-  },
-  'defaults.worktreeMode': {
-    label: 'worktree 模式',
-    kind: 'select',
-    timing: 'new-agent',
-    options: [
-      { value: 'isolated', label: '独立 worktree' },
-      { value: 'read-only-shared', label: '共享只读' }
-    ]
-  },
-  'integrations.primaryConnectionId': {
-    label: '主连接',
-    kind: 'select',
-    timing: 'immediate'
-  },
-  'integrations.resourceScope': {
-    label: '资源范围',
-    kind: 'text',
-    timing: 'next-run'
-  },
-  'permissions.defaultPolicy': {
-    label: '默认权限策略',
-    kind: 'select',
-    timing: 'next-run',
-    options: [
-      { value: 'ask-each-time', label: '每次询问' },
-      { value: 'deny-by-default', label: '默认拒绝' }
-    ]
-  }
-}
-
-const AGENT_FIELD_META: Record<string, FieldMeta> = {
-  'identity.name': { label: 'Agent 名称', kind: 'text', timing: 'immediate' },
-  'model.id': { label: '模型', kind: 'text', timing: 'next-run' },
-  'proxy.http': { label: 'HTTP 代理', kind: 'text', timing: 'next-run' },
-  'env.custom': {
-    label: '自定义环境变量',
-    kind: 'text',
-    timing: 'next-run'
-  },
-  'concurrency.priority': {
-    label: '优先级',
-    kind: 'select',
-    timing: 'next-run',
-    options: [
-      { value: 'low', label: '低' },
-      { value: 'normal', label: '普通' },
-      { value: 'high', label: '高' }
-    ]
-  },
-  'budget.maxTokens': {
-    label: 'Token 预算上限',
-    kind: 'number',
-    timing: 'next-run'
-  }
-}
-
-const FIELD_META: Record<string, FieldMeta> = {
-  ...PROJECT_FIELD_META,
-  ...AGENT_FIELD_META
 }
 
 const SECTIONS = [
@@ -133,27 +43,24 @@ const SECTIONS = [
 type SectionKey = (typeof SECTIONS)[number]['key']
 
 const PROJECT_SECTION_FIELDS: Record<SectionKey, string[]> = {
-  general: ['general.name', 'general.landingSurface'],
-  defaults: [
-    'defaults.providerId',
-    'defaults.model',
-    'defaults.openMode',
-    'defaults.worktreeMode'
-  ],
+  general: fieldsOf('project', 'general'),
+  defaults: fieldsOf('project', 'defaults'),
   instances: [],
-  integrations: ['integrations.primaryConnectionId', 'integrations.resourceScope'],
-  permissions: ['permissions.defaultPolicy'],
+  integrations: fieldsOf('project', 'integrations'),
+  permissions: fieldsOf('project', 'permissions'),
   storage: []
 }
 
-const AGENT_SECTION_FIELDS = [
-  'identity.name',
-  'model.id',
-  'proxy.http',
-  'env.custom',
-  'concurrency.priority',
-  'budget.maxTokens'
-]
+const AGENT_SECTION_FIELDS = fieldsOf('agent', 'instances')
+
+function fieldsOf(
+  ownerKind: 'project' | 'agent',
+  section: string
+): string[] {
+  return CONFIGURATION_FIELDS.filter(
+    (f) => f.ownerKind === ownerKind && f.section === section
+  ).map((f) => f.fieldPath)
+}
 
 const ROOT_LABEL: Record<string, string> = {
   available: '可用',
@@ -218,12 +125,13 @@ export function SettingsSurface({
         )?.name ?? owner.agentInstanceId)
 
   const optionsFor = (fieldPath: string) => {
-    if (fieldPath === 'defaults.providerId') {
+    const descriptor = fieldDescriptor(fieldPath)
+    if (descriptor?.dynamicOptions === 'ready-providers') {
       return snapshot.global.providers
         .filter((p) => p.status === 'ready')
         .map((p) => ({ value: p.providerId as string, label: p.displayName }))
     }
-    if (fieldPath === 'integrations.primaryConnectionId') {
+    if (descriptor?.dynamicOptions === 'connections') {
       return [
         { value: '', label: '无连接' },
         ...snapshot.global.connections.map((c) => ({
@@ -232,7 +140,7 @@ export function SettingsSurface({
         }))
       ]
     }
-    return FIELD_META[fieldPath]?.options ?? []
+    return [...(descriptor?.options ?? [])]
   }
 
   const formatValue = (fieldPath: string, value: unknown): string => {
@@ -256,14 +164,24 @@ export function SettingsSurface({
     void sendCommand({ kind: 'stage-configuration', owner, fieldPath, value })
   }
 
+  // Drafts shown, applied or discarded here are scoped to THIS project —
+  // another project's drafts never leak into its Settings (US-67).
+  const isCurrentProjectOwner = (owner: ConfigurationOwner): boolean =>
+    owner.kind === 'project'
+      ? owner.projectId === project.projectId
+      : projectAgents.some((a) => a.agentInstanceId === owner.agentInstanceId)
+
   const draftsWithChanges = snapshot.configurationDrafts.filter(
-    (d) => d.changes.length > 0
+    (d) => d.changes.length > 0 && isCurrentProjectOwner(d.owner)
   )
 
   const confirmApply = async () => {
+    // The concurrency baseline is the version the DRAFT was captured at —
+    // never the latest applied value, which would let a stale draft
+    // overwrite a newer applied truth.
     const owners = draftsWithChanges.map((d) => ({
       owner: d.owner,
-      expectedAppliedVersion: appliedFor(d.owner)?.appliedVersion ?? 0
+      expectedAppliedVersion: d.appliedVersion
     }))
     const result = await sendCommand({ kind: 'apply-configuration', owners })
     // Close after every decision: a rejection refreshes the drafts with
@@ -290,7 +208,7 @@ export function SettingsSurface({
           <ConfigFieldRow
             key={fieldPath}
             fieldPath={fieldPath}
-            meta={FIELD_META[fieldPath]}
+            descriptor={fieldDescriptor(fieldPath)!}
             appliedValue={applied.values[fieldPath]}
             appliedVersion={applied.appliedVersion}
             draftChange={draft?.changes.find((c) => c.fieldPath === fieldPath)}
@@ -521,7 +439,9 @@ export function SettingsSurface({
                     className="text-neutral-300"
                   >
                     {ownerLabel(draft.owner)} ·{' '}
-                    {FIELD_META[change.fieldPath]?.label ?? change.fieldPath}：
+                    {fieldDescriptor(change.fieldPath)?.label ??
+                      change.fieldPath}
+                    ：
                     {formatValue(change.fieldPath, change.applied)} →{' '}
                     {formatValue(change.fieldPath, change.draft)}
                   </li>
@@ -555,7 +475,7 @@ export function SettingsSurface({
 
 function ConfigFieldRow({
   fieldPath,
-  meta,
+  descriptor,
   appliedValue,
   appliedVersion,
   draftChange,
@@ -565,7 +485,7 @@ function ConfigFieldRow({
   onStage
 }: {
   fieldPath: string
-  meta: FieldMeta
+  descriptor: ConfigurationFieldDescriptor
   appliedValue: unknown
   appliedVersion: number
   draftChange?: { fieldPath: string; applied: unknown; draft: unknown }
@@ -585,11 +505,11 @@ function ConfigFieldRow({
     <li className="space-y-1">
       <div className="flex items-center gap-3">
         <span className="w-32 shrink-0 text-xs text-neutral-400">
-          {meta.label}
+          {descriptor.label}
         </span>
-        {meta.kind === 'select' ? (
+        {descriptor.kind === 'select' ? (
           <select
-            aria-label={meta.label}
+            aria-label={descriptor.label}
             className="w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={shown}
             onChange={(e) =>
@@ -609,13 +529,13 @@ function ConfigFieldRow({
           </select>
         ) : (
           <input
-            aria-label={meta.label}
+            aria-label={descriptor.label}
             className="w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onBlur={() => {
               if (value === shown) return
-              onStage(meta.kind === 'number' ? Number(value) : value)
+              onStage(descriptor.kind === 'number' ? Number(value) : value)
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur()
@@ -623,7 +543,7 @@ function ConfigFieldRow({
           />
         )}
         <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
-          {TIMING_LABEL[meta.timing]}
+          {TIMING_LABEL[descriptor.timing]}
         </span>
       </div>
       <div className="flex items-center gap-3 pl-[8.75rem] text-xs">

@@ -396,6 +396,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )}
             {project.currentSurface === 'settings' && (
               <SettingsSurface
+                key={project.projectId}
                 project={project}
                 snapshot={snapshot}
                 sendCommand={sendCommand}
