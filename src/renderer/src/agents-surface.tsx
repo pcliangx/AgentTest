@@ -33,11 +33,14 @@ export type SendCommand = (
 export function AgentsSurface({
   project,
   snapshot,
-  sendCommand
+  sendCommand,
+  onDispatch
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   sendCommand: SendCommand
+  /** Open the shell-level unified Dispatch Picker. */
+  onDispatch?: () => void
 }) {
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
@@ -108,6 +111,7 @@ export function AgentsSurface({
         openAttentionTargets={openAttentionTargets}
         sendCommand={sendCommand}
         sendLayout={sendLayout}
+        onDispatch={onDispatch ?? (() => {})}
       />
       <WorkspaceArea
         project={project}
@@ -147,7 +151,8 @@ function AgentDirectory({
   snapshot,
   openAttentionTargets,
   sendCommand,
-  sendLayout
+  sendLayout,
+  onDispatch
 }: {
   project: ProjectViewModel
   agents: AgentInstanceViewModel[]
@@ -155,6 +160,7 @@ function AgentDirectory({
   openAttentionTargets: Set<string>
   sendCommand: SendCommand
   sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
+  onDispatch: () => void
 }) {
   const [query, setQuery] = useState('')
   const [providerFilter, setProviderFilter] = useState<'all' | string>('all')
@@ -250,12 +256,20 @@ function AgentDirectory({
           Agent 目录
           <span className="ml-1 text-xs text-neutral-500">{agents.length}</span>
         </h2>
-        <button
-          className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
-          onClick={() => setShowNewAgent(true)}
-        >
-          新建 Agent
-        </button>
+        <div className="flex gap-1">
+          <button
+            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+            onClick={onDispatch}
+          >
+            派发给 Agent
+          </button>
+          <button
+            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+            onClick={() => setShowNewAgent(true)}
+          >
+            新建 Agent
+          </button>
+        </div>
       </div>
 
       <div className="space-y-1.5 px-3 py-2">

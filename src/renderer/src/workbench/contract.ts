@@ -20,6 +20,7 @@ export type RunId = Brand<string, 'RunId'>
 export type DispatchId = Brand<string, 'DispatchId'>
 export type HandoffId = Brand<string, 'HandoffId'>
 export type ConnectionId = Brand<string, 'ConnectionId'>
+export type ResourceBindingId = Brand<string, 'ResourceBindingId'>
 export type PanelId = Brand<string, 'PanelId'>
 export type SplitNodeId = Brand<string, 'SplitNodeId'>
 export type AttentionItemId = Brand<string, 'AttentionItemId'>
@@ -105,6 +106,14 @@ export interface WorkspaceLayoutViewModel {
   temporaryFocusPanelId?: PanelId
 }
 
+export interface ResourceBindingViewModel {
+  bindingId: ResourceBindingId
+  connectionId: ConnectionId
+  resourceType: 'task-list' | 'knowledge-space' | 'document' | 'other'
+  label: string
+  allowedOperations: Array<'read' | 'create' | 'update'>
+}
+
 export interface ProjectViewModel {
   projectId: ProjectId
   name: string
@@ -116,6 +125,8 @@ export interface ProjectViewModel {
   queuedRunCount: number
   attentionCount: number
   primaryConnectionId?: ConnectionId
+  /** Authoritative resource bindings scoped to the primary connection (#6). */
+  resourceBindings: ResourceBindingViewModel[]
   currentSurface: ProjectSurface
   layout: WorkspaceLayoutViewModel
 }

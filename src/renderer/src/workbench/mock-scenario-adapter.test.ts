@@ -193,6 +193,66 @@ describe('MockScenarioAdapter — subscribe', () => {
     await adapter.dispatch(navigate(cmdId(1), snap.revision, 'agents'))
     expect(received).toHaveLength(0)
   })
+
+  it('keeps dispatch-created correlated when a listener dispatches reentrantly', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snapshot = await adapter.getSnapshot()
+    const project = snapshot.projects[0]
+    const target = snapshot.agents.find((agent) => agent.name === 'cx_review')!
+    const outerCommandId = id('cmd-reentrant-dispatch', 'CommandId')
+    const innerCommandId = id('cmd-reentrant-navigate', 'CommandId')
+    const received: WorkbenchEvent[] = []
+    let innerResult: ReturnType<MockScenarioAdapter['dispatch']> | undefined
+
+    adapter.subscribe((event) => {
+      received.push(event)
+      if (
+        event.kind === 'view-model-updated' &&
+        event.correlationId === outerCommandId
+      ) {
+        innerResult = adapter.dispatch(
+          navigate(innerCommandId, event.revision, 'agents')
+        )
+      }
+    })
+
+    const outerResult = await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: outerCommandId,
+      expectedRevision: snapshot.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'preserve correlation'
+    })
+    await innerResult
+
+    expect(outerResult.ok).toBe(true)
+    const created = received.find(
+      (event): event is Extract<WorkbenchEvent, { kind: 'dispatch-created' }> =>
+        event.kind === 'dispatch-created' &&
+        event.correlationId === outerCommandId
+    )
+    expect(created).toBeDefined()
+    if (outerResult.ok) {
+      expect(created?.revision).toBe(outerResult.acceptedRevision)
+    }
+    expect(created?.dispatchIds).toHaveLength(1)
+    const revisions = received.map((event) => event.revision)
+    expect(revisions).toEqual([...revisions].sort((a, b) => a - b))
+    expect(
+      received.findIndex(
+        (event) =>
+          event.kind === 'dispatch-created' &&
+          event.correlationId === outerCommandId
+      )
+    ).toBeLessThan(
+      received.findIndex(
+        (event) =>
+          event.kind === 'view-model-updated' &&
+          event.correlationId === innerCommandId
+      )
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -200,16 +260,19 @@ describe('MockScenarioAdapter — subscribe', () => {
 // ---------------------------------------------------------------------------
 
 describe('MockScenarioAdapter — unimplemented commands', () => {
-  it('rejects non-navigate commands with scenario-read-only', async () => {
+  it('rejects not-yet-implemented commands with scenario-read-only', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
+    const agent = snap.agents[0]
+    // manage-queue is still out of scope in Phase 1 #6; it must remain a
+    // scenario-read-only rejection rather than silently no-op'ing.
     const result = await adapter.dispatch({
-      kind: 'confirm-dispatch',
+      kind: 'manage-queue',
       commandId: cmdId(1),
       expectedRevision: snap.revision,
-      projectId: snap.projects[0].projectId,
-      targets: [snap.agents[0].agentInstanceId],
-      instruction: 'test'
+      projectId: agent.projectId,
+      queueItemId: id('queue-x', 'QueueItemId'),
+      operation: 'cancel'
     })
     expect(result.ok).toBe(false)
     if (!result.ok) {

@@ -206,6 +206,9 @@ preload 只通过 `contextBridge` 暴露上述受控 API；完整仓库路径不
 - vendor 差异只能进入 adapter/decoder/protocol driver，不能进入 router。
 - 结构化事件必须来源于协议；推断事件不得驱动成功生命周期。
 - SessionStore 只记录成功回合，历史最多 20 轮，每条消息最多 12,000 字符。
+- v0.2 Agent Picker 的显式路由使用无歧义边界：`@@name` 只匹配到下一个空白字符，
+  含空格或与 `all` 冲突的名称使用 `@@{完整 Agent Name}`；裸 `@@all` 始终广播当前
+  Project 的明确实例列表并需要二次确认。
 - 合并主仓库前 UI 二次确认，主仓库必须干净，只允许 `--ff-only`。
 - 不要删除结构化 adapter、旧 transcript mapper 或 PTY；它们现在各有清晰职责。
 

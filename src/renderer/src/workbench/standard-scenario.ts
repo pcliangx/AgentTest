@@ -72,6 +72,22 @@ export function createStandardScenario(): WorkbenchViewModel {
         queuedRunCount: 1,
         attentionCount: 2,
         primaryConnectionId: connId,
+        resourceBindings: [
+          {
+            bindingId: id('binding-sales-tasks', 'ResourceBindingId'),
+            connectionId: connId,
+            resourceType: 'task-list',
+            label: '销售团队任务清单',
+            allowedOperations: ['read', 'create', 'update']
+          },
+          {
+            bindingId: id('binding-sales-wiki', 'ResourceBindingId'),
+            connectionId: connId,
+            resourceType: 'knowledge-space',
+            label: '销售知识库',
+            allowedOperations: ['read', 'update']
+          }
+        ],
         currentSurface: 'overview',
         layout: {
           root: { kind: 'panel', panelId },
@@ -94,6 +110,9 @@ export function createStandardScenario(): WorkbenchViewModel {
         activeRunCount: 0,
         queuedRunCount: 0,
         attentionCount: 0,
+        // No primary connection and no resource bindings — exercises the
+        // "unbound" preview path (#6).
+        resourceBindings: [],
         currentSurface: 'overview',
         layout: {
           root: { kind: 'panel', panelId: panelId2 },
@@ -224,7 +243,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         agentInstanceId: ccSql,
         timestamp: now - 300_000,
         kind: 'run-completed',
-        summary: 'cc_sql 完成了 SQL schema 更新'
+        summary: 'cc_sql 完成了 SQL schema 更新，已通知 @@cc_etl 同步'
       },
       {
         activityId: id('act-003', 'ActivityId'),

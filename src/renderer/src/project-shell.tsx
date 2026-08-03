@@ -16,6 +16,7 @@ import type {
 } from './workbench/contract'
 import { id } from './workbench/contract'
 import { AgentsSurface } from './agents-surface'
+import { DispatchPicker } from './dispatch-picker'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -179,6 +180,8 @@ const ACTIVITY_KIND_LABEL: Record<string, string> = {
   'run-completed': '运行完成',
   'configuration-applied': '配置已应用',
   'permission-decided': '权限已决定',
+  'instruction-sent': '指令已发送',
+  'dispatch-created': '派发已创建',
   'dangerous-action-confirmed': '高风险操作已确认'
 }
 
@@ -205,6 +208,9 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     dismissConfirmation,
     confirmationError
   } = useWorkbench(port)
+  // The unified Dispatch Picker lives at shell level so all Project surfaces
+  // open the same dispatcher instead of owning divergent implementations.
+  const [showPicker, setShowPicker] = useState(false)
 
   if (!snapshot) {
     return (
@@ -236,7 +242,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm">
+      <header
+        inert={showPicker ? true : undefined}
+        className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm"
+      >
         <div className="flex items-center gap-3">
           <span className="font-medium">Agent Squad HQ</span>
           <div className="flex items-center gap-1">
@@ -270,15 +279,28 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </button>
           )}
         </div>
-        {!inGlobalView && connection && (
-          <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-            {connection.label}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {project && (
+            <button
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+              onClick={() => setShowPicker(true)}
+            >
+              派发给 Agent
+            </button>
+          )}
+          {!inGlobalView && connection && (
+            <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
+              {connection.label}
+            </span>
+          )}
+        </div>
       </header>
 
       {inGlobalView ? (
-        <main className="min-h-0 flex-1 overflow-auto p-4">
+        <main
+          inert={showPicker ? true : undefined}
+          className="min-h-0 flex-1 overflow-auto p-4"
+        >
           {snapshot.activeGlobalSurface === 'connections' && (
             <ConnectionsSurface
               connections={snapshot.global.connections}
@@ -300,7 +322,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           )}
         </main>
       ) : project ? (
-        <div className="flex min-h-0 flex-1">
+        <div
+          inert={showPicker ? true : undefined}
+          className="flex min-h-0 flex-1"
+        >
           <nav
             className="w-48 shrink-0 border-r border-neutral-800 p-2"
             aria-label="主导航"
@@ -353,6 +378,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 agentCount={projectAgents.length}
                 connectionLabel={connection?.label}
                 activity={projectActivity.slice(0, 5)}
+                onDispatch={() => setShowPicker(true)}
               />
             )}
             {project.currentSurface === 'activity' && (
@@ -364,6 +390,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 project={project}
                 snapshot={snapshot}
                 sendCommand={sendCommand}
+                onDispatch={() => setShowPicker(true)}
               />
             )}
             {project.currentSurface !== 'overview' &&
@@ -374,9 +401,21 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           </main>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 text-neutral-500">
+        <div
+          inert={showPicker ? true : undefined}
+          className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 text-neutral-500"
+        >
           没有可用的 Project
         </div>
+      )}
+
+      {showPicker && project && (
+        <DispatchPicker
+          project={project}
+          snapshot={snapshot}
+          sendCommand={sendCommand}
+          onClose={() => setShowPicker(false)}
+        />
       )}
 
       {snapshot.pendingConfirmation && (
@@ -408,12 +447,14 @@ function OverviewSurface({
   project,
   agentCount,
   connectionLabel,
-  activity
+  activity,
+  onDispatch
 }: {
   project: ProjectViewModel
   agentCount: number
   connectionLabel?: string
   activity: ActivityEntry[]
+  onDispatch: () => void
 }) {
   return (
     <section role="region" aria-label="项目概览" className="space-y-4">
@@ -446,6 +487,15 @@ function OverviewSurface({
         <StatCard value={project.activeRunCount} label="活动运行" />
         <StatCard value={project.queuedRunCount} label="排队" />
         <StatCard value={project.attentionCount} label="关注" />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          className="rounded bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700"
+          onClick={onDispatch}
+        >
+          派发给 Agent
+        </button>
       </div>
 
       <div>
@@ -497,17 +547,11 @@ function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
 }
 
 function PlaceholderSurface({ surface }: { surface: ProjectSurface }) {
-  const labels: Partial<Record<ProjectSurface, string>> = {
-    agents: 'Agent',
-    tasks: '任务',
-    knowledge: '知识',
-    handoffs: '交接',
-    settings: '设置'
-  }
+  const label = SURFACES.find((s) => s.surface === surface)?.label ?? surface
   return (
     <div className="flex h-full items-center justify-center">
       <p className="text-sm text-neutral-500">
-        {labels[surface]} 工作面尚未实现
+        {label} 工作面尚未实现
       </p>
     </div>
   )

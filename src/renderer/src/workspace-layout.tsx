@@ -8,7 +8,6 @@ import {
 import type {
   AgentInstanceId,
   AgentInstanceViewModel,
-  AgentRuntimeState,
   CommandResult,
   LayoutNode,
   LayoutOperation,
@@ -26,6 +25,11 @@ import {
   TERMINAL_STATE_LABEL
 } from './agent-display'
 import type { SendCommand } from './agents-surface'
+import {
+  getProjectDispatchBlockReason,
+  isAgentBusy,
+  isTerminalExecutionSlotOccupied
+} from './workbench/dispatchability'
 
 /**
  * Workspace — the free split tree of Agent Panels (#4), plus temporary
@@ -976,6 +980,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       {activeAgent ? (
         <AgentView
           key={activeAgent.agentInstanceId}
+          project={project}
           agent={activeAgent}
           snapshot={snapshot}
           sendCommand={ctx.sendCommand}
@@ -1117,10 +1122,12 @@ const SUB_VIEWS: Array<{ view: AgentSubView; label: string }> = [
 ]
 
 function AgentView({
+  project,
   agent,
   snapshot,
   sendCommand
 }: {
+  project: ProjectViewModel
   agent: AgentInstanceViewModel
   snapshot: WorkbenchViewModel
   sendCommand: SendCommand
@@ -1162,7 +1169,13 @@ function AgentView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto text-sm text-neutral-400">
-        {subView === 'chat' && <ChatState agent={agent} />}
+        {subView === 'chat' && (
+          <ChatState
+            project={project}
+            agent={agent}
+            sendCommand={sendCommand}
+          />
+        )}
         {subView === 'activity' &&
           (agentActivity.length === 0 ? (
             <p className="text-neutral-500">暂无活动记录</p>
@@ -1196,33 +1209,142 @@ function AgentView({
 // Chat sub-view — state text driven only by port-judged facts (#20)
 // ---------------------------------------------------------------------------
 
-const ACTIVE_RUN_STATES: ReadonlySet<AgentRuntimeState> = new Set([
-  'starting',
-  'running',
-  'finishing',
-  'needs-input',
-  'permission-requested'
-])
+function ChatState({
+  project,
+  agent,
+  sendCommand
+}: {
+  project: ProjectViewModel
+  agent: AgentInstanceViewModel
+  sendCommand: SendCommand
+}) {
+  const [draft, setDraft] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const submittingRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
 
-function ChatState({ agent }: { agent: AgentInstanceViewModel }) {
-  if (agent.runtimeState === 'unavailable') {
-    return (
-      <p className="text-neutral-500">
-        Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
-      </p>
-    )
+  const lifecycleBlocked =
+    agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
+  const projectBlockReason = getProjectDispatchBlockReason(project)
+  const projectBlocked = projectBlockReason !== undefined
+  // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
+  // Terminal is opening or active the composer is disabled and shows why.
+  const terminalBlocked = isTerminalExecutionSlotOccupied(agent.terminalState)
+  const disabled =
+    projectBlocked || lifecycleBlocked || terminalBlocked || submitting
+  const awaitingInput = agent.runtimeState === 'needs-input'
+  const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
+
+  const submit = async () => {
+    const instruction = draft.trim()
+    if (!instruction || disabled || submittingRef.current) return
+    submittingRef.current = true
+    setSubmitting(true)
+    setNotice(null)
+    try {
+      const result = await sendCommand({
+        kind: 'send-agent-instruction',
+        projectId: project.projectId,
+        agentInstanceId: agent.agentInstanceId,
+        instruction,
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // Any other active state enqueues as the next Run instead of being
+        // mistaken for a reply to the current Run.
+        mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
+      })
+      if (result.ok) {
+        setDraft('')
+      } else {
+        setNotice(result.message)
+      }
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
+    }
   }
-  if (ACTIVE_RUN_STATES.has(agent.runtimeState) || agent.activeRunId) {
-    return (
-      <p className="text-neutral-500">
-        当前有进行中的 Run；结构化对话内容将在真实执行通道接入后展示。
-      </p>
-    )
-  }
+
   return (
-    <p className="text-neutral-500">
-      暂无对话记录；发送首条消息后才会启动 Run。
-    </p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        role="log"
+        aria-label="对话记录"
+        className="min-h-0 flex-1 overflow-auto"
+      >
+        {projectBlockReason === 'project-archived' ? (
+          <p className="text-neutral-500">
+            Project 已归档；仅可查看历史记录，不能发送新指令。
+          </p>
+        ) : projectBlockReason === 'project-root-unavailable' ? (
+          <p className="text-neutral-500">
+            Project Root 不可用；仅可查看历史记录，请先恢复或重新定位 Root。
+          </p>
+        ) : projectBlockReason === 'project-repository-not-ready' ? (
+          <p className="text-neutral-500">
+            Project 尚未初始化或绑定 Git 仓库；仅可查看历史记录，请先完成 Git
+            初始化或绑定。
+          </p>
+        ) : agent.runtimeState === 'unavailable' ? (
+          <p className="text-neutral-500">
+            Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
+          </p>
+        ) : agent.runtimeState === 'archived' ? (
+          <p className="text-neutral-500">
+            Agent 已归档；仅可查看历史记录，不能发送新指令。
+          </p>
+        ) : terminalBlocked ? (
+          <p className="text-neutral-500">
+            {agent.terminalState === 'opening'
+              ? 'Terminal 正在打开或接管中；结构化 Run 与 PTY 互斥，请等待打开完成并结束接管。'
+              : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
+          </p>
+        ) : awaitingInput ? (
+          <p className="text-neutral-500">
+            当前 Run 正在等待输入，可直接回复。
+          </p>
+        ) : hasQueuedWork && agent.queueDepth > 0 ? (
+          <p className="text-neutral-500">
+            当前已有 {agent.queueDepth} 项排队；新指令将进入第{' '}
+            {agent.queueDepth + 1} 位。
+          </p>
+        ) : hasQueuedWork ? (
+          <p className="text-neutral-500">
+            当前 Agent 已在排队；新指令将继续加入下一 Run 队列。
+          </p>
+        ) : isAgentBusy(agent) ? (
+          <p className="text-neutral-500">
+            当前有进行中的 Run；新指令将进入下一 Run 队列。
+          </p>
+        ) : (
+          <p className="text-neutral-500">
+            暂无对话记录；发送首条消息后才会启动 Run。
+          </p>
+        )}
+      </div>
+
+      {notice && (
+        <p role="alert" className="mt-2 text-xs text-red-400">
+          {notice}
+        </p>
+      )}
+
+      <div className="mt-2 flex gap-2 border-t border-neutral-800 pt-2">
+        <textarea
+          aria-label="发送给当前 Agent"
+          placeholder="发送给当前 Agent…"
+          className="min-h-[2.5rem] flex-1 resize-none rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
+          value={draft}
+          disabled={disabled}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button
+          className="shrink-0 rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
+          disabled={disabled || draft.trim().length === 0}
+          onClick={() => void submit()}
+        >
+          发送给当前 Agent
+        </button>
+      </div>
+    </div>
   )
 }
 

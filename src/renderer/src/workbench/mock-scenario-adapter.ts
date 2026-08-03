@@ -1,5 +1,6 @@
 import type {
   AgentInstanceId,
+  Brand,
   CommandId,
   CommandRejectionReason,
   CommandResult,
@@ -16,6 +17,33 @@ import {
   type LayoutIdGenerator
 } from './layout-reducer'
 import { createStandardScenario } from './standard-scenario'
+import { validateAgentName } from './agent-name'
+import type { ProjectDispatchBlockReason } from './dispatchability'
+import {
+  getDispatchBlockReason,
+  getProjectDispatchBlockReason,
+  isAgentBusy,
+  isTerminalExecutionSlotOccupied
+} from './dispatchability'
+
+function projectExecutionUnavailableMessage(
+  reason: ProjectDispatchBlockReason,
+  action: '发送新指令' | '创建新派发'
+): string {
+  switch (reason) {
+    case 'project-archived':
+      return `Project 已归档，不能${action}`
+    case 'project-root-unavailable':
+      return `Project Root 不可用，不能${action}`
+    case 'project-repository-not-ready':
+      return `Project 尚未初始化或绑定 Git 仓库，不能${action}`
+  }
+}
+
+type PostDispatchEvent = Omit<
+  Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
+  'revision'
+>
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -28,6 +56,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
   private snapshot: WorkbenchViewModel
   private listeners = new Set<(event: WorkbenchEvent) => void>()
   private resultsByCommandId = new Map<CommandId, CommandResult>()
+  private eventQueue: WorkbenchEvent[] = []
+  private emittingEvents = false
   private createdAgentCount = 0
   private createdPanelCount = 0
   private createdSplitCount = 0
@@ -48,8 +78,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     | { type: 'discard-changes'; agentInstanceId: AgentInstanceId }
     | null = null
 
-  constructor() {
-    this.snapshot = createStandardScenario()
+  constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
+    this.snapshot = structuredClone(snapshot)
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
@@ -67,23 +97,36 @@ export class MockScenarioAdapter implements WorkbenchPort {
     }
 
     // 3. Command-specific handling — returns a rejection or null (success).
-    const rejection = this.tryApply(command)
+    //    Follow-up events belong to this dispatch invocation. Keeping them
+    //    local prevents a reentrant subscriber command from replacing them.
+    const postEvents: PostDispatchEvent[] = []
+    const rejection = this.tryApply(command, postEvents)
     if (rejection) return rejection
 
-    // 4. Success — bump revision, emit, cache.
-    this.snapshot.revision++
+    // 4. Success — bump revision, cache and emit the complete event batch.
+    const acceptedRevision = ++this.snapshot.revision
     const result: CommandResult = {
       ok: true,
       commandId: command.commandId,
-      acceptedRevision: this.snapshot.revision
+      acceptedRevision
     }
     this.resultsByCommandId.set(command.commandId, result)
-    this.emit({
-      kind: 'view-model-updated',
-      revision: this.snapshot.revision,
-      correlationId: command.commandId,
-      snapshot: structuredClone(this.snapshot)
-    })
+    const events: WorkbenchEvent[] = [
+      {
+        kind: 'view-model-updated',
+        revision: acceptedRevision,
+        correlationId: command.commandId,
+        snapshot: structuredClone(this.snapshot)
+      },
+      ...postEvents.map((partial) => ({
+        ...partial,
+        revision: acceptedRevision
+      }))
+    ]
+    // Queue the whole batch before notifying subscribers. A subscriber may
+    // dispatch reentrantly; its newer-revision events must follow every event
+    // belonging to this accepted revision.
+    this.emit(...events)
     return result
   }
 
@@ -101,7 +144,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
    * Returns a rejection result for invalid targets or unimplemented commands,
    * or null to signal success (caller bumps revision and emits).
    */
-  private tryApply(command: WorkbenchCommand): CommandResult | null {
+  private tryApply(
+    command: WorkbenchCommand,
+    postEvents: PostDispatchEvent[]
+  ): CommandResult | null {
     switch (command.kind) {
       case 'navigate': {
         const project = this.snapshot.projects.find(
@@ -139,10 +185,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
             'Provider Doctor 未通过，不能创建实例'
           )
         }
-        const name = command.name.trim()
-        if (!name) {
-          return this.reject(command, 'invalid-target', 'Agent 名称不能为空')
+        const nameCheck = validateAgentName(command.name)
+        if (!nameCheck.ok) {
+          return this.reject(command, 'invalid-target', nameCheck.reason!)
         }
+        const name = command.name.trim()
         const nameTaken = this.snapshot.agents.some(
           (a) =>
             a.projectId === project.projectId &&
@@ -324,12 +371,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
               }
             }
           } else {
-            // merge-changes or discard-changes: clear changes for the agent
-            const agentId =
-              this.pendingAction.type === 'merge-changes'
-                ? this.pendingAction.agentInstanceId
-                : (this.pendingAction as { agentInstanceId: AgentInstanceId })
-                    .agentInstanceId
+            // merge-changes or discard-changes: both carry agentInstanceId
+            const agentId = this.pendingAction.agentInstanceId
             this.snapshot.changes = this.snapshot.changes.filter(
               (c) => c.agentInstanceId !== agentId
             )
@@ -381,9 +424,247 @@ export class MockScenarioAdapter implements WorkbenchPort {
         project.layout = result.layout
         return null
       }
+      case 'send-agent-instruction': {
+        const project = this.snapshot.projects.find(
+          (candidate) => candidate.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        const projectBlockReason = getProjectDispatchBlockReason(project)
+        if (projectBlockReason) {
+          return this.reject(
+            command,
+            'unavailable',
+            projectExecutionUnavailableMessage(
+              projectBlockReason,
+              '发送新指令'
+            )
+          )
+        }
+        // Composer addresses exactly one instance — no multi-target fan-out.
+        const agent = this.snapshot.agents.find(
+          (a) =>
+            a.agentInstanceId === command.agentInstanceId &&
+            a.projectId === command.projectId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        if (
+          agent.runtimeState === 'unavailable' ||
+          agent.runtimeState === 'archived'
+        ) {
+          return this.reject(
+            command,
+            'unavailable',
+            'Agent 当前不可用，无法接收指令'
+          )
+        }
+        // ADR-0007: structured Run and Terminal PTY are mutually exclusive per
+        // instance. While Terminal takeover is active the adapter must refuse
+        // a structured instruction even if the renderer mistakenly sends one.
+        if (isTerminalExecutionSlotOccupied(agent.terminalState)) {
+          return this.reject(
+            command,
+            'busy',
+            'Terminal 正在打开或接管期间，不能发送结构化指令'
+          )
+        }
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // Any other active state must enqueue as the next Run instead of being
+        // mistaken for a reply to the current Run.
+        const canReply =
+          agent.runtimeState === 'needs-input' &&
+          command.mode === 'reply-current-run'
+        if (command.mode === 'reply-current-run' && !canReply) {
+          return this.reject(
+            command,
+            'busy',
+            '当前没有待输入的 Run，不能回复；将作为下一 Run 入队'
+          )
+        }
+        if (
+          command.instruction === undefined ||
+          command.instruction.trim().length === 0
+        ) {
+          return this.reject(command, 'invalid-target', '指令不能为空')
+        }
+        // Phase 1 has no real runtime: recording the instruction is the only
+        // side effect. No Run is created — we record an instruction-sent fact,
+        // never a fake `run-started` (#6 P1-3).
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: agent.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            timestamp: Date.now(),
+            kind: 'instruction-sent',
+            summary: `${agent.name} 收到指令：${command.instruction}`
+          },
+          ...this.snapshot.activity
+        ]
+        agent.lastActivityAt = Date.now()
+        // start-or-queue to a busy agent must enter the same observable queue
+        // as a dispatch — otherwise the composer would silently drop work
+        // (#6 P1-2).
+        if (command.mode === 'start-or-queue' && isAgentBusy(agent)) {
+          this.enqueue(agent)
+        }
+        return null
+      }
+      case 'confirm-dispatch': {
+        const project = this.snapshot.projects.find(
+          (p) => p.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        const projectBlockReason = getProjectDispatchBlockReason(project)
+        if (projectBlockReason) {
+          return this.reject(
+            command,
+            'unavailable',
+            projectExecutionUnavailableMessage(
+              projectBlockReason,
+              '创建新派发'
+            )
+          )
+        }
+        // Instruction must be non-empty (#6 P2-5).
+        if (
+          command.instruction === undefined ||
+          command.instruction.trim().length === 0
+        ) {
+          return this.reject(command, 'invalid-target', '指令不能为空')
+        }
+        // Targets must be non-empty and unique (#6 P2-5). Duplicates would
+        // otherwise create multiple DispatchIds for the same instance.
+        if (command.targets.length === 0) {
+          return this.reject(command, 'invalid-target', '目标不能为空')
+        }
+        const dedup = new Set(command.targets as string[])
+        if (dedup.size !== command.targets.length) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '目标不能包含重复 Agent'
+          )
+        }
+        // Atomic target validation: every requested target must exist, belong
+        // to this project AND be dispatchable. A mixed valid/invalid set is
+        // rejected as a whole — we never partially dispatch (#6 P2-5).
+        const projectAgents = this.snapshot.agents.filter(
+          (a) => a.projectId === project.projectId
+        )
+        const byId = new Map(
+          projectAgents.map((a) => [a.agentInstanceId, a] as const)
+        )
+        let missing = false
+        let nonDispatchable = false
+        for (const tid of command.targets) {
+          const a = byId.get(tid)
+          if (!a) {
+            missing = true
+          } else if (getDispatchBlockReason(a)) nonDispatchable = true
+        }
+        if (missing) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '部分目标 Agent 不存在，已拒绝整单派发'
+          )
+        }
+        if (nonDispatchable) {
+          return this.reject(
+            command,
+            'unavailable',
+            '部分目标 Agent 不可派发，已拒绝整单派发'
+          )
+        }
+        const targets = command.targets.map((tid) => byId.get(tid)!)
+        // One stable, collision-free DispatchId per target — UUID, not
+        // Date.now()+index, so two commands in the same millisecond cannot
+        // share an id (#6 P1-2).
+        const dispatchIds = targets.map(() => this.freshId('DispatchId'))
+        const now = Date.now()
+        const newActivity = targets.map((a) => ({
+          activityId: this.freshId('ActivityId'),
+          projectId: project.projectId,
+          agentInstanceId: a.agentInstanceId,
+          timestamp: now,
+          // Record the dispatch fact only — never a fake `run-started`, since
+          // no Run is actually created in Phase 1 (#6 P1-3).
+          kind: 'dispatch-created',
+          summary: `${a.name} 收到派发：${command.instruction}`
+        }))
+        this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
+        for (const a of targets) {
+          a.lastActivityAt = now
+          // Authoritative queue projection (#6 P1-2): a dispatch to a busy
+          // agent (including one holding a Terminal takeover) enqueues through
+          // one shared transition that keeps the
+          // per-instance depth, the QueueItem list and the Project/global
+          // summaries consistent. Idle agents start immediately (no queue).
+          if (isAgentBusy(a)) this.enqueue(a)
+        }
+        // Queue a dispatch-created event to be emitted at the authoritative
+        // revision after the success bump. Duplicate dispatch of the same
+        // CommandId never reaches here (cached result short-circuits).
+        postEvents.push({
+          kind: 'dispatch-created',
+          correlationId: command.commandId,
+          dispatchIds
+        })
+        return null
+      }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
+  }
+
+  /**
+   * Mints a collision-free branded ID. UUID-based so two commands issued in the
+   * same millisecond (or even the same tick) can never share an id. Available
+   * in renderer (Web Crypto) and Node ≥ 20 (`globalThis.crypto`).
+   */
+  private freshId<Name extends string>(name: Name): Brand<string, Name> {
+    const uuid =
+      typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return id(uuid, name)
+  }
+
+  /**
+   * Single atomic enqueue transition used by both dispatch and composer
+   * (#6 P1-2). Updates the per-instance queueDepth, appends a visible
+   * QueueItem, and keeps the Project / global queue summaries consistent so
+   * Overview, Picker and any queue view observe the same facts.
+   */
+  private enqueue(
+    agent: WorkbenchViewModel['agents'][number],
+    priority: 'low' | 'normal' | 'high' = 'normal'
+  ): void {
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === agent.projectId
+    )
+    if (!project) return
+    agent.queueDepth += 1
+    // Position within this agent's own queue = its new depth.
+    const position = agent.queueDepth
+    const queueItemId = this.freshId('QueueItemId')
+    this.snapshot.queue.push({
+      queueItemId,
+      projectId: agent.projectId,
+      agentInstanceId: agent.agentInstanceId,
+      position,
+      priority
+    })
+    project.queuedRunCount = this.snapshot.queue.filter(
+      (q) => q.projectId === project.projectId
+    ).length
+    this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
   }
 
   private reject(
@@ -407,9 +688,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
     return result
   }
 
-  private emit(event: WorkbenchEvent): void {
-    for (const listener of this.listeners) {
-      listener(event)
+  private emit(...events: WorkbenchEvent[]): void {
+    this.eventQueue.push(...events)
+    if (this.emittingEvents) return
+
+    this.emittingEvents = true
+    try {
+      while (this.eventQueue.length > 0) {
+        const event = this.eventQueue.shift()!
+        for (const listener of [...this.listeners]) {
+          listener(event)
+        }
+      }
+    } finally {
+      this.emittingEvents = false
     }
   }
 }
