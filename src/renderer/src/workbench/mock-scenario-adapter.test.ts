@@ -1488,16 +1488,177 @@ describe('MockScenarioAdapter — manage-queue', () => {
     }
   }
 
-  it('cancel removes the queue item without creating a Run', async () => {
+  it('cancel removes one item, renumbers the queue and records its stable target', async () => {
     const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const item = snap.queue[0]
+    const before = await adapter.getSnapshot()
+    const item = before.queue[0]
+    const agent = before.agents.find(
+      (candidate) => candidate.agentInstanceId === item.agentInstanceId
+    )!
     const result = await adapter.dispatch(
-      manageQueue(cmdId(1), snap.revision, item.queueItemId, 'cancel')
+      manageQueue(cmdId(1), before.revision, item.queueItemId, 'cancel')
     )
+
     expect(result.ok).toBe(true)
     const after = await adapter.getSnapshot()
-    expect(after.queue.find((q) => q.queueItemId === item.queueItemId)).toBeUndefined()
+    expect(
+      after.queue.find((q) => q.queueItemId === item.queueItemId)
+    ).toBeUndefined()
+    expect(
+      after.queue
+        .filter((queueItem) => queueItem.projectId === item.projectId)
+        .map((queueItem) => queueItem.position)
+    ).toEqual([1])
+
+    const cancellation = after.activity[0]
+    expect(cancellation).toMatchObject({
+      projectId: item.projectId,
+      agentInstanceId: item.agentInstanceId,
+      kind: 'queue-cancelled',
+      reason: 'user-cancelled',
+      summary: `${agent.name} 的排队项已由用户取消`
+    })
+    expect(cancellation).toHaveProperty('queueItemId', item.queueItemId)
+    expect(cancellation.timestamp).toEqual(expect.any(Number))
+    expect(after.activity.slice(1)).toEqual(before.activity)
+  })
+
+  it('keeps a multi-item agent queued and derives its remaining depth', async () => {
+    const scenario = createStandardScenario()
+    const item = scenario.queue[0]
+    const agent = scenario.agents.find(
+      (candidate) => candidate.agentInstanceId === item.agentInstanceId
+    )!
+    agent.queueDepth = 99
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    await adapter.dispatch(
+      manageQueue(cmdId(2), before.revision, item.queueItemId, 'cancel')
+    )
+
+    const after = await adapter.getSnapshot()
+    const updatedAgent = after.agents.find(
+      (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+    )!
+    expect(updatedAgent.queueDepth).toBe(1)
+    expect(updatedAgent.runtimeState).toBe('queued')
+    expect(
+      after.projects.find((project) => project.projectId === item.projectId)
+        ?.queuedRunCount
+    ).toBe(1)
+    expect(after.global.concurrency.queuedGlobal).toBe(1)
+  })
+
+  it('cancels the last item and restores an idle execution slot to ready', async () => {
+    const scenario = createStandardScenario()
+    const item = scenario.queue[0]
+    scenario.queue = [item]
+    const agent = scenario.agents.find(
+      (candidate) => candidate.agentInstanceId === item.agentInstanceId
+    )!
+    agent.queueDepth = 1
+    agent.runtimeState = 'queued'
+    agent.terminalState = 'closed'
+    agent.activeRunId = undefined
+    scenario.projects.find(
+      (project) => project.projectId === item.projectId
+    )!.queuedRunCount = 1
+    scenario.global.concurrency.queuedGlobal = 1
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    await adapter.dispatch(
+      manageQueue(cmdId(3), before.revision, item.queueItemId, 'cancel')
+    )
+
+    const after = await adapter.getSnapshot()
+    const updatedAgent = after.agents.find(
+      (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+    )!
+    expect(after.queue).toHaveLength(0)
+    expect(updatedAgent).toMatchObject({
+      queueDepth: 0,
+      runtimeState: 'ready',
+      terminalState: 'closed'
+    })
+    expect(updatedAgent.activeRunId).toBeUndefined()
+    expect(after.projects[0].queuedRunCount).toBe(0)
+    expect(after.global.concurrency.queuedGlobal).toBe(0)
+  })
+
+  it('keeps Terminal takeover orthogonal when cancelling the last item', async () => {
+    const scenario = createStandardScenario()
+    const item = scenario.queue[0]
+    scenario.queue = [item]
+    const agent = scenario.agents.find(
+      (candidate) => candidate.agentInstanceId === item.agentInstanceId
+    )!
+    agent.queueDepth = 1
+    agent.runtimeState = 'queued'
+    agent.terminalState = 'active'
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    await adapter.dispatch(
+      manageQueue(cmdId(31), before.revision, item.queueItemId, 'cancel')
+    )
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      )
+    ).toMatchObject({
+      queueDepth: 0,
+      runtimeState: 'ready',
+      terminalState: 'active'
+    })
+  })
+
+  it('preserves an active structured Run when its queued item is cancelled', async () => {
+    const scenario = createStandardScenario()
+    const item = scenario.queue[0]
+    scenario.queue = [item]
+    const agent = scenario.agents.find(
+      (candidate) => candidate.agentInstanceId === item.agentInstanceId
+    )!
+    const activeRunId = id('run-queue-cancel-test', 'RunId')
+    agent.queueDepth = 1
+    agent.runtimeState = 'running'
+    agent.activeRunId = activeRunId
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    await adapter.dispatch(
+      manageQueue(cmdId(32), before.revision, item.queueItemId, 'cancel')
+    )
+
+    expect(
+      (await adapter.getSnapshot()).agents.find(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      )
+    ).toMatchObject({
+      queueDepth: 0,
+      runtimeState: 'running',
+      activeRunId
+    })
+  })
+
+  it('does not create an active Run or successful result when cancelling', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const item = before.queue[0]
+    const activeRunIds = before.agents.map((agent) => agent.activeRunId)
+
+    await adapter.dispatch(
+      manageQueue(cmdId(4), before.revision, item.queueItemId, 'cancel')
+    )
+
+    const after = await adapter.getSnapshot()
+    expect(after.agents.map((agent) => agent.activeRunId)).toEqual(activeRunIds)
+    expect(after.activity[0].kind).toBe('queue-cancelled')
+    expect(after.activity[0].kind).not.toMatch(/completed|succeeded/)
   })
 
   it('move-earlier decreases position when not first', async () => {

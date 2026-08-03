@@ -234,14 +234,40 @@ export interface ConfirmationViewModel {
   nonBypassableReason: string
 }
 
-export interface ActivityEntry {
+export type ActivityKind =
+  | 'run-started'
+  | 'run-completed'
+  | 'run-failed'
+  | 'run-interrupted'
+  | 'run-cancelled'
+  | 'configuration-applied'
+  | 'permission-decided'
+  | 'instruction-sent'
+  | 'dispatch-created'
+  | 'queue-cancelled'
+  | 'dangerous-action-confirmed'
+
+interface ActivityEntryBase {
   activityId: ActivityId
-  projectId?: ProjectId
-  agentInstanceId?: AgentInstanceId
   timestamp: number
-  kind: string
   summary: string
 }
+
+export type ActivityEntry =
+  | (ActivityEntryBase & {
+      kind: 'queue-cancelled'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+      queueItemId: QueueItemId
+      reason: 'user-cancelled'
+    })
+  | (ActivityEntryBase & {
+      kind: Exclude<ActivityKind, 'queue-cancelled'>
+      projectId?: ProjectId
+      agentInstanceId?: AgentInstanceId
+      queueItemId?: never
+      reason?: never
+    })
 
 export interface WorktreeChangesViewModel {
   agentInstanceId: AgentInstanceId

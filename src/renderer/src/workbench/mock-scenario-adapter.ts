@@ -904,7 +904,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           timestamp: now,
           // Record the dispatch fact only — never a fake `run-started`, since
           // no Run is actually created in Phase 1 (#6 P1-3).
-          kind: 'dispatch-created',
+          kind: 'dispatch-created' as const,
           summary: `${a.name} 收到派发：${command.instruction}`
         }))
         this.snapshot.activity = [...newActivity, ...this.snapshot.activity]
@@ -1367,22 +1367,42 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         switch (command.operation) {
           case 'cancel': {
-            this.snapshot.queue = this.snapshot.queue.filter(
-              (q) => q.queueItemId !== item.queueItemId
-            )
             const agent = this.snapshot.agents.find(
               (a) => a.agentInstanceId === item.agentInstanceId
             )
+            this.snapshot.queue = this.snapshot.queue.filter(
+              (q) => q.queueItemId !== item.queueItemId
+            )
+            const cancelledAt = Date.now()
             if (agent) {
-              agent.queueDepth = Math.max(0, agent.queueDepth - 1)
-              // Restore to ready when no active run and no remaining queue
+              agent.queueDepth = this.snapshot.queue.filter(
+                (queueItem) =>
+                  queueItem.agentInstanceId === agent.agentInstanceId
+              ).length
+              // `queued` is not an active structured Run. Once the final
+              // QueueItem is gone, restore the structured runtime to ready;
+              // Terminal remains an orthogonal execution-slot fact.
               if (
                 agent.queueDepth === 0 &&
                 agent.runtimeState === 'queued'
               ) {
                 agent.runtimeState = 'ready'
               }
+              agent.lastActivityAt = cancelledAt
             }
+            this.snapshot.activity = [
+              {
+                activityId: this.freshId('ActivityId'),
+                projectId: item.projectId,
+                agentInstanceId: item.agentInstanceId,
+                queueItemId: item.queueItemId,
+                timestamp: cancelledAt,
+                kind: 'queue-cancelled',
+                reason: 'user-cancelled',
+                summary: `${agent?.name ?? item.agentInstanceId} 的排队项已由用户取消`
+              },
+              ...this.snapshot.activity
+            ]
             // Renumber remaining items so positions stay sequential
             this.renumberProjectQueue(command.projectId)
             this.recomputeQueueCounts()
