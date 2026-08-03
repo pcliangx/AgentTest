@@ -4,8 +4,9 @@ import type {
   CommandId,
   CommandRejectionReason,
   CommandResult,
-  PanelId,
   ConnectionId,
+  PanelId,
+  ProjectId,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -44,6 +45,15 @@ type PostDispatchEvent = Omit<
   Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
   'revision'
 >
+
+/** Runtime states that occupy the execution slot with an active structured Run. */
+const ACTIVE_STRUCTURED_RUN_STATES: ReadonlySet<string> = new Set([
+  'starting',
+  'running',
+  'finishing',
+  'needs-input',
+  'permission-requested'
+])
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -624,7 +634,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
       case 'manage-queue': {
         const item = this.snapshot.queue.find(
-          (q) => q.queueItemId === command.queueItemId
+          (q) =>
+            q.queueItemId === command.queueItemId &&
+            q.projectId === command.projectId
         )
         if (!item) {
           return this.reject(command, 'invalid-target', '队列项不存在')
@@ -634,11 +646,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
             this.snapshot.queue = this.snapshot.queue.filter(
               (q) => q.queueItemId !== item.queueItemId
             )
-            // Decrement the agent's queue depth
             const agent = this.snapshot.agents.find(
               (a) => a.agentInstanceId === item.agentInstanceId
             )
-            if (agent) agent.queueDepth = Math.max(0, agent.queueDepth - 1)
+            if (agent) {
+              agent.queueDepth = Math.max(0, agent.queueDepth - 1)
+              // Restore to ready when no active run and no remaining queue
+              if (
+                agent.queueDepth === 0 &&
+                agent.runtimeState === 'queued'
+              ) {
+                agent.runtimeState = 'ready'
+              }
+            }
+            // Renumber remaining items so positions stay sequential
+            this.renumberProjectQueue(command.projectId)
             this.recomputeQueueCounts()
             break
           }
@@ -679,17 +701,31 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
       case 'set-terminal-takeover': {
         const agent = this.snapshot.agents.find(
-          (a) => a.agentInstanceId === command.agentInstanceId
+          (a) =>
+            a.agentInstanceId === command.agentInstanceId &&
+            a.projectId === command.projectId
         )
         if (!agent) {
           return this.reject(command, 'invalid-target', 'Agent 不存在')
         }
         if (command.operation === 'open') {
-          if (isAgentBusy(agent)) {
+          // Only an active structured Run blocks Terminal — queued work does
+          // not occupy the execution slot (ADR-0009 §显式执行与并发).
+          if (ACTIVE_STRUCTURED_RUN_STATES.has(agent.runtimeState)) {
             return this.reject(
               command,
               'busy',
               'Agent 正在运行结构化 Run，不能接管 Terminal'
+            )
+          }
+          if (
+            agent.runtimeState === 'unavailable' ||
+            agent.runtimeState === 'archived'
+          ) {
+            return this.reject(
+              command,
+              'unavailable',
+              'Agent 当前不可用，不能接管 Terminal'
             )
           }
           agent.terminalState = 'active'
@@ -726,6 +762,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
   }
 
+  /** Renumbers queue items for a project to be sequential 1..N by current position. */
+  private renumberProjectQueue(projectId: ProjectId): void {
+    const items = this.snapshot.queue
+      .filter((q) => q.projectId === projectId)
+      .sort((a, b) => a.position - b.position)
+    items.forEach((item, i) => {
+      item.position = i + 1
+    })
+  }
+
   /**
    * Single atomic enqueue transition used by both dispatch and composer
    * (#6 P1-2). Updates the per-instance queueDepth, appends a visible
@@ -741,8 +787,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
     )
     if (!project) return
     agent.queueDepth += 1
-    // Position within this agent's own queue = its new depth.
-    const position = agent.queueDepth
+    // Position is project-scoped sequential: next slot after all existing
+    // queue items for this project, so reorder operations work correctly.
+    const position =
+      this.snapshot.queue.filter(
+        (q) => q.projectId === agent.projectId
+      ).length + 1
     const queueItemId = this.freshId('QueueItemId')
     this.snapshot.queue.push({
       queueItemId,

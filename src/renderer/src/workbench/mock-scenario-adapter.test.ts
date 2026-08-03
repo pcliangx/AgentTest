@@ -1561,4 +1561,87 @@ describe('MockScenarioAdapter — set-terminal-takeover', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('busy')
   })
+
+  it('open succeeds for a queued agent (no active Run)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cx_forecast is 'queued' — should be allowed to open Terminal
+    const queued = snap.agents.find((a) => a.name === 'cx_forecast')!
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, queued.agentInstanceId, 'open')
+    )
+    expect(result.ok).toBe(true)
+  })
+
+  it('open is rejected for an unavailable agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const unavailable = snap.agents.find((a) => a.name === 'kimi_docs')!
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(1), snap.revision, unavailable.agentInstanceId, 'open')
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('unavailable')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// manage-queue — cross-project rejection and cancel state restore (#7 review)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — manage-queue ownership', () => {
+  it('rejects manage-queue with wrong projectId', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const item = snap.queue[0] // belongs to proj-sales
+    const result = await adapter.dispatch({
+      kind: 'manage-queue',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: id('proj-research', 'ProjectId'),
+      queueItemId: item.queueItemId,
+      operation: 'cancel'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+
+  it('cancel restores agent to ready when queue is empty', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cx_forecast has queueDepth 1 and runtimeState 'queued'
+    const item = snap.queue.find(
+      (q) => q.agentInstanceId === snap.agents.find((a) => a.name === 'cx_forecast')!.agentInstanceId
+    )!
+    await adapter.dispatch({
+      kind: 'manage-queue',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: item.projectId,
+      queueItemId: item.queueItemId,
+      operation: 'cancel'
+    })
+    const after = await adapter.getSnapshot()
+    const agent = after.agents.find((a) => a.name === 'cx_forecast')!
+    expect(agent.queueDepth).toBe(0)
+    expect(agent.runtimeState).toBe('ready')
+  })
+})
+
+describe('MockScenarioAdapter — set-terminal-takeover ownership', () => {
+  it('rejects set-terminal-takeover with wrong projectId', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const agent = snap.agents.find((a) => a.name === 'cx_review')!
+    const result = await adapter.dispatch({
+      kind: 'set-terminal-takeover',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: id('proj-research', 'ProjectId'),
+      agentInstanceId: agent.agentInstanceId,
+      operation: 'open'
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
 })

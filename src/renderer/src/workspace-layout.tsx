@@ -1132,22 +1132,40 @@ function TerminalStateView({
   agent: AgentInstanceViewModel
   sendCommand: SendCommand
 }) {
-  const isTakeover = agent.terminalState === 'active'
+  const ts = agent.terminalState
+  const isTakeover = ts === 'active'
+  const isOpening = ts === 'opening'
+  const isFailed = ts === 'failed'
   const runBlocks = ACTIVE_RUN_STATES.has(agent.runtimeState)
+  const unavailable =
+    agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
+  const canOpen = !isTakeover && !isOpening && !runBlocks && !unavailable
+
+  const statusText = isTakeover
+    ? 'Terminal 已接管'
+    : isOpening
+      ? 'Terminal 正在打开'
+      : isFailed
+        ? 'Terminal 打开失败'
+        : 'Terminal 未接管'
+
+  const descText = isTakeover
+    ? '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
+    : isOpening
+      ? '正在初始化 Terminal…'
+      : isFailed
+        ? '上次打开 Terminal 失败。可以重试或保持关闭。'
+        : runBlocks
+          ? 'Agent 正在运行结构化 Run，不能接管 Terminal。'
+          : unavailable
+            ? 'Agent 当前不可用，不能接管 Terminal。'
+            : '打开 Terminal 将占用执行槽并阻止结构化 Run。'
 
   return (
     <div className="space-y-2">
-      <p className="text-neutral-400">
-        {isTakeover ? 'Terminal 已接管' : 'Terminal 未接管'}
-      </p>
-      <p className="text-xs text-neutral-600">
-        {isTakeover
-          ? '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
-          : runBlocks
-            ? 'Agent 正在运行结构化 Run，不能接管 Terminal。'
-            : '打开 Terminal 将占用执行槽并阻止结构化 Run。'}
-      </p>
-      {isTakeover ? (
+      <p className="text-neutral-400">{statusText}</p>
+      <p className="text-xs text-neutral-600">{descText}</p>
+      {(isTakeover || isFailed) && (
         <button
           className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
           onClick={() =>
@@ -1161,11 +1179,18 @@ function TerminalStateView({
         >
           结束接管
         </button>
-      ) : (
+      )}
+      {!isTakeover && !isOpening && (
         <button
           className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
-          disabled={runBlocks}
-          title={runBlocks ? 'Agent 正在运行' : undefined}
+          disabled={!canOpen}
+          title={
+            runBlocks
+              ? 'Agent 正在运行'
+              : unavailable
+                ? 'Agent 不可用'
+                : undefined
+          }
           onClick={() =>
             void sendCommand({
               kind: 'set-terminal-takeover',
