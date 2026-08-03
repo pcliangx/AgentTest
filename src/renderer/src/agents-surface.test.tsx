@@ -4,13 +4,16 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { createStandardScenario } from './workbench/standard-scenario'
 
 afterEach(() => cleanup())
 
 /** Renders the shell and navigates to the Agents surface. */
-async function gotoAgentsSurface() {
+async function gotoAgentsSurface(
+  port: MockScenarioAdapter = new MockScenarioAdapter()
+) {
   const user = userEvent.setup()
-  render(<ProjectShell port={new MockScenarioAdapter()} />)
+  render(<ProjectShell port={port} />)
   await screen.findByRole('button', { name: '概览' })
   await user.click(screen.getByRole('button', { name: 'Agent' }))
   const directory = await screen.findByRole('region', { name: 'Agent 目录' })
@@ -99,6 +102,174 @@ describe('Agents surface — Agent Directory', () => {
 })
 
 describe('Agents surface — New Agent', () => {
+  it('initialises Provider, Model, open mode, and worktree mode from applied Project defaults', async () => {
+    const scenario = createStandardScenario()
+    const projectId = scenario.activeProjectId!
+    const projectConfig = scenario.appliedConfigurations.find(
+      (configuration) =>
+        configuration.owner.kind === 'project' &&
+        configuration.owner.projectId === projectId
+    )!
+    projectConfig.values['defaults.providerId'] = scenario.global.providers.find(
+      (provider) => provider.displayName === 'Codex'
+    )!.providerId
+    projectConfig.values['defaults.model'] = 'gpt-5-codex'
+    projectConfig.values['defaults.openMode'] = 'background'
+    projectConfig.values['defaults.worktreeMode'] = 'read-only-shared'
+
+    const port = new MockScenarioAdapter(scenario)
+    const { user } = await gotoAgentsSurface(port)
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveValue(
+      'codex'
+    )
+    expect(screen.getByRole('combobox', { name: '模型' })).toHaveValue(
+      'gpt-5-codex'
+    )
+    expect(screen.getByRole('combobox', { name: '打开方式' })).toHaveValue(
+      'background'
+    )
+    expect(screen.getByRole('combobox', { name: 'worktree 模式' })).toHaveValue(
+      'read-only-shared'
+    )
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'Agent 名称' }),
+      'cx_from_defaults'
+    )
+    await user.click(screen.getByRole('button', { name: '创建 Agent' }))
+
+    const after = await port.getSnapshot()
+    const created = after.agents.find(
+      (agent) => agent.name === 'cx_from_defaults'
+    )!
+    const configuration = after.appliedConfigurations.find(
+      (entry) =>
+        entry.owner.kind === 'agent' &&
+        entry.owner.agentInstanceId === created.agentInstanceId
+    )!
+    expect(created.providerId).toBe('codex')
+    expect(created.worktreeMode).toBe('read-only-shared')
+    expect(configuration.values['model.id']).toBe('gpt-5-codex')
+    expect(
+      Object.values(after.projects[0].layout.panels).flatMap(
+        (panel) => panel.tabs
+      )
+    ).not.toContain(created.agentInstanceId)
+  })
+
+  it('keeps the Model selection compatible when switching among ready Providers', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoAgentsSurface(port)
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+
+    const provider = screen.getByRole('combobox', { name: 'Provider' })
+    const model = screen.getByRole('combobox', { name: '模型' })
+
+    expect(model).toHaveValue('claude-sonnet-4')
+    await user.selectOptions(provider, 'codex')
+    expect(model).toHaveValue('gpt-5-codex')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+
+    await user.selectOptions(provider, 'kimi-code')
+    expect(model).toHaveValue('kimi-k2')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+
+    await user.selectOptions(provider, 'claude-code')
+    expect(model).toHaveValue('claude-sonnet-4')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+
+    await user.selectOptions(provider, 'codex')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Agent 名称' }),
+      'cx_switched'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '打开方式' }),
+      'background'
+    )
+    await user.click(screen.getByRole('button', { name: '创建 Agent' }))
+
+    const snapshot = await port.getSnapshot()
+    const created = snapshot.agents.find(
+      (agent) => agent.name === 'cx_switched'
+    )!
+    const configuration = snapshot.appliedConfigurations.find(
+      (entry) =>
+        entry.owner.kind === 'agent' &&
+        entry.owner.agentInstanceId === created.agentInstanceId
+    )!
+    expect(configuration.values['model.id']).toBe('gpt-5-codex')
+  })
+
+  it('blocks an incompatible applied default and recovers after selecting a supported Model', async () => {
+    const scenario = createStandardScenario()
+    const projectId = scenario.activeProjectId!
+    const projectConfiguration = scenario.appliedConfigurations.find(
+      (configuration) =>
+        configuration.owner.kind === 'project' &&
+        configuration.owner.projectId === projectId
+    )!
+    projectConfiguration.values['defaults.providerId'] =
+      scenario.global.providers.find(
+        (provider) => provider.displayName === 'Codex'
+      )!.providerId
+    projectConfiguration.values['defaults.model'] = 'claude-sonnet-4'
+
+    const { user } = await gotoAgentsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveValue(
+      'codex'
+    )
+    expect(screen.getByRole('combobox', { name: '模型' })).toHaveValue(
+      'claude-sonnet-4'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Codex 不支持模型 "claude-sonnet-4"'
+    )
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '模型' }),
+      'gpt-5-codex'
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
+  })
+
+  it('blocks missing applied Provider and Model defaults until the user makes a compatible selection', async () => {
+    const scenario = createStandardScenario()
+    const projectId = scenario.activeProjectId!
+    const projectConfiguration = scenario.appliedConfigurations.find(
+      (configuration) =>
+        configuration.owner.kind === 'project' &&
+        configuration.owner.projectId === projectId
+    )!
+    delete projectConfiguration.values['defaults.providerId']
+    delete projectConfiguration.values['defaults.model']
+
+    const { user } = await gotoAgentsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '新建 Agent' }))
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveValue('')
+    expect(screen.getByRole('alert')).toHaveTextContent('Provider 不存在')
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeDisabled()
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Provider' }),
+      'codex'
+    )
+
+    expect(screen.getByRole('combobox', { name: '模型' })).toHaveValue(
+      'gpt-5-codex'
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: '创建 Agent' })).toBeEnabled()
+  })
+
   it('lists only Doctor-ready providers', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(screen.getByRole('button', { name: '新建 Agent' }))

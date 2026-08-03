@@ -3,7 +3,9 @@ import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
 import type {
   AgentInstanceId,
+  AgentOpenMode,
   AgentProviderId,
+  AgentWorktreeMode,
   CommandId,
   CommandResult,
   ConfirmationId,
@@ -357,7 +359,9 @@ describe('MockScenarioAdapter — create-agent', () => {
       projectId: ProjectId
       name: string
       providerId: string
-      open: 'current-panel' | 'background'
+      modelId: string
+      open: AgentOpenMode
+      worktreeMode: AgentWorktreeMode
     }> = {}
   ): WorkbenchCommand {
     return {
@@ -367,7 +371,9 @@ describe('MockScenarioAdapter — create-agent', () => {
       projectId: overrides.projectId ?? DEFAULT_PROJECT_ID,
       name: overrides.name ?? 'cc_new',
       providerId: id(overrides.providerId ?? 'claude-code', 'AgentProviderId'),
-      open: overrides.open ?? 'current-panel'
+      modelId: overrides.modelId ?? 'claude-sonnet-4',
+      open: overrides.open ?? 'current-panel',
+      worktreeMode: overrides.worktreeMode ?? 'isolated'
     }
   }
 
@@ -467,6 +473,61 @@ describe('MockScenarioAdapter — create-agent', () => {
       expect(result.reason).toBe('unavailable')
     }
   })
+
+  it.each([
+    ['claude-code', 'claude-sonnet-4'],
+    ['codex', 'gpt-5-codex'],
+    ['kimi-code', 'kimi-k2']
+  ])('accepts the declared %s model capability', async (providerId, modelId) => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const result = await adapter.dispatch(
+      createAgent(cmdId(1), before.revision, {
+        name: `${providerId}-new`,
+        providerId,
+        modelId,
+        open: 'background'
+      })
+    )
+
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const created = after.agents.find(
+      (agent) => agent.name === `${providerId}-new`
+    )!
+    const configuration = after.appliedConfigurations.find(
+      (entry) =>
+        entry.owner.kind === 'agent' &&
+        entry.owner.agentInstanceId === created.agentInstanceId
+    )!
+    expect(created.providerId).toBe(providerId)
+    expect(configuration.values['model.id']).toBe(modelId)
+  })
+
+  it.each([
+    ['claude-sonnet-4', '不支持'],
+    ['', '请选择']
+  ])(
+    'rejects an incompatible or missing Model (%s) without side effects',
+    async (modelId, expectedMessage) => {
+      const adapter = new MockScenarioAdapter()
+      const before = await adapter.getSnapshot()
+      const result = await adapter.dispatch(
+        createAgent(cmdId(1), before.revision, {
+          providerId: 'codex',
+          modelId,
+          open: 'background'
+        })
+      )
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.reason).toBe('invalid-target')
+        expect(result.message).toContain(expectedMessage)
+      }
+      expect(await adapter.getSnapshot()).toEqual(before)
+    }
+  )
 
   it('rejects an unknown provider or project with invalid-target', async () => {
     const adapter = new MockScenarioAdapter()
@@ -1764,7 +1825,9 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
       projectId: project.projectId,
       name: 'test_overflow',
       providerId: id('claude-code', 'AgentProviderId'),
-      open: 'background'
+      modelId: 'claude-sonnet-4',
+      open: 'background',
+      worktreeMode: 'isolated'
     })
     rev++
     const snap2 = await adapter.getSnapshot()

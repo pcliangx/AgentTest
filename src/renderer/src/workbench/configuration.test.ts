@@ -502,7 +502,34 @@ describe('apply-configuration — batch rename uniqueness', () => {
 })
 
 describe('create-agent — configuration initialisation', () => {
-  it('creates an applied configuration from project defaults, editable at once', async () => {
+  it('stores the selected Provider-compatible model and worktree mode', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const created = await adapter.dispatch({
+      kind: 'create-agent',
+      commandId: cmd(),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      name: 'cx_new',
+      providerId: id('codex', 'AgentProviderId'),
+      modelId: 'gpt-5-codex',
+      open: 'background',
+      worktreeMode: 'read-only-shared'
+    })
+    expect(created.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const instance = after.agents.find((agent) => agent.name === 'cx_new')!
+    const config = appliedOf(after, {
+      kind: 'agent',
+      agentInstanceId: instance.agentInstanceId
+    })
+    expect(instance.providerId).toBe(id('codex', 'AgentProviderId'))
+    expect(config.values['model.id']).toBe('gpt-5-codex')
+    expect(instance.worktreeMode).toBe('read-only-shared')
+  })
+
+  it('creates an applied configuration from confirmed creation values, editable at once', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const created = await adapter.dispatch({
@@ -512,7 +539,9 @@ describe('create-agent — configuration initialisation', () => {
       projectId: PROJECT,
       name: 'cc_new',
       providerId: id('claude-code', 'AgentProviderId'),
-      open: 'background'
+      modelId: 'claude-sonnet-4',
+      open: 'background',
+      worktreeMode: 'isolated'
     })
     expect(created.ok).toBe(true)
 
@@ -523,7 +552,7 @@ describe('create-agent — configuration initialisation', () => {
         c.owner.kind === 'agent' &&
         c.owner.agentInstanceId === instance.agentInstanceId
     )
-    // Full agent field set at version 1, model inherited from defaults.
+    // Full agent field set at version 1, including the confirmed model.
     expect(config).toBeDefined()
     expect(config!.appliedVersion).toBe(1)
     expect(config!.values['identity.name']).toBe('cc_new')

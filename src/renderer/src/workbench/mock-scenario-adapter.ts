@@ -34,6 +34,7 @@ import {
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
+import { resolveProviderModelSelection } from './provider-capability'
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
@@ -197,19 +198,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        const provider = this.snapshot.global.providers.find(
-          (p) => p.providerId === command.providerId
+        const selection = resolveProviderModelSelection(
+          this.snapshot.global.providers,
+          command.providerId,
+          command.modelId
         )
-        if (!provider) {
-          return this.reject(command, 'invalid-target', 'Provider 不存在')
-        }
-        if (provider.status !== 'ready') {
+        if (!selection.ok) {
           return this.reject(
             command,
-            'unavailable',
-            'Provider Doctor 未通过，不能创建实例'
+            selection.code === 'provider-unavailable'
+              ? 'unavailable'
+              : 'invalid-target',
+            selection.message
           )
         }
+        const { provider } = selection
         const nameCheck = validateAgentName(command.name)
         if (!nameCheck.ok) {
           return this.reject(command, 'invalid-target', nameCheck.reason!)
@@ -241,22 +244,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
           providerId: provider.providerId,
           runtimeState: 'ready',
           terminalState: 'closed',
+          worktreeMode: command.worktreeMode,
           queueDepth: 0,
           doctor: 'ready',
           lastActivityAt: Date.now()
         })
-        // Every configurable owner needs its applied truth (#13): a created
-        // instance starts at version 1, inheriting the project's applied
-        // defaults — otherwise Settings could never edit it.
-        const projectConfig = this.snapshot.appliedConfigurations.find(
-          (c) => c.owner.kind === 'project' && c.owner.projectId === project.projectId
-        )
+        // Every configurable owner needs its applied truth (#13). The
+        // command carries the user's confirmed creation draft, initially
+        // seeded from the Project's applied defaults by the renderer.
         this.snapshot.appliedConfigurations.push({
           owner: { kind: 'agent', agentInstanceId },
           appliedVersion: 1,
           values: {
             'identity.name': name,
-            'model.id': projectConfig?.values['defaults.model'] ?? '',
+            'model.id': command.modelId,
             'proxy.http': '',
             'env.custom': '',
             'concurrency.priority': 'normal',
