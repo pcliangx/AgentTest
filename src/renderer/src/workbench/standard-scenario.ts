@@ -7,6 +7,8 @@ import type {
   WorkbenchViewModel
 } from './contract'
 
+const RUN_LIFECYCLE_SCENARIO_NOW = 1_700_000_000_000
+
 /**
  * Standard mock scenario: two active projects with multiple named agents,
  * connection summary and recent activity. Used by MockScenarioAdapter as the
@@ -16,9 +18,9 @@ import type {
  * repeated providers, varied runtime states and recency timestamps so the
  * Agent Directory can exercise search, filter and sort (#3).
  */
-export function createStandardScenario(): WorkbenchViewModel {
-  const now = Date.now()
-
+export function createStandardScenario(
+  now: number = Date.now()
+): WorkbenchViewModel {
   const projectId = id('proj-sales', 'ProjectId')
   const researchId = id('proj-research', 'ProjectId')
   const connId = id('conn-feishu-primary', 'ConnectionId')
@@ -396,4 +398,69 @@ export function createStandardScenario(): WorkbenchViewModel {
       providers
     }
   }
+}
+
+/**
+ * Deterministic lifecycle variant for reviewing states that should not be
+ * conflated: an active Run finishing, a previous Run interrupted, and a
+ * completed result retained in Activity after its Agent returned to ready.
+ * It only builds ViewModel data and never starts a process or external I/O.
+ */
+export function createRunLifecycleScenario(): WorkbenchViewModel {
+  const scenario = createStandardScenario(RUN_LIFECYCLE_SCENARIO_NOW)
+  const finishing = scenario.agents.find((agent) => agent.name === 'cc_data')
+  const interrupted = scenario.agents.find((agent) => agent.name === 'cc_etl')
+  const completed = scenario.agents.find(
+    (agent) => agent.name === 'cx_review'
+  )
+  const previouslyQueued = scenario.agents.find(
+    (agent) => agent.name === 'cx_forecast'
+  )
+  if (!finishing || !interrupted || !completed || !previouslyQueued) {
+    throw new Error('standard scenario lifecycle agents are missing')
+  }
+
+  finishing.runtimeState = 'finishing'
+  interrupted.runtimeState = 'interrupted'
+  delete interrupted.activeRunId
+  delete interrupted.activeRunConfigVersion
+  completed.runtimeState = 'ready'
+  delete completed.activeRunId
+  delete completed.activeRunConfigVersion
+  // Remove unrelated queue pressure so the variant isolates lifecycle action
+  // differences: finishing work queues, interrupted/ready work may start.
+  scenario.queue = []
+  previouslyQueued.runtimeState = 'ready'
+  previouslyQueued.queueDepth = 0
+  for (const project of scenario.projects) project.queuedRunCount = 0
+  scenario.global.concurrency.queuedGlobal = 0
+
+  const latestTimestamp = Math.max(
+    0,
+    ...scenario.activity.map((entry) => entry.timestamp)
+  )
+  const interruptedAt = latestTimestamp + 1
+  const completedAt = latestTimestamp + 2
+  interrupted.lastActivityAt = interruptedAt
+  completed.lastActivityAt = completedAt
+  scenario.activity = [
+    {
+      activityId: id('act-lifecycle-completed', 'ActivityId'),
+      projectId: completed.projectId,
+      agentInstanceId: completed.agentInstanceId,
+      timestamp: completedAt,
+      kind: 'run-completed',
+      summary: 'cx_review 已完成客户流失复核'
+    },
+    {
+      activityId: id('act-lifecycle-interrupted', 'ActivityId'),
+      projectId: interrupted.projectId,
+      agentInstanceId: interrupted.agentInstanceId,
+      timestamp: interruptedAt,
+      kind: 'run-interrupted',
+      summary: 'cc_etl 的 Run 已中断'
+    },
+    ...scenario.activity
+  ]
+  return scenario
 }

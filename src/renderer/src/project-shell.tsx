@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
-  ActivityKind,
   AgentProviderId,
   CommandResult,
   ConfirmationId,
@@ -16,6 +15,7 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { activityKindLabel } from './activity-display'
 import { AgentsSurface } from './agents-surface'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
@@ -192,20 +192,6 @@ const ROOT_LABEL: Record<string, string> = {
 const GIT_LABEL: Record<string, string> = {
   ready: '已就绪',
   'not-ready': '未就绪'
-}
-
-const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
-  'run-started': '运行开始',
-  'run-completed': '运行完成',
-  'run-failed': '运行失败',
-  'run-interrupted': '运行已中断',
-  'run-cancelled': '运行已取消',
-  'configuration-applied': '配置已应用',
-  'permission-decided': '权限已决定',
-  'instruction-sent': '指令已发送',
-  'dispatch-created': '派发已创建',
-  'queue-cancelled': '排队已取消',
-  'dangerous-action-confirmed': '高风险操作已确认'
 }
 
 const CONNECTION_STATUS_LABEL: Record<string, string> = {
@@ -571,7 +557,7 @@ function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
             >
               <div className="text-neutral-300">{entry.summary}</div>
               <div className="mt-0.5 text-xs text-neutral-600">
-                {ACTIVITY_KIND_LABEL[entry.kind] ?? entry.kind}
+                {activityKindLabel(entry.kind)}
               </div>
             </li>
           ))}
