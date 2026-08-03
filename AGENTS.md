@@ -104,14 +104,18 @@ npm run dev
 npm run typecheck
 npm test
 npm run build
+npm run test:ui
 ```
 
 提交前必须运行：
 
 ```bash
-npm run typecheck && npm test && npm run build
+npm run check:release
 git diff --check
 ```
+
+`check:release` 在同一次生产构建后运行默认 Vitest 与确定性 Electron mock 冒烟；
+`test:ui` 可单独从构建开始运行 UI 发布护栏。失败产物保存在 `test-results/`。
 
 真实 agent 测试必须显式开启：
 

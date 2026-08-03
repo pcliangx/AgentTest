@@ -111,6 +111,8 @@ npm run dev
 npm run typecheck
 npm test
 npm run build
+npm run test:ui
+npm run check:release
 
 AGENT_SQUAD_HQ_E2E=1 npx vitest run <e2e-test-file>
 ```
@@ -313,8 +315,8 @@ Phase 3 在最小 PermissionBroker 就绪前禁止启动真实 Run。不要实�
 提交前必跑：
 
 ```bash
-npm run typecheck && npm test && npm run build
+npm run check:release
 ```
 
-另外执行 `git diff --check`。真实 CLI E2E 与 Electron GUI 冒烟不能假装已自动完成；
-未运行时在交付说明中明确标注。
+另外执行 `git diff --check`。`check:release` 包含确定性 mock Electron 冒烟，但不能替代
+真实 CLI E2E 或 Electron GUI 人工验收；未运行的验证必须在交付说明中明确标注。

@@ -525,7 +525,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </div>
           </nav>
 
-          <main className="min-h-0 flex-1 overflow-auto p-4">
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4">
             {deepLinkNotice && (
               <div
                 role="alert"

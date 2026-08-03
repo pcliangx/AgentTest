@@ -4,5 +4,11 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "electron.vite.config.ts"]
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "tests/ui/**/*",
+    "electron.vite.config.ts",
+    "playwright.ui.config.ts"
+  ]
 }
