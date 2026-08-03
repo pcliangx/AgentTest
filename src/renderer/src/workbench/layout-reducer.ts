@@ -154,6 +154,18 @@ function findTabOwner(
   ) as PanelId | undefined
 }
 
+/**
+ * Focus follows intent: an operation that deliberately shows a panel moves
+ * a temporary Focus there too — otherwise the panel the user just asked
+ * for would stay invisible behind the Focus (#24 review).
+ */
+function retargetFocus(state: WorkspaceLayoutViewModel, panelId: PanelId): void {
+  state.focusedPanelId = panelId
+  if (state.temporaryFocusPanelId) {
+    state.temporaryFocusPanelId = panelId
+  }
+}
+
 function ok(layout: WorkspaceLayoutViewModel): LayoutResult {
   return { ok: true, layout }
 }
@@ -191,12 +203,12 @@ export function applyLayoutOperation(
       const owner = findTabOwner(state, operation.agentInstanceId)
       if (owner) {
         state.panels[owner].activeTabId = operation.agentInstanceId
-        state.focusedPanelId = owner
+        retargetFocus(state, owner)
         return ok(state)
       }
       state.panels[operation.panelId].tabs.push(operation.agentInstanceId)
       state.panels[operation.panelId].activeTabId = operation.agentInstanceId
-      state.focusedPanelId = operation.panelId
+      retargetFocus(state, operation.panelId)
       return ok(state)
     }
 
@@ -207,7 +219,7 @@ export function applyLayoutOperation(
       }
       const state = cloneLayout(layout)
       state.panels[operation.panelId].activeTabId = operation.agentInstanceId
-      state.focusedPanelId = operation.panelId
+      retargetFocus(state, operation.panelId)
       return ok(state)
     }
 
@@ -245,14 +257,14 @@ export function applyLayoutOperation(
       const state = cloneLayout(layout)
       if (owner === operation.targetPanelId) {
         state.panels[owner].activeTabId = operation.agentInstanceId
-        state.focusedPanelId = owner
+        retargetFocus(state, owner)
         return ok(state)
       }
       removeTabFromPanel(state, owner, operation.agentInstanceId)
       state.panels[operation.targetPanelId].tabs.push(operation.agentInstanceId)
       state.panels[operation.targetPanelId].activeTabId =
         operation.agentInstanceId
-      state.focusedPanelId = operation.targetPanelId
+      retargetFocus(state, operation.targetPanelId)
       if (state.panels[owner].tabs.length === 0) {
         prunePanel(state, owner)
       }
@@ -331,7 +343,7 @@ export function applyLayoutOperation(
           prunePanel(state, previousOwner)
         }
       }
-      state.focusedPanelId = newPanelId
+      retargetFocus(state, newPanelId)
       return ok(state)
     }
 
@@ -359,7 +371,7 @@ export function applyLayoutOperation(
         const target = state.panels[operation.migrateToPanelId]
         target.tabs.push(...panel.tabs)
         target.activeTabId = panel.tabs[0]
-        state.focusedPanelId = operation.migrateToPanelId
+        retargetFocus(state, operation.migrateToPanelId)
       }
       prunePanel(state, operation.panelId)
       return ok(state)

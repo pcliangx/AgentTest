@@ -858,6 +858,74 @@ describe('layout-reducer — focus-panel', () => {
     expect(result.layout.focusedPanelId).toEqual(P(1))
     assertLayoutInvariants(result.layout)
   })
+
+  it('opening a tab owned by a hidden panel moves the temporary Focus to it', () => {
+    const ids = makeIds()
+    // Split: [ P1[a] | P2[] ]; open b in P2, then Focus P2.
+    const split = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      { kind: 'open-tab-in-new-panel', agentInstanceId: A('b'), direction: 'horizontal' },
+      ids
+    )
+    if (!split.ok) throw new Error('setup failed')
+    const p2 = id('panel-new-1', 'PanelId')
+    const focused = applyLayoutOperation(
+      split.layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focused.ok) throw new Error('setup failed')
+
+    // The user opens a, which lives in the hidden P1 — the temporary Focus
+    // must follow, or the tab they just asked for stays invisible.
+    const result = applyLayoutOperation(
+      focused.layout,
+      { kind: 'open-tab', panelId: p2, agentInstanceId: A('a') },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.focusedPanelId).toEqual(P(1))
+    expect(result.layout.temporaryFocusPanelId).toEqual(P(1))
+    assertLayoutInvariants(result.layout)
+  })
+
+  it('moving a tab across panels moves the temporary Focus with it', () => {
+    const ids = makeIds()
+    const split = applyLayoutOperation(
+      singlePanelLayout(P(1), [A('a')]),
+      { kind: 'open-tab-in-new-panel', agentInstanceId: A('b'), direction: 'horizontal' },
+      ids
+    )
+    if (!split.ok) throw new Error('setup failed')
+    const p2 = id('panel-new-1', 'PanelId')
+    // Give the focused panel a second tab so it survives the move.
+    const withC = applyLayoutOperation(
+      split.layout,
+      { kind: 'open-tab', panelId: p2, agentInstanceId: A('c') },
+      ids
+    )
+    if (!withC.ok) throw new Error('setup failed')
+    const focused = applyLayoutOperation(
+      withC.layout,
+      { kind: 'focus-panel', panelId: p2 },
+      ids
+    )
+    if (!focused.ok) throw new Error('setup failed')
+
+    // Moving b OUT of the focused panel into the hidden P1: the user
+    // follows the tab, so the temporary Focus must too.
+    const result = applyLayoutOperation(
+      focused.layout,
+      { kind: 'move-tab', agentInstanceId: A('b'), targetPanelId: P(1) },
+      ids
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.focusedPanelId).toEqual(P(1))
+    expect(result.layout.temporaryFocusPanelId).toEqual(P(1))
+    assertLayoutInvariants(result.layout)
+  })
 })
 
 // ---------------------------------------------------------------------------

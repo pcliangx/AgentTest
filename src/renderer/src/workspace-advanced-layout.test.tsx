@@ -114,6 +114,55 @@ describe('Workspace layout — Focus', () => {
     expect(panels()).toHaveLength(2)
     expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
   })
+
+  it('moves keyboard focus into the Focus UI on enter and restores it on exit', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+
+    // The trigger button unmounted — focus must land inside the Focus UI,
+    // not fall back to body where Escape would never reach the handler.
+    const exitButton = screen.getByRole('button', { name: '退出 Focus' })
+    expect(document.activeElement).toBe(exitButton)
+
+    // The real keyboard path: Escape from the current active element.
+    await user.keyboard('{Escape}')
+    expect(panels()).toHaveLength(2)
+
+    // Focus returns to the original trigger in the restored tree.
+    expect(document.activeElement).toBe(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+  })
+
+  it('switches the temporary Focus when opening an instance owned by a hidden panel', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+
+    // cc_data lives in the hidden panel; the user explicitly asked for it.
+    await user.click(within(directory).getByRole('button', { name: /^cc_data/ }))
+    expect(panels()).toHaveLength(1)
+    const visibleTab = screen.getByRole('tab', { name: /cc_data/ })
+    expect(visibleTab).toHaveAttribute('aria-selected', 'true')
+    // The directory's visible badge follows the temporary Focus: only the
+    // panel actually on screen counts as 当前可见.
+    expect(
+      within(directory).getByRole('button', { name: /^cc_data/ })
+    ).toHaveTextContent('当前可见')
+    expect(
+      within(directory).getByRole('button', { name: /^cc_sql/ })
+    ).not.toHaveTextContent('当前可见')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -298,6 +347,68 @@ describe('Workspace layout — keyboard parity', () => {
       'aria-keyshortcuts',
       expect.stringContaining('Control+ArrowRight')
     )
+  })
+
+  it('targets the spatial neighbour with Ctrl+Arrow in a nested Analysis tree', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    // Analysis preset from the single panel: [ main | (aux1 / aux2) ].
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Analysis 预设' })
+    )
+    expect(panels()).toHaveLength(3)
+
+    // Walk cc_sql through the tree: main →(right)→ aux1 →(down)→ aux2.
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    ccSqlTab.focus()
+    fireEvent.keyDown(ccSqlTab, { key: 'ArrowRight', ctrlKey: true })
+    within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+
+    // Moving the only tab out of aux1 prunes it: [ main | aux2 ] remains.
+    const aux1Tab = within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+    aux1Tab.focus()
+    fireEvent.keyDown(aux1Tab, { key: 'ArrowDown', ctrlKey: true })
+    expect(panels()).toHaveLength(2)
+    within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+
+    // Ctrl+ArrowLeft from the bottom-right auxiliary must cross into the
+    // LEFT main panel — not step one slot up in depth-first order.
+    const aux2Tab = within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+    aux2Tab.focus()
+    fireEvent.keyDown(aux2Tab, { key: 'ArrowLeft', ctrlKey: true })
+    within(panels()[0]).getByRole('tab', { name: /cc_sql/ })
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+  })
+
+  it('restores focus to the tab after moving it with Ctrl+Arrow', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    ccSqlTab.focus()
+    fireEvent.keyDown(ccSqlTab, { key: 'ArrowRight', ctrlKey: true })
+
+    const movedTab = within(panels()[1]).getByRole('tab', { name: /cc_sql/ })
+    expect(document.activeElement).toBe(movedTab)
+  })
+
+  it('restores focus to the tab after split-moving it with Ctrl+Shift+Arrow', async () => {
+    await gotoAgentsSurface()
+    const ccDataTab = screen.getByRole('tab', { name: /cc_data/ })
+    ccDataTab.focus()
+    fireEvent.keyDown(ccDataTab, {
+      key: 'ArrowRight',
+      ctrlKey: true,
+      shiftKey: true
+    })
+
+    const movedTab = within(panels()[1]).getByRole('tab', { name: /cc_data/ })
+    expect(document.activeElement).toBe(movedTab)
   })
 })
 

@@ -156,9 +156,13 @@ function AgentDirectory({
   const { openTabs, visibleTabs } = useMemo(() => {
     const open = new Set<string>()
     const visible = new Set<string>()
-    for (const panel of Object.values(project.layout.panels)) {
+    // In temporary Focus only the panel on screen counts as visible.
+    const focusPanelId = project.layout.temporaryFocusPanelId
+    for (const [panelId, panel] of Object.entries(project.layout.panels)) {
       for (const tab of panel.tabs) open.add(tab)
-      if (panel.activeTabId) visible.add(panel.activeTabId)
+      if ((!focusPanelId || panelId === focusPanelId) && panel.activeTabId) {
+        visible.add(panel.activeTabId)
+      }
     }
     return { openTabs: open, visibleTabs: visible }
   }, [project.layout])

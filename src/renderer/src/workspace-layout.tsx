@@ -66,6 +66,7 @@ interface LayoutRenderContext {
   onCancelRatio: (splitNodeId: SplitNodeId) => void
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
+  onRequestTabFocus: (tab: AgentInstanceId) => void
   onRequestClosePanel: (panelId: PanelId) => void
 }
 
@@ -110,6 +111,44 @@ export function WorkspaceArea({
   useEffect(() => {
     setDraggingTab(null)
   }, [snapshot.revision])
+
+  // Temporary Focus: render only the focused panel. The split tree itself
+  // is never touched by Focus, so exiting restores it losslessly (#5).
+  const focusPanelId =
+    layout.temporaryFocusPanelId && layout.panels[layout.temporaryFocusPanelId]
+      ? layout.temporaryFocusPanelId
+      : undefined
+
+  // Focus management for the Focus view (#24 review): entering Focus
+  // unmounts the trigger button, so keyboard focus is moved into the Focus
+  // UI; exiting restores it to the original trigger. Without this, focus
+  // falls back to body and Escape never reaches the handler.
+  const exitFocusButtonRef = useRef<HTMLButtonElement>(null)
+  const previousFocusPanelId = useRef<PanelId | undefined>(undefined)
+  useEffect(() => {
+    const previous = previousFocusPanelId.current
+    if (focusPanelId && previous === undefined) {
+      exitFocusButtonRef.current?.focus()
+    } else if (!focusPanelId && previous) {
+      document
+        .querySelector<HTMLElement>(`[data-focus-trigger="${previous}"]`)
+        ?.focus()
+    }
+    previousFocusPanelId.current = focusPanelId
+  }, [focusPanelId])
+
+  // Keyboard moves rebuild the tab node elsewhere in the tree; return
+  // focus to it (by stable AgentInstanceId) once the authoritative layout
+  // has rendered, so keyboard users can keep operating (#24 review).
+  const [pendingTabFocus, setPendingTabFocus] =
+    useState<AgentInstanceId | null>(null)
+  useEffect(() => {
+    if (!pendingTabFocus) return
+    document
+      .querySelector<HTMLElement>(`[data-tab-id="${pendingTabFocus}"]`)
+      ?.focus()
+    setPendingTabFocus(null)
+  }, [pendingTabFocus, project.layout])
 
   /**
    * All layout commands go through the surface-level handler, which shows
@@ -156,12 +195,8 @@ export function WorkspaceArea({
     setClosingPanel({ panelId, startRevision: snapshot.revision })
   }
 
-  // Temporary Focus: render only the focused panel. The split tree itself
-  // is never touched by Focus, so exiting restores it losslessly (#5).
-  const focusPanelId =
-    layout.temporaryFocusPanelId && layout.panels[layout.temporaryFocusPanelId]
-      ? layout.temporaryFocusPanelId
-      : undefined
+  // Temporary Focus renders only the focused panel; focusPanelId is
+  // computed above, next to the focus-management effects.
 
   const ctx: LayoutRenderContext = {
     project,
@@ -199,6 +234,7 @@ export function WorkspaceArea({
       // instead of overwriting it.
       setDraggingTab({ tabId: tab, startRevision: snapshot.revision }),
     onDragTabEnd: () => setDraggingTab(null),
+    onRequestTabFocus: (tab) => setPendingTabFocus(tab),
     onRequestClosePanel: requestClosePanel
   }
 
@@ -228,6 +264,7 @@ export function WorkspaceArea({
               Focus 模式：仅显示当前 Panel，布局保持不变
             </span>
             <button
+              ref={exitFocusButtonRef}
               aria-label="退出 Focus"
               aria-keyshortcuts="Escape"
               className="rounded px-1.5 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-neutral-400"
@@ -307,6 +344,63 @@ function treePanelOrder(node: LayoutNode | null): PanelId[] {
   if (!node) return []
   if (node.kind === 'panel') return [node.panelId]
   return [...treePanelOrder(node.first), ...treePanelOrder(node.second)]
+}
+
+/**
+ * Spatial keyboard navigation: resolves which panel an arrow key means —
+ * the geometric neighbour across the nearest matching-axis split, NOT the
+ * depth-first neighbour. E.g. in the Analysis tree [ main | (aux1 / aux2) ],
+ * ArrowLeft from aux2 crosses into main, not into aux1.
+ */
+function spatialTargetPanel(
+  root: LayoutNode | null,
+  fromPanelId: PanelId,
+  arrow: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+): PanelId | undefined {
+  if (!root) return undefined
+  const horizontal = arrow === 'ArrowLeft' || arrow === 'ArrowRight'
+  const forward = arrow === 'ArrowRight' || arrow === 'ArrowDown'
+
+  // Record the path from the root down to the source leaf, noting which
+  // child each split descended into; failed branches are popped so the
+  // path holds only the ancestors of the source leaf.
+  const path: Array<{ node: LayoutNode; via: 'first' | 'second' | null }> = []
+  const found = (function walk(
+    node: LayoutNode,
+    via: 'first' | 'second' | null
+  ): boolean {
+    path.push({ node, via })
+    if (node.kind === 'panel') {
+      if (node.panelId === fromPanelId) return true
+    } else if (walk(node.first, 'first') || walk(node.second, 'second')) {
+      return true
+    }
+    path.pop()
+    return false
+  })(root, null)
+  if (!found) return undefined
+
+  // The leaf nearest to the split boundary inside a subtree.
+  const edgeLeaf = (node: LayoutNode, side: 'first' | 'second'): PanelId =>
+    node.kind === 'panel'
+      ? node.panelId
+      : edgeLeaf(side === 'first' ? node.first : node.second, side)
+
+  // Walk upwards: the first split on the arrow's axis we can cross in the
+  // requested direction.
+  for (let i = path.length - 1; i >= 0; i--) {
+    const step = path[i]
+    if (step.node.kind !== 'split') continue
+    if ((step.node.direction === 'horizontal') !== horizontal) continue
+    const fromSide = path[i + 1]?.via
+    if (forward && fromSide === 'first') {
+      return edgeLeaf(step.node.second, 'first')
+    }
+    if (!forward && fromSide === 'second') {
+      return edgeLeaf(step.node.first, 'second')
+    }
+  }
+  return undefined
 }
 
 function LayoutNodeView({
@@ -552,6 +646,8 @@ function handleTabKeyDown(
         : 'vertical'
     const position =
       e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? 'before' : 'after'
+    // The tab node is rebuilt in the new panel — refocus it after render.
+    ctx.onRequestTabFocus(tabId)
     void ctx.sendLayout({
       kind: 'open-tab-in-new-panel',
       agentInstanceId: tabId,
@@ -561,13 +657,16 @@ function handleTabKeyDown(
     })
     return
   }
-  // Move to the previous/next panel in tree order — the centre-drop command.
-  const ordered = treePanelOrder(ctx.project.layout.root)
-  const index = ordered.indexOf(panelId)
-  const targetIndex =
-    e.key === 'ArrowRight' || e.key === 'ArrowDown' ? index + 1 : index - 1
-  const target = ordered[targetIndex]
+  // Move to the spatial neighbour in the arrow's direction — the same
+  // panel a centre drop onto that neighbour would target.
+  const target = spatialTargetPanel(
+    ctx.project.layout.root,
+    panelId,
+    e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+  )
   if (target) {
+    // The tab node is rebuilt in the target panel — refocus after render.
+    ctx.onRequestTabFocus(tabId)
     void ctx.sendLayout({
       kind: 'move-tab',
       agentInstanceId: tabId,
@@ -697,6 +796,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
         {!ctx.temporaryFocusPanelId && (
           <button
             aria-label="Focus 此 Panel"
+            data-focus-trigger={panelId}
             className={PANEL_TOOLBAR_BUTTON_CLASS}
             onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
           >
@@ -730,6 +830,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               role="tab"
               aria-selected={selected}
               aria-keyshortcuts={TAB_KEYSHORTCUTS}
+              data-tab-id={tabId}
               tabIndex={selected ? 0 : -1}
               draggable
               className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-neutral-400 ${
