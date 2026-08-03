@@ -2126,7 +2126,6 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
     const overflow = before.agents.find(
       (agent) => agent.name === 'kimi_visual'
     )!
-
     await adapter.dispatch({
       kind: 'confirm-dispatch',
       commandId: cmdId(100),
@@ -2382,7 +2381,7 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
     expectActiveRunSummary(after)
   })
 
-it('queues a ready Agent with a stale Run ID at Project capacity and restores Ready after cancellation', async () => {
+  it('queues a ready Agent with a stale Run ID at Project capacity and restores Ready after cancellation', async () => {
     const scenario = createProjectCapacityScenario()
     scenario.agents.find(
       (agent) => agent.name === 'cx_review'

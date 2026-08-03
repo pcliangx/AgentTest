@@ -179,6 +179,7 @@ function formatConfirmationValue(value: unknown): string {
   if (value === '') return '空'
   return String(value)
 }
+
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
  *
