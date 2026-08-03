@@ -36,6 +36,38 @@ const ccDataOwner: ConfigurationOwner = {
 const ccSqlOwner: ConfigurationOwner = { kind: 'agent', agentInstanceId: CC_SQL }
 const ccEtlOwner: ConfigurationOwner = { kind: 'agent', agentInstanceId: CC_ETL }
 
+const STATIC_SELECT_CASES: ReadonlyArray<{
+  owner: ConfigurationOwner
+  fieldPath: string
+  values: readonly string[]
+}> = [
+  {
+    owner: projectOwner,
+    fieldPath: 'general.landingSurface',
+    values: ['agents', 'overview']
+  },
+  {
+    owner: projectOwner,
+    fieldPath: 'defaults.openMode',
+    values: ['new-panel', 'background', 'current-panel']
+  },
+  {
+    owner: projectOwner,
+    fieldPath: 'defaults.worktreeMode',
+    values: ['read-only-shared', 'isolated']
+  },
+  {
+    owner: projectOwner,
+    fieldPath: 'permissions.defaultPolicy',
+    values: ['deny-by-default', 'ask-each-time']
+  },
+  {
+    owner: ccDataOwner,
+    fieldPath: 'concurrency.priority',
+    values: ['high', 'low', 'normal']
+  }
+]
+
 let commandCounter = 0
 function cmd(): CommandId {
   return id(`cmd-cfg-${++commandCounter}`, 'CommandId')
@@ -161,12 +193,17 @@ describe('stage-configuration', () => {
 
   it('rejects a field path outside the owner catalogue', async () => {
     const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'general.name', '保留中的草稿')
+    const before = await adapter.getSnapshot()
     const result = await stage(adapter, projectOwner, 'not.a.field', 'x')
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('invalid-target')
     // An agent field on the project owner is equally out of catalogue.
     const wrong = await stage(adapter, projectOwner, 'identity.name', 'x')
     expect(wrong.ok).toBe(false)
+    expect((await adapter.getSnapshot()).configurationDrafts).toEqual(
+      before.configurationDrafts
+    )
   })
 
   it('un-stages a change when the value returns to the applied one', async () => {
@@ -226,6 +263,75 @@ describe('discard-configuration', () => {
 // ---------------------------------------------------------------------------
 
 describe('apply-configuration', () => {
+  it('applies every declared value for all five static select fields', async () => {
+    for (const { owner, fieldPath, values } of STATIC_SELECT_CASES) {
+      for (const value of values) {
+        const adapter = new MockScenarioAdapter()
+        const initial = appliedOf(await adapter.getSnapshot(), owner).values[
+          fieldPath
+        ]
+
+        // A value equal to the initial truth intentionally un-stages. Move
+        // away first so every declared value is exercised as a real Apply.
+        if (Object.is(initial, value)) {
+          const alternate = values.find((candidate) => candidate !== value)!
+          await stage(adapter, owner, fieldPath, alternate)
+          const baselineResult = await applyAll(adapter, [owner])
+          if (!baselineResult.ok) throw new Error(baselineResult.message)
+        }
+
+        expect(await stage(adapter, owner, fieldPath, value)).toMatchObject({
+          ok: true
+        })
+        const result = await applyAll(adapter, [owner])
+        if (!result.ok) throw new Error(result.message)
+        expect(
+          appliedOf(await adapter.getSnapshot(), owner).values[fieldPath]
+        ).toBe(value)
+      }
+    }
+  })
+
+  it('atomically applies static select fields across project and agent owners', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'defaults.openMode', 'new-panel')
+    await stage(adapter, ccDataOwner, 'concurrency.priority', 'high')
+
+    const result = await applyAll(adapter, [projectOwner, ccDataOwner])
+    expect(result.ok).toBe(true)
+
+    const snapshot = await adapter.getSnapshot()
+    expect(appliedOf(snapshot, projectOwner).values['defaults.openMode']).toBe(
+      'new-panel'
+    )
+    expect(
+      appliedOf(snapshot, ccDataOwner).values['concurrency.priority']
+    ).toBe('high')
+    expect(snapshot.configurationDrafts).toHaveLength(0)
+  })
+
+  it('rejects undeclared values for every static select without changing applied truth or drafts', async () => {
+    for (const { owner, fieldPath } of STATIC_SELECT_CASES) {
+      const adapter = new MockScenarioAdapter()
+      const before = await adapter.getSnapshot()
+      const staged = await stage(adapter, owner, fieldPath, 'not-declared')
+      expect(staged.ok).toBe(true)
+
+      const withDraft = await adapter.getSnapshot()
+      expect(draftOf(withDraft, owner)?.validationErrors).toEqual([
+        expect.objectContaining({ fieldPath })
+      ])
+
+      const result = await applyAll(adapter, [owner])
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.reason).toBe('invariant-violation')
+
+      const after = await adapter.getSnapshot()
+      expect(appliedOf(after, owner)).toEqual(appliedOf(before, owner))
+      expect(draftOf(after, owner)).toEqual(draftOf(withDraft, owner))
+    }
+  })
+
   it('atomically commits all listed owners and clears their drafts', async () => {
     const adapter = new MockScenarioAdapter()
     await stage(adapter, projectOwner, 'general.name', '销售分析 v2')
