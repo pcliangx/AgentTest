@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MockScenarioAdapter } from './mock-scenario-adapter'
 import { id } from './contract'
+import { createStandardScenario } from './standard-scenario'
 import type {
   AgentInstanceId,
   AgentOpenMode,
@@ -15,7 +16,8 @@ import type {
   ProjectSurface,
   QueueItemId,
   WorkbenchCommand,
-  WorkbenchEvent
+  WorkbenchEvent,
+  WorkbenchViewModel
 } from './contract'
 
 function cmdId(n: number): CommandId {
@@ -1748,7 +1750,314 @@ describe('MockScenarioAdapter — set-terminal-takeover ownership', () => {
 // Concurrency limits — per-instance, Project (3), Global (6) (#7 AC1)
 // ---------------------------------------------------------------------------
 
+function createProjectCapacityScenario() {
+  const scenario = createStandardScenario()
+  const project = scenario.projects[0]
+  const states = [
+    ['cc_data', 'running'],
+    ['cc_sql', 'needs-input'],
+    ['cc_etl', 'finishing']
+  ] as const
+  for (const [name, runtimeState] of states) {
+    scenario.agents.find((agent) => agent.name === name)!.runtimeState =
+      runtimeState
+  }
+  project.activeRunCount = scenario.global.concurrency.projectLimit
+  scenario.global.concurrency.activeGlobal = states.length
+  return scenario
+}
+
+function createGlobalCapacityScenario() {
+  const scenario = createProjectCapacityScenario()
+  const research = scenario.projects[1]
+  for (const [name, runtimeState] of [
+    ['cc_report', 'running'],
+    ['cx_survey', 'starting']
+  ] as const) {
+    scenario.agents.find((agent) => agent.name === name)!.runtimeState =
+      runtimeState
+  }
+  research.activeRunCount = 2
+
+  const projectId = id('proj-global-capacity', 'ProjectId')
+  scenario.projects.push({
+    ...structuredClone(research),
+    projectId,
+    name: '全局容量测试',
+    activeRunCount: 1,
+    queuedRunCount: 0,
+    layout: { root: null, panels: {} }
+  })
+  const activeAgent = {
+    ...structuredClone(
+      scenario.agents.find((agent) => agent.name === 'cx_review')!
+    ),
+    agentInstanceId: id('inst-global-active', 'AgentInstanceId'),
+    projectId,
+    name: 'global_active',
+    runtimeState: 'permission-requested' as const,
+    terminalState: 'closed' as const,
+    queueDepth: 0
+  }
+  const target = {
+    ...structuredClone(
+      scenario.agents.find((agent) => agent.name === 'kimi_visual')!
+    ),
+    agentInstanceId: id('inst-global-target', 'AgentInstanceId'),
+    projectId,
+    name: 'global_target',
+    runtimeState: 'ready' as const,
+    terminalState: 'closed' as const,
+    queueDepth: 0
+  }
+  delete activeAgent.activeRunId
+  delete target.activeRunId
+  scenario.agents.push(activeAgent, target)
+  scenario.global.concurrency.activeGlobal =
+    scenario.global.concurrency.globalLimit
+  return { scenario, projectId, targetId: target.agentInstanceId }
+}
+
+function expectQueueProjection(snapshot: WorkbenchViewModel): void {
+  for (const agent of snapshot.agents) {
+    expect(agent.queueDepth).toBe(
+      snapshot.queue.filter(
+        (item) => item.agentInstanceId === agent.agentInstanceId
+      ).length
+    )
+  }
+  for (const project of snapshot.projects) {
+    expect(project.queuedRunCount).toBe(
+      snapshot.queue.filter((item) => item.projectId === project.projectId)
+        .length
+    )
+  }
+  expect(snapshot.global.concurrency.queuedGlobal).toBe(snapshot.queue.length)
+}
+
 describe('MockScenarioAdapter — concurrency enforcement', () => {
+  it('queues a ready Agent with a stale Run ID at Project capacity and restores Ready after cancellation', async () => {
+    const scenario = createProjectCapacityScenario()
+    scenario.agents.find(
+      (agent) => agent.name === 'cx_review'
+    )!.activeRunId = id('stale-capacity-run', 'RunId')
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const target = before.agents.find((agent) => agent.name === 'cx_review')!
+    const beforeDepth = target.queueDepth
+    const beforeProjectQueued = project.queuedRunCount
+    const beforeGlobalQueued = before.global.concurrency.queuedGlobal
+
+    const result = await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(100),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'queue at Project capacity'
+    })
+    expect(result.ok).toBe(true)
+
+    const queued = await adapter.getSnapshot()
+    const queuedAgent = queued.agents.find(
+      (agent) => agent.agentInstanceId === target.agentInstanceId
+    )!
+    const queueItem = queued.queue.find(
+      (item) => item.agentInstanceId === target.agentInstanceId
+    )!
+    expect(queuedAgent.runtimeState).toBe('queued')
+    expect(queuedAgent.queueDepth).toBe(beforeDepth + 1)
+    expect(queueItem).toBeDefined()
+    expect(queued.projects[0].queuedRunCount).toBe(beforeProjectQueued + 1)
+    expect(queued.global.concurrency.queuedGlobal).toBe(beforeGlobalQueued + 1)
+    expect(queued.projects[0].activeRunCount).toBe(project.activeRunCount)
+    expect(queued.global.concurrency.activeGlobal).toBe(
+      before.global.concurrency.activeGlobal
+    )
+    expectQueueProjection(queued)
+
+    await adapter.dispatch({
+      kind: 'manage-queue',
+      commandId: cmdId(101),
+      expectedRevision: queued.revision,
+      projectId: project.projectId,
+      queueItemId: queueItem.queueItemId,
+      operation: 'cancel'
+    })
+    const cancelled = await adapter.getSnapshot()
+    const restoredAgent = cancelled.agents.find(
+      (agent) => agent.agentInstanceId === target.agentInstanceId
+    )!
+    expect(restoredAgent.runtimeState).toBe('ready')
+    expect(restoredAgent.queueDepth).toBe(beforeDepth)
+    expect(
+      cancelled.queue.some((item) => item.queueItemId === queueItem.queueItemId)
+    ).toBe(false)
+    expect(cancelled.projects[0].queuedRunCount).toBe(beforeProjectQueued)
+    expect(cancelled.global.concurrency.queuedGlobal).toBe(beforeGlobalQueued)
+    expect(cancelled.projects[0].activeRunCount).toBe(project.activeRunCount)
+    expect(cancelled.global.concurrency.activeGlobal).toBe(
+      before.global.concurrency.activeGlobal
+    )
+    expectQueueProjection(cancelled)
+  })
+
+  it('atomically queues a composer instruction at Project capacity', async () => {
+    const adapter = new MockScenarioAdapter(createProjectCapacityScenario())
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const target = before.agents.find(
+      (agent) => agent.name === 'kimi_visual'
+    )!
+
+    await adapter.dispatch({
+      kind: 'send-agent-instruction',
+      commandId: cmdId(102),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      agentInstanceId: target.agentInstanceId,
+      instruction: 'queue from composer',
+      mode: 'start-or-queue'
+    })
+
+    const after = await adapter.getSnapshot()
+    const queuedAgent = after.agents.find(
+      (agent) => agent.agentInstanceId === target.agentInstanceId
+    )!
+    expect(queuedAgent.runtimeState).toBe('queued')
+    expect(queuedAgent.queueDepth).toBe(target.queueDepth + 1)
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === target.agentInstanceId
+      )
+    ).toBe(true)
+    expect(after.projects[0].queuedRunCount).toBe(
+      project.queuedRunCount + 1
+    )
+    expect(after.global.concurrency.queuedGlobal).toBe(
+      before.global.concurrency.queuedGlobal + 1
+    )
+    expectQueueProjection(after)
+  })
+
+  it('atomically queues every ready target in a batch at Project capacity', async () => {
+    const adapter = new MockScenarioAdapter(createProjectCapacityScenario())
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const targets = ['cx_review', 'kimi_visual'].map(
+      (name) => before.agents.find((agent) => agent.name === name)!
+    )
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(103),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: targets.map((agent) => agent.agentInstanceId),
+      instruction: 'queue the whole batch'
+    })
+
+    const after = await adapter.getSnapshot()
+    for (const target of targets) {
+      const queuedAgent = after.agents.find(
+        (agent) => agent.agentInstanceId === target.agentInstanceId
+      )!
+      expect(queuedAgent.runtimeState).toBe('queued')
+      expect(queuedAgent.queueDepth).toBe(target.queueDepth + 1)
+      expect(
+        after.queue.some(
+          (item) => item.agentInstanceId === target.agentInstanceId
+        )
+      ).toBe(true)
+    }
+    expect(after.projects[0].queuedRunCount).toBe(
+      project.queuedRunCount + targets.length
+    )
+    expect(after.global.concurrency.queuedGlobal).toBe(
+      before.global.concurrency.queuedGlobal + targets.length
+    )
+    expectQueueProjection(after)
+  })
+
+  it('queues a ready Agent when only the Global sixth slot is full', async () => {
+    const { scenario, projectId, targetId } = createGlobalCapacityScenario()
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const project = before.projects.find(
+      (candidate) => candidate.projectId === projectId
+    )!
+    const target = before.agents.find(
+      (agent) => agent.agentInstanceId === targetId
+    )!
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(104),
+      expectedRevision: before.revision,
+      projectId,
+      targets: [targetId],
+      instruction: 'queue at Global capacity'
+    })
+
+    const after = await adapter.getSnapshot()
+    const queuedAgent = after.agents.find(
+      (agent) => agent.agentInstanceId === targetId
+    )!
+    expect(project.activeRunCount).toBeLessThan(
+      before.global.concurrency.projectLimit
+    )
+    expect(before.global.concurrency.activeGlobal).toBe(
+      before.global.concurrency.globalLimit
+    )
+    expect(queuedAgent.runtimeState).toBe('queued')
+    expect(queuedAgent.queueDepth).toBe(target.queueDepth + 1)
+    expect(
+      after.projects.find((candidate) => candidate.projectId === projectId)!
+        .queuedRunCount
+    ).toBe(project.queuedRunCount + 1)
+    expect(after.global.concurrency.queuedGlobal).toBe(
+      before.global.concurrency.queuedGlobal + 1
+    )
+    expectQueueProjection(after)
+  })
+
+  for (const expected of [
+    { name: 'cc_data', runtimeState: 'running', terminalState: 'closed' },
+    {
+      name: 'cc_sql',
+      runtimeState: 'needs-input',
+      terminalState: 'closed'
+    },
+    { name: 'cx_anti', runtimeState: 'ready', terminalState: 'active' }
+  ] as const) {
+    it(`keeps ${expected.name}'s occupied state when queueing more work`, async () => {
+      const adapter = new MockScenarioAdapter()
+      const before = await adapter.getSnapshot()
+      const project = before.projects[0]
+      const target = before.agents.find(
+        (agent) => agent.name === expected.name
+      )!
+
+      await adapter.dispatch({
+        kind: 'confirm-dispatch',
+        commandId: cmdId(110),
+        expectedRevision: before.revision,
+        projectId: project.projectId,
+        targets: [target.agentInstanceId],
+        instruction: 'queue without erasing occupancy'
+      })
+      const after = await adapter.getSnapshot()
+      const queuedAgent = after.agents.find(
+        (agent) => agent.agentInstanceId === target.agentInstanceId
+      )!
+      expect(queuedAgent.runtimeState).toBe(expected.runtimeState)
+      expect(queuedAgent.terminalState).toBe(expected.terminalState)
+      expect(queuedAgent.queueDepth).toBe(target.queueDepth + 1)
+      expectQueueProjection(after)
+    })
+  }
+
   it('dispatch to idle agent starts a mock Run and increments counters', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
@@ -1844,8 +2153,7 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
     })
     const after = await adapter.getSnapshot()
     const agent = after.agents.find((a) => a.name === 'test_overflow')!
-    // Should be queued, not running
-    expect(agent.runtimeState).not.toBe('running')
+    expect(agent.runtimeState).toBe('queued')
     expect(after.queue.length).toBe(beforeQueue + 1)
     expect(after.projects[0].activeRunCount).toBe(3) // unchanged
   })
