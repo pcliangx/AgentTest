@@ -19,6 +19,7 @@ import type {
   WorktreeChangesViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
+import { activityKindLabel } from './activity-display'
 import { clampRatio } from './workbench/layout-reducer'
 import {
   providerLabel,
@@ -1197,11 +1198,19 @@ function AgentView({
             <p className="text-neutral-500">暂无活动记录</p>
           ) : (
             <ul className="space-y-1.5">
-              {agentActivity.map((entry) => (
-                <li key={entry.activityId} className="text-neutral-300">
-                  {entry.summary}
-                </li>
-              ))}
+              {agentActivity.map((entry) => {
+                const kindLabel = activityKindLabel(entry.kind)
+                return (
+                  <li
+                    key={entry.activityId}
+                    aria-label={`${kindLabel}：${entry.summary}`}
+                    className="text-neutral-300"
+                  >
+                    <span className="mr-1 text-neutral-500">{kindLabel}</span>
+                    {entry.summary}
+                  </li>
+                )
+              })}
             </ul>
           ))}
         {subView === 'changes' && (
