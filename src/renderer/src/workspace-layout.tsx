@@ -93,7 +93,8 @@ export function WorkspaceArea({
   openAttentionTargets,
   planDispatch,
   sendLayout: sendLayoutCommand,
-  sendCommand
+  sendCommand,
+  onFocusExitFallback
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
@@ -104,6 +105,7 @@ export function WorkspaceArea({
     expectedRevision?: number
   ) => Promise<CommandResult>
   sendCommand: SendCommand
+  onFocusExitFallback: (agentInstanceId?: AgentInstanceId) => void
 }) {
   const layout = project.layout
   const [draggingTab, setDraggingTab] = useState<{
@@ -136,14 +138,19 @@ export function WorkspaceArea({
 
   // Focus management for the Focus view (#24 review): entering Focus
   // unmounts the trigger button, so keyboard focus is moved into the Focus
-  // UI; exiting restores it to the original trigger. Without this, focus
-  // falls back to body and Escape never reaches the handler.
+  // UI; exiting restores it to the original trigger. If pruning removes
+  // the complete layout, the owning surface restores focus to the matching
+  // Directory instance (or its stable fallback). Without this, focus falls
+  // back to body and Escape never reaches the handler.
   const exitFocusButtonRef = useRef<HTMLButtonElement>(null)
   const previousFocusPanelId = useRef<PanelId | undefined>(undefined)
+  const previousFocusAgentId = useRef<AgentInstanceId | undefined>(undefined)
   useEffect(() => {
     const previous = previousFocusPanelId.current
-    if (focusPanelId && previous === undefined) {
-      exitFocusButtonRef.current?.focus()
+    if (focusPanelId) {
+      previousFocusAgentId.current =
+        layout.panels[focusPanelId]?.activeTabId
+      if (previous === undefined) exitFocusButtonRef.current?.focus()
     } else if (!focusPanelId && previous) {
       const trigger = findFocusTrigger(previous)
       if (trigger) {
@@ -159,11 +166,18 @@ export function WorkspaceArea({
         const fallback =
           (fallbackPanelId ? findFocusTrigger(fallbackPanelId) : null) ??
           (fallbackTabId ? findRenderedTab(fallbackTabId) : null)
-        fallback?.focus()
+        if (fallback) fallback.focus()
+        else onFocusExitFallback(previousFocusAgentId.current)
       }
+      previousFocusAgentId.current = undefined
     }
     previousFocusPanelId.current = focusPanelId
-  }, [focusPanelId])
+  }, [
+    focusPanelId,
+    layout.focusedPanelId,
+    layout.panels,
+    onFocusExitFallback
+  ])
 
   // Keyboard moves rebuild the tab node elsewhere in the tree. Restore
   // intents are kept per gesture (own token and baseline revision): only
