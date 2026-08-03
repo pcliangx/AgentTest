@@ -1670,6 +1670,86 @@ describe('MockScenarioAdapter — set-terminal-takeover', () => {
     expect(result.ok).toBe(true)
   })
 
+  it.each([
+    {
+      condition: 'Project archived',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].lifecycle = 'archived'
+      },
+      message: 'Project 已归档，不能接管 Terminal'
+    },
+    {
+      condition: 'Project Root unavailable',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].rootAvailability = 'unavailable'
+      },
+      message: 'Project Root 不可用，不能接管 Terminal'
+    },
+    {
+      condition: 'repository not ready',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].repositoryReadiness = 'not-ready'
+      },
+      message: 'Project 尚未初始化或绑定 Git 仓库，不能接管 Terminal'
+    }
+  ])('rejects open atomically when $condition', async ({ configure, message }) => {
+    const scenario = createStandardScenario()
+    configure(scenario)
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const ready = before.agents.find((agent) => agent.name === 'cx_review')!
+
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(91), before.revision, ready.agentInstanceId, 'open')
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'unavailable',
+      message
+    })
+    expect(await adapter.getSnapshot()).toEqual(before)
+  })
+
+  it.each([
+    {
+      condition: 'Project archived',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].lifecycle = 'archived'
+      }
+    },
+    {
+      condition: 'Project Root unavailable',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].rootAvailability = 'unavailable'
+      }
+    },
+    {
+      condition: 'repository not ready',
+      configure: (snapshot: WorkbenchViewModel) => {
+        snapshot.projects[0].repositoryReadiness = 'not-ready'
+      }
+    }
+  ])('still allows close when $condition', async ({ configure }) => {
+    const scenario = createStandardScenario()
+    configure(scenario)
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    const active = before.agents.find((agent) => agent.name === 'cx_anti')!
+
+    const result = await adapter.dispatch(
+      terminalCmd(cmdId(92), before.revision, active.agentInstanceId, 'close')
+    )
+
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === active.agentInstanceId
+      )?.terminalState
+    ).toBe('closed')
+  })
+
   it('open is rejected for an unavailable agent', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
