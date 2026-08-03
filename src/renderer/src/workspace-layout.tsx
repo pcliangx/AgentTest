@@ -26,6 +26,7 @@ import {
   TERMINAL_STATE_LABEL
 } from './agent-display'
 import type { PlanDispatch, SendCommand } from './agents-surface'
+import type { ProjectDispatchBlockReason } from './workbench/dispatchability'
 import { useDispatchPlan } from './use-dispatch-plan'
 import {
   getProjectDispatchBlockReason,
@@ -1578,6 +1579,29 @@ function ChangesView({
 // Terminal Takeover — execution slot mutual exclusion (#7)
 // ---------------------------------------------------------------------------
 
+const TERMINAL_PROJECT_BLOCK_COPY: Record<
+  ProjectDispatchBlockReason,
+  { title: string; description: string }
+> = {
+  'project-archived': {
+    title: 'Project 已归档',
+    description:
+      'Project 已归档，不能打开 Terminal。可在 Project 设置查看当前生命周期状态。'
+  },
+  'project-root-unavailable': {
+    title: 'Project Root 不可用',
+    description:
+      'Project Root 不可用，不能打开 Terminal。可在 Project 设置查看 Root 可用性。'
+  },
+  'project-repository-not-ready': {
+    title: 'Project 尚未初始化或绑定 Git 仓库',
+    description:
+      'Project 尚未初始化或绑定 Git 仓库，不能打开 Terminal。可在 Project 设置查看 Git 就绪状态。'
+  }
+}
+
+type TerminalOperation = 'open' | 'close'
+
 function TerminalStateView({
   project,
   agent,
@@ -1591,10 +1615,75 @@ function TerminalStateView({
   const isTakeover = ts === 'active'
   const isOpening = ts === 'opening'
   const isFailed = ts === 'failed'
+  const [notice, setNotice] = useState<{
+    message: string
+    operation: TerminalOperation
+  } | null>(null)
+  const [pendingOperation, setPendingOperation] =
+    useState<TerminalOperation | null>(null)
+  const submittingRef = useRef(false)
+  const focusAfterOperationRef = useRef<TerminalOperation | null>(null)
+  const openButtonRef = useRef<HTMLButtonElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const recoveryButtonRef = useRef<HTMLButtonElement>(null)
   const runBlocks = isActiveStructuredRunState(agent.runtimeState)
   const unavailable =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
-  const canOpen = !isTakeover && !isOpening && !runBlocks && !unavailable
+  const projectBlockReason = getProjectDispatchBlockReason(project)
+  const projectBlock = projectBlockReason
+    ? TERMINAL_PROJECT_BLOCK_COPY[projectBlockReason]
+    : undefined
+  const submitting = pendingOperation !== null
+  const canOpen =
+    !isTakeover &&
+    !isOpening &&
+    !runBlocks &&
+    !unavailable &&
+    !projectBlock &&
+    !submitting
+
+  useEffect(() => {
+    const operation = focusAfterOperationRef.current
+    if (!operation || submitting) return
+    if (operation === 'open' && isTakeover) {
+      closeButtonRef.current?.focus()
+      focusAfterOperationRef.current = null
+      return
+    }
+    if (operation === 'close' && !isTakeover && !isOpening) {
+      if (projectBlock) recoveryButtonRef.current?.focus()
+      else openButtonRef.current?.focus()
+      focusAfterOperationRef.current = null
+    }
+  }, [isOpening, isTakeover, projectBlock, submitting])
+
+  const changeTerminalState = async (operation: TerminalOperation) => {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    focusAfterOperationRef.current = operation
+    setPendingOperation(operation)
+    setNotice(null)
+    try {
+      const result = await sendCommand({
+        kind: 'set-terminal-takeover',
+        projectId: project.projectId,
+        agentInstanceId: agent.agentInstanceId,
+        operation
+      })
+      if (!result.ok && result.reason !== 'stale-revision') {
+        focusAfterOperationRef.current = null
+        setNotice({ message: result.message, operation })
+      } else if (!result.ok) {
+        focusAfterOperationRef.current = null
+      }
+    } catch {
+      focusAfterOperationRef.current = null
+      setNotice({ message: 'Terminal 操作失败，请重试。', operation })
+    } finally {
+      submittingRef.current = false
+      setPendingOperation(null)
+    }
+  }
 
   const statusText = isTakeover
     ? 'Terminal 已接管'
@@ -1604,60 +1693,99 @@ function TerminalStateView({
         ? 'Terminal 打开失败'
         : 'Terminal 未接管'
 
-  const descText = isTakeover
-    ? '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
-    : isOpening
-      ? '正在初始化 Terminal…'
-      : isFailed
-        ? '上次打开 Terminal 失败。可以重试或保持关闭。'
-        : runBlocks
-          ? 'Agent 正在运行结构化 Run，不能接管 Terminal。'
-          : unavailable
-            ? 'Agent 当前不可用，不能接管 Terminal。'
-            : '打开 Terminal 将占用执行槽并阻止结构化 Run。'
+  const terminalDescription = (): string => {
+    if (isTakeover) {
+      return '执行槽被 Terminal 占用，结构化 Run 被阻止。关闭 Tab 不会释放执行槽，需显式结束接管。'
+    }
+    if (isOpening) return '正在初始化 Terminal…'
+    if (projectBlock) return projectBlock.description
+    if (isFailed) return '上次打开 Terminal 失败。可以重试或保持关闭。'
+    if (runBlocks) return 'Agent 正在运行结构化 Run，不能接管 Terminal。'
+    if (unavailable) return 'Agent 当前不可用，不能接管 Terminal。'
+    return '打开 Terminal 将占用执行槽并阻止结构化 Run。'
+  }
+
+  const terminalOpenTitle = (): string | undefined => {
+    if (submitting) return 'Terminal 操作处理中'
+    if (projectBlock) return projectBlock.title
+    if (runBlocks) return 'Agent 正在运行'
+    if (unavailable) return 'Agent 不可用'
+    return undefined
+  }
+
+  const terminalCloseLabel = (): string => {
+    if (notice?.operation === 'close') {
+      return isTakeover ? '重试结束 Terminal 接管' : '重试清除失败'
+    }
+    return isTakeover ? '结束接管' : '清除失败'
+  }
 
   return (
     <div className="space-y-2">
-      <p className="text-neutral-400">{statusText}</p>
-      <p className="text-xs text-neutral-600">{descText}</p>
-      {(isTakeover || isFailed) && (
-        <button
-          className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
-          onClick={() =>
-            void sendCommand({
-              kind: 'set-terminal-takeover',
-              projectId: project.projectId,
-              agentInstanceId: agent.agentInstanceId,
-              operation: 'close'
-            })
-          }
-        >
-          {isTakeover ? '结束接管' : '清除失败'}
-        </button>
+      <p
+        role="status"
+        aria-label="Terminal 状态"
+        aria-live="polite"
+        className="text-neutral-400"
+      >
+        {pendingOperation === 'open'
+          ? '正在打开 Terminal…'
+          : pendingOperation === 'close'
+            ? '正在结束 Terminal 接管…'
+            : statusText}
+      </p>
+      <p className="text-xs text-neutral-600">{terminalDescription()}</p>
+      {notice && (
+        <p role="alert" className="text-xs text-red-400">
+          {notice.message}
+        </p>
       )}
-      {!isTakeover && !isOpening && (
-        <button
-          className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
-          disabled={!canOpen}
-          title={
-            runBlocks
-              ? 'Agent 正在运行'
-              : unavailable
-                ? 'Agent 不可用'
-                : undefined
-          }
-          onClick={() =>
-            void sendCommand({
-              kind: 'set-terminal-takeover',
-              projectId: project.projectId,
-              agentInstanceId: agent.agentInstanceId,
-              operation: 'open'
-            })
-          }
-        >
-          打开 Terminal
-        </button>
-      )}
+      <div
+        role="group"
+        aria-label="Terminal 控制"
+        aria-busy={submitting}
+        className="flex flex-wrap gap-2"
+      >
+        {projectBlock && (
+          <button
+            ref={recoveryButtonRef}
+            className="rounded bg-amber-950 px-3 py-1 text-xs text-amber-300 hover:bg-amber-900"
+            disabled={submitting}
+            onClick={() =>
+              void sendCommand({
+                kind: 'navigate',
+                projectId: project.projectId,
+                surface: 'settings'
+              })
+            }
+          >
+            查看 Project 设置
+          </button>
+        )}
+        {(isTakeover || isFailed) && (
+          <button
+            ref={closeButtonRef}
+            className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+            disabled={submitting}
+            onClick={() => void changeTerminalState('close')}
+          >
+            {terminalCloseLabel()}
+          </button>
+        )}
+        {!isTakeover && !isOpening && (
+          <button
+            ref={openButtonRef}
+            className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
+            disabled={!canOpen}
+            title={terminalOpenTitle()}
+            onClick={() => void changeTerminalState('open')}
+          >
+            {notice?.operation === 'open'
+              ? '重试打开 Terminal'
+              : '打开 Terminal'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
