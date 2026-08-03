@@ -1,5 +1,10 @@
 import { id } from './contract'
-import type { AgentInstanceViewModel, WorkbenchViewModel } from './contract'
+import type {
+  AgentInstanceViewModel,
+  AppliedConfigurationViewModel,
+  ProjectId,
+  WorkbenchViewModel
+} from './contract'
 
 /**
  * Standard mock scenario: two active projects with multiple named agents,
@@ -55,6 +60,90 @@ export function createStandardScenario(): WorkbenchViewModel {
       ...extra
     }
   }
+
+  /**
+   * Applied configuration truth for the Settings A editor (#13). Every
+   * configurable owner (each project + each instance) has an entry with the
+   * full field set; drafts in `configurationDrafts` reference these paths.
+   * `identity.name` mirrors the instance's visible name; run-configuration
+   * fields (model/proxy/env/concurrency/budget/permissions/scope) only take
+   * effect on the next Run.
+   */
+  const MODEL_BY_PROVIDER = new Map<string, string>([
+    [claudeCode, 'claude-sonnet-4'],
+    [codex, 'gpt-5-codex'],
+    [kimiCode, 'kimi-k2']
+  ])
+
+  function projectConfig(
+    ownerProjectId: ProjectId,
+    name: string,
+    primaryConnectionId: string | null,
+    appliedVersion: number
+  ): AppliedConfigurationViewModel {
+    return {
+      owner: { kind: 'project', projectId: ownerProjectId },
+      appliedVersion,
+      values: {
+        'general.name': name,
+        'general.landingSurface': 'overview',
+        'defaults.providerId': claudeCode,
+        'defaults.model': MODEL_BY_PROVIDER.get(claudeCode)!,
+        'defaults.openMode': 'current-panel',
+        'defaults.worktreeMode': 'isolated',
+        'integrations.primaryConnectionId': primaryConnectionId,
+        'integrations.resourceScope':
+          ownerProjectId === projectId ? '销售团队任务清单、产品知识库' : '',
+        'permissions.defaultPolicy': 'ask-each-time'
+      }
+    }
+  }
+
+  function agentConfig(
+    a: AgentInstanceViewModel,
+    appliedVersion: number
+  ): AppliedConfigurationViewModel {
+    return {
+      owner: { kind: 'agent', agentInstanceId: a.agentInstanceId },
+      appliedVersion,
+      values: {
+        'identity.name': a.name,
+        'model.id': MODEL_BY_PROVIDER.get(a.providerId) ?? '',
+        'proxy.http': '',
+        'env.custom': '',
+        'concurrency.priority': 'normal',
+        'budget.maxTokens': 200000
+      }
+    }
+  }
+
+  const agents: AgentInstanceViewModel[] = [
+    agent(ccData, 'cc_data', claudeCode, 'running', now - 60_000, {
+      activeRunId: id('run-001', 'RunId'),
+      // The active Run keeps its launch-time configuration snapshot (#13):
+      // applying newer configuration never rewrites this version.
+      activeRunConfigVersion: 3
+    }),
+    agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000),
+    agent(ccEtl, 'cc_etl', claudeCode, 'failed', now - 1_800_000),
+    agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000, {
+      terminalState: 'active'
+    }),
+    agent(cxForecast, 'cx_forecast', codex, 'queued', now - 600_000, {
+      queueDepth: 1
+    }),
+    agent(cxReview, 'cx_review', codex, 'ready', now - 30_000),
+    agent(kimiViz, 'kimi_visual', kimiCode, 'ready', now - 240_000),
+    agent(kimiDocs, 'kimi_docs', kimiCode, 'unavailable', now - 3_600_000),
+    {
+      ...agent(ccReport, 'cc_report', claudeCode, 'ready', now - 120_000),
+      projectId: researchId
+    },
+    {
+      ...agent(cxSurvey, 'cx_survey', codex, 'ready', now - 900_000),
+      projectId: researchId
+    }
+  ]
 
   return {
     schemaVersion: 1,
@@ -126,30 +215,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         }
       }
     ],
-    agents: [
-      agent(ccData, 'cc_data', claudeCode, 'running', now - 60_000, {
-        activeRunId: id('run-001', 'RunId')
-      }),
-      agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000),
-      agent(ccEtl, 'cc_etl', claudeCode, 'failed', now - 1_800_000),
-      agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000, {
-        terminalState: 'active'
-      }),
-      agent(cxForecast, 'cx_forecast', codex, 'queued', now - 600_000, {
-        queueDepth: 1
-      }),
-      agent(cxReview, 'cx_review', codex, 'ready', now - 30_000),
-      agent(kimiViz, 'kimi_visual', kimiCode, 'ready', now - 240_000),
-      agent(kimiDocs, 'kimi_docs', kimiCode, 'unavailable', now - 3_600_000),
-      {
-        ...agent(ccReport, 'cc_report', claudeCode, 'ready', now - 120_000),
-        projectId: researchId
-      },
-      {
-        ...agent(cxSurvey, 'cx_survey', codex, 'ready', now - 900_000),
-        projectId: researchId
-      }
-    ],
+    agents,
     queue: [
       {
         queueItemId: id('queue-001', 'QueueItemId'),
@@ -175,6 +241,13 @@ export function createStandardScenario(): WorkbenchViewModel {
       }
     ],
     configurationDrafts: [],
+    appliedConfigurations: [
+      projectConfig(projectId, '销售数据分析', connId, 2),
+      projectConfig(researchId, '用户研究', null, 1),
+      ...agents.map((a) =>
+        agentConfig(a, a.agentInstanceId === ccData ? 3 : 1)
+      )
+    ],
     changes: [
       {
         agentInstanceId: ccData,

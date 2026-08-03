@@ -143,6 +143,12 @@ export interface AgentInstanceViewModel {
   doctor: 'ready' | 'blocked'
   /** Epoch ms of the instance's latest known activity, for recency ordering. */
   lastActivityAt?: number
+  /**
+   * The applied configuration version this instance's active Run started
+   * with (Run 配置快照). Applying newer configuration never rewrites it —
+   * run configuration only takes effect on the next Run (US-91).
+   */
+  activeRunConfigVersion?: number
 }
 
 export type ConfigurationOwner =
@@ -154,6 +160,20 @@ export interface ConfigurationDraftViewModel {
   appliedVersion: number
   changes: Array<{ fieldPath: string; applied: unknown; draft: unknown }>
   validationErrors: Array<{ fieldPath?: string; message: string }>
+}
+
+/**
+ * The adapter-owned configuration truth for one owner: every configurable
+ * field's applied value plus the monotonically increasing applied version.
+ * The renderer never invents fields — it renders exactly what the port
+ * exposes here, and drafts (`configurationDrafts`) only reference these
+ * field paths.
+ */
+export interface AppliedConfigurationViewModel {
+  owner: ConfigurationOwner
+  appliedVersion: number
+  /** fieldPath -> applied value for every configurable field of this owner. */
+  values: Record<string, unknown>
 }
 
 export interface QueueItemViewModel {
@@ -248,6 +268,7 @@ export interface WorkbenchViewModel {
   attentionItems: AttentionItemViewModel[]
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
+  appliedConfigurations: AppliedConfigurationViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
   global: {

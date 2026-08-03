@@ -17,6 +17,7 @@ import type {
 import { id } from './workbench/contract'
 import { AgentsSurface } from './agents-surface'
 import { DispatchPicker } from './dispatch-picker'
+import { SettingsSurface } from './settings-surface'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -393,9 +394,18 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 onDispatch={() => setShowPicker(true)}
               />
             )}
+            {project.currentSurface === 'settings' && (
+              <SettingsSurface
+                key={project.projectId}
+                project={project}
+                snapshot={snapshot}
+                sendCommand={sendCommand}
+              />
+            )}
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
-              project.currentSurface !== 'agents' && (
+              project.currentSurface !== 'agents' &&
+              project.currentSurface !== 'settings' && (
                 <PlaceholderSurface surface={project.currentSurface} />
               )}
           </main>
