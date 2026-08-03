@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
-import type { WorkbenchPort } from './workbench/contract'
+import { id } from './workbench/contract'
+import type {
+  CommandResult,
+  WorkbenchCommand,
+  WorkbenchEvent,
+  WorkbenchPort
+} from './workbench/contract'
 
 /**
  * Settings A — the single full configuration editor (#13). Tests drive the
@@ -31,12 +45,189 @@ function summaryPanel(): HTMLElement {
 async function stageText(
   user: ReturnType<typeof userEvent.setup>,
   label: string,
-  value: string
+  value: string,
+  waitForCompletion = true
 ) {
   const input = screen.getByRole('textbox', { name: label })
   await user.clear(input)
   if (value) await user.type(input, value)
   fireEvent.blur(input)
+  if (waitForCompletion) {
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+  }
+}
+
+/** Advances the real adapter once before the first stage reaches it. */
+class RevisionRaceStagePort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private advanced = false
+
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+
+  subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
+    return this.inner.subscribe(listener)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind === 'stage-configuration' && !this.advanced) {
+      this.advanced = true
+      await this.inner.dispatch({
+        kind: 'navigate',
+        commandId: id('cmd-stage-race-advance', 'CommandId'),
+        expectedRevision: command.expectedRevision,
+        projectId: id('proj-sales', 'ProjectId'),
+        surface: 'settings'
+      })
+    }
+    return this.inner.dispatch(command)
+  }
+}
+
+/** Rejects the first stage without publishing an authoritative change. */
+class RejectingStagePort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private stageCount = 0
+
+  constructor(private readonly rejectOnStage = 1) {}
+
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+
+  subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
+    return this.inner.subscribe(listener)
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind === 'stage-configuration') {
+      this.stageCount += 1
+    }
+    if (
+      command.kind === 'stage-configuration' &&
+      this.stageCount === this.rejectOnStage
+    ) {
+      const latest = await this.inner.getSnapshot()
+      return {
+        ok: false,
+        commandId: command.commandId,
+        reason: 'invalid-target',
+        latestRevision: latest.revision,
+        message: '字段验证已失效，请重新输入'
+      }
+    }
+    return this.inner.dispatch(command)
+  }
+}
+
+/** Returns a successful stage response before publishing its buffered event. */
+class ResponseBeforeStageEventPort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private readonly listeners = new Set<(event: WorkbenchEvent) => void>()
+  private readonly bufferedEvents: WorkbenchEvent[] = []
+  private bufferingStage = false
+  stageResponseCount = 0
+
+  constructor() {
+    this.inner.subscribe((event) => {
+      if (this.bufferingStage) {
+        this.bufferedEvents.push(event)
+      } else {
+        for (const listener of this.listeners) listener(event)
+      }
+    })
+  }
+
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+
+  subscribe(listener: (event: WorkbenchEvent) => void) {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind !== 'stage-configuration') {
+      return this.inner.dispatch(command)
+    }
+    this.bufferingStage = true
+    const result = await this.inner.dispatch(command)
+    this.bufferingStage = false
+    this.stageResponseCount += 1
+    return result
+  }
+
+  publishStageEvents(): void {
+    const events = this.bufferedEvents.splice(0)
+    for (const event of events) {
+      for (const listener of this.listeners) listener(event)
+    }
+  }
+}
+
+/** Defers stage commands while every other command uses the real adapter. */
+class DeferredStagePort implements WorkbenchPort {
+  private readonly inner = new MockScenarioAdapter()
+  private readonly pendingStages: Array<{
+    command: WorkbenchCommand
+    resolve: (result: CommandResult) => void
+  }> = []
+  readonly releasedStageCommands: WorkbenchCommand[] = []
+  readonly releasedStageResults: CommandResult[] = []
+
+  get pendingStageCount(): number {
+    return this.pendingStages.length
+  }
+
+  getSnapshot() {
+    return this.inner.getSnapshot()
+  }
+
+  subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
+    return this.inner.subscribe(listener)
+  }
+
+  dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (command.kind !== 'stage-configuration') {
+      return this.inner.dispatch(command)
+    }
+    return new Promise((resolve) => {
+      this.pendingStages.push({ command, resolve })
+    })
+  }
+
+  async releaseNextStage(): Promise<void> {
+    const pending = this.pendingStages.shift()
+    if (!pending) throw new Error('no pending stage command')
+    this.releasedStageCommands.push(pending.command)
+    const result = await this.inner.dispatch(pending.command)
+    this.releasedStageResults.push(result)
+    pending.resolve(result)
+    await Promise.resolve()
+  }
+
+  async rejectNextStage(): Promise<void> {
+    const pending = this.pendingStages.shift()
+    if (!pending) throw new Error('no pending stage command')
+    this.releasedStageCommands.push(pending.command)
+    const snapshot = await this.inner.getSnapshot()
+    const result: CommandResult = {
+      ok: false,
+      commandId: pending.command.commandId,
+      reason: 'invalid-target',
+      latestRevision: snapshot.revision,
+      message: '字段验证已失效，请重新输入'
+    }
+    this.releasedStageResults.push(result)
+    pending.resolve(result)
+    await Promise.resolve()
+  }
 }
 
 describe('Settings A — catalogue and chrome', () => {
@@ -153,6 +344,296 @@ describe('Settings A — draft lifecycle', () => {
     expect(
       within(modelRow.closest('li')!).getByText('下一 Run 生效')
     ).toBeDefined()
+  })
+})
+
+describe('Settings A — asynchronous staging', () => {
+  it('restores authoritative input and shows an alert after a revision race rejects stage', async () => {
+    const port = new RevisionRaceStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '幽灵草稿')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/revision 已过期/)
+    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+      '销售数据分析'
+    )
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    const snapshot = await port.getSnapshot()
+    expect(
+      snapshot.configurationDrafts.some((draft) =>
+        draft.changes.some((change) => change.fieldPath === 'general.name')
+      )
+    ).toBe(false)
+  })
+
+  it('restores authoritative input and shows the reason after a non-stale rejection', async () => {
+    const port = new RejectingStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '不会被接受')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '字段验证已失效，请重新输入'
+    )
+    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+      '销售数据分析'
+    )
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+  })
+
+  it('restores the existing authoritative draft rather than the applied value after rejection', async () => {
+    const port = new RejectingStagePort(2)
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '已暂存名称')
+    expect(screen.getByText('待应用：已暂存名称')).toBeDefined()
+
+    await stageText(user, '项目名称', '被拒绝名称')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '字段验证已失效，请重新输入'
+    )
+    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+      '已暂存名称'
+    )
+    expect(screen.getByText('待应用：已暂存名称')).toBeDefined()
+    const snapshot = await port.getSnapshot()
+    expect(snapshot.configurationDrafts[0].changes[0].draft).toBe('已暂存名称')
+  })
+
+  it('keeps stage pending until a success response is followed by its authoritative event', async () => {
+    const port = new ResponseBeforeStageEventPort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '响应先到', false)
+    await waitFor(() => expect(port.stageResponseCount).toBe(1))
+
+    expect(summaryPanel()).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+
+    await act(async () => port.publishStageEvents())
+
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+    expect(screen.getByText('待应用：响应先到')).toBeDefined()
+    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+      '响应先到'
+    )
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeEnabled()
+  })
+
+  it('drains already queued stages when Settings unmounts before a response', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await user.click(screen.getByRole('button', { name: 'Agent 默认配置' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '默认 Provider' }),
+      'codex'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '新建 Agent 打开方式' }),
+      'background'
+    )
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+
+    await user.click(screen.getByRole('button', { name: '概览' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: '项目设置' })).toBeNull()
+    )
+    await act(async () => port.releaseNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+
+    expect(
+      port.releasedStageCommands.map((command) =>
+        command.kind === 'stage-configuration' ? command.fieldPath : ''
+      )
+    ).toEqual(['defaults.providerId', 'defaults.openMode'])
+    expect(port.releasedStageResults[0]).toMatchObject({
+      ok: false,
+      reason: 'stale-revision'
+    })
+    expect(port.releasedStageResults[1]).toMatchObject({ ok: true })
+  })
+
+  it('serializes rapid stages for one field and keeps Apply disabled until the latest draft is authoritative', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '销售分析 v2', false)
+    await stageText(user, '项目名称', '销售分析 v3', false)
+
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
+
+    await act(async () => port.releaseNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    expect(screen.getByText('待应用：销售分析 v2')).toBeDefined()
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
+
+    await act(async () => port.releaseNextStage())
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+        '销售分析 v3'
+      )
+    )
+    expect(screen.getByText('待应用：销售分析 v3')).toBeDefined()
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeEnabled()
+
+    const snapshot = await port.getSnapshot()
+    const projectDraft = snapshot.configurationDrafts.find(
+      (draft) => draft.owner.kind === 'project'
+    )!
+    expect(projectDraft.changes).toContainEqual({
+      fieldPath: 'general.name',
+      applied: '销售数据分析',
+      draft: '销售分析 v3'
+    })
+  })
+
+  it('queues a pending field edit that returns to the currently shown value', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await stageText(user, '项目名称', '临时名称', false)
+    await stageText(user, '项目名称', '销售数据分析', false)
+
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+
+    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
+      '销售数据分析'
+    )
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    const snapshot = await port.getSnapshot()
+    expect(
+      snapshot.configurationDrafts.some((draft) =>
+        draft.changes.some((change) => change.fieldPath === 'general.name')
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a select edit visible so it can be reverted while staging', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await user.click(screen.getByRole('button', { name: 'Agent 默认配置' }))
+    const provider = screen.getByRole('combobox', { name: '默认 Provider' })
+    await user.selectOptions(provider, 'codex')
+    expect(provider).toHaveValue('codex')
+    await user.selectOptions(provider, 'claude-code')
+
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+
+    expect(provider).toHaveValue('claude-code')
+    const snapshot = await port.getSnapshot()
+    expect(
+      snapshot.configurationDrafts.some((draft) =>
+        draft.changes.some(
+          (change) => change.fieldPath === 'defaults.providerId'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it('keeps a queued rejection alert after a later field succeeds', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await user.click(screen.getByRole('button', { name: 'Agent 默认配置' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '默认 Provider' }),
+      'codex'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '新建 Agent 打开方式' }),
+      'background'
+    )
+
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.rejectNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '字段验证已失效，请重新输入'
+    )
+    expect(screen.getByText('待应用：后台打开')).toBeDefined()
+  })
+
+  it('serializes different fields because they share one global revision', async () => {
+    const port = new DeferredStagePort()
+    const { user } = await gotoSettingsSurface(port)
+
+    await user.click(screen.getByRole('button', { name: 'Agent 默认配置' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '默认 Provider' }),
+      'codex'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '新建 Agent 打开方式' }),
+      'background'
+    )
+
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    await waitFor(() => expect(port.pendingStageCount).toBe(1))
+    await act(async () => port.releaseNextStage())
+    expect(port.releasedStageResults).toHaveLength(2)
+    expect(port.releasedStageResults.every((result) => result.ok)).toBe(true)
+    expect(
+      port.releasedStageCommands.map((command) =>
+        command.kind === 'stage-configuration'
+          ? [command.fieldPath, command.expectedRevision]
+          : []
+      )
+    ).toEqual([
+      ['defaults.providerId', 1],
+      ['defaults.openMode', 2]
+    ])
+    expect(
+      port.releasedStageResults.map((result) =>
+        result.ok ? result.acceptedRevision : -1
+      )
+    ).toEqual([2, 3])
+    await waitFor(() =>
+      expect(summaryPanel()).toHaveAttribute('aria-busy', 'false')
+    )
+
+    const snapshot = await port.getSnapshot()
+    const projectDraft = snapshot.configurationDrafts.find(
+      (draft) => draft.owner.kind === 'project'
+    )!
+    expect(projectDraft.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fieldPath: 'defaults.providerId',
+          draft: 'codex'
+        }),
+        expect.objectContaining({
+          fieldPath: 'defaults.openMode',
+          draft: 'background'
+        })
+      ])
+    )
   })
 })
 
