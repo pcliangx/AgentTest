@@ -312,6 +312,51 @@ describe('Workspace layout — Focus', () => {
       within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
     )
   })
+
+  it('returns focus to the matching directory entry when Focus becomes empty', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(screen.getByRole('button', { name: '退出 Focus' })).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
+
+    expect(screen.queryAllByRole('group', { name: 'Agent 面板' })).toHaveLength(
+      0
+    )
+    expect(
+      screen.queryByRole('button', { name: '退出 Focus' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(
+      within(directory).getByRole('button', { name: /^cc_data/ })
+    ).toHaveFocus()
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('falls back to directory search when the matching entry is filtered out', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    const search = within(directory).getByRole('textbox', {
+      name: '搜索 Agent'
+    })
+    await user.type(search, 'cc_sql')
+    expect(
+      within(directory).queryByRole('button', { name: /^cc_data/ })
+    ).not.toBeInTheDocument()
+
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
+
+    expect(screen.getByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(search).toHaveFocus()
+    expect(document.activeElement).not.toBe(document.body)
+  })
 })
 
 // ---------------------------------------------------------------------------

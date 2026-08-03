@@ -1,7 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject
+} from 'react'
 import type {
-  AgentOpenMode,
+  AgentInstanceId,
   AgentInstanceViewModel,
+  AgentOpenMode,
   AgentRuntimeState,
   AgentWorktreeMode,
   CommandResult,
@@ -64,6 +72,35 @@ export function AgentsSurface({
   }, [snapshot.attentionItems])
   const [layoutNotice, setLayoutNotice] = useState<string | null>(null)
 
+  // Focus may prune the final Panel while the Directory stays mounted.
+  // Bridge the sibling surfaces through raw-ID refs so focus restoration
+  // never needs a selector or an assumption about ID encoding.
+  const directoryAgentButtons = useRef(
+    new Map<AgentInstanceId, HTMLButtonElement>()
+  )
+  const directorySearchInput = useRef<HTMLInputElement>(null)
+  const directoryNewAgentButton = useRef<HTMLButtonElement>(null)
+
+  const registerDirectoryAgentButton = useCallback(
+    (agentInstanceId: AgentInstanceId, element: HTMLButtonElement | null) => {
+      if (element) directoryAgentButtons.current.set(agentInstanceId, element)
+      else directoryAgentButtons.current.delete(agentInstanceId)
+    },
+    []
+  )
+  const focusDirectoryTarget = useCallback(
+    (agentInstanceId?: AgentInstanceId) => {
+      const target =
+        (agentInstanceId
+          ? directoryAgentButtons.current.get(agentInstanceId)
+          : undefined) ??
+        directorySearchInput.current ??
+        directoryNewAgentButton.current
+      target?.focus()
+    },
+    []
+  )
+
   /**
    * The surface's single layout-command path: every layout mutation — from
    * the directory or from the workspace — goes through here, so a
@@ -120,6 +157,9 @@ export function AgentsSurface({
         sendCommand={sendCommand}
         sendLayout={sendLayout}
         onDispatch={onDispatch ?? (() => {})}
+        registerAgentButton={registerDirectoryAgentButton}
+        searchInputRef={directorySearchInput}
+        newAgentButtonRef={directoryNewAgentButton}
       />
       <WorkspaceArea
         project={project}
@@ -128,6 +168,7 @@ export function AgentsSurface({
         planDispatch={planDispatch}
         sendLayout={sendLayout}
         sendCommand={sendCommand}
+        onFocusExitFallback={focusDirectoryTarget}
       />
       {layoutNotice && (
         <div
@@ -165,7 +206,10 @@ function AgentDirectory({
   openAttentionTargets,
   sendCommand,
   sendLayout,
-  onDispatch
+  onDispatch,
+  registerAgentButton,
+  searchInputRef,
+  newAgentButtonRef
 }: {
   project: ProjectViewModel
   agents: AgentInstanceViewModel[]
@@ -174,13 +218,18 @@ function AgentDirectory({
   sendCommand: SendCommand
   sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
   onDispatch: () => void
+  registerAgentButton: (
+    agentInstanceId: AgentInstanceId,
+    element: HTMLButtonElement | null
+  ) => void
+  searchInputRef: RefObject<HTMLInputElement | null>
+  newAgentButtonRef: RefObject<HTMLButtonElement | null>
 }) {
   const [query, setQuery] = useState('')
   const [providerFilter, setProviderFilter] = useState<'all' | string>('all')
   const [stateFilter, setStateFilter] = useState<'all' | AgentRuntimeState>('all')
   const [sortMode, setSortMode] = useState<SortMode>('recent-activity')
   const [showNewAgent, setShowNewAgent] = useState(false)
-  const newAgentButtonRef = useRef<HTMLButtonElement>(null)
 
   const closeNewAgentDialog = () => {
     setShowNewAgent(false)
@@ -294,8 +343,9 @@ function AgentDirectory({
 
       <div className="space-y-1.5 px-3 py-2">
         <input
+          ref={searchInputRef}
           aria-label="搜索 Agent"
-          className="w-full rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
+          className="w-full rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600 focus-visible:outline-2 focus-visible:outline-neutral-400"
           placeholder="按名称搜索…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -356,7 +406,10 @@ function AgentDirectory({
           return (
             <li key={agent.agentInstanceId} className="flex items-stretch">
               <button
-                className="block min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-neutral-900"
+                ref={(element) =>
+                  registerAgentButton(agent.agentInstanceId, element)
+                }
+                className="block min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-neutral-900 focus-visible:outline-2 focus-visible:outline-neutral-400"
                 onClick={() => openAgent(agent.agentInstanceId)}
               >
                 <span className="flex items-center gap-1.5">
