@@ -13,6 +13,7 @@ import type {
   ConfirmationId,
   ConnectionId,
   GlobalSurface,
+  PermissionDecision,
   ProjectId,
   ProjectSurface,
   QueueItemId,
@@ -742,7 +743,8 @@ describe('MockScenarioAdapter — change-layout tab commands', () => {
     const ccSql = after.agents.find((a) => a.agentInstanceId === CC_SQL)!
     expect(ccSql).toBeDefined()
     const ccData = after.agents.find((a) => a.agentInstanceId === CC_DATA)!
-    expect(ccData.runtimeState).toBe('running')
+    // cc_data's active Run is held in permission-requested (#9 scenario).
+    expect(ccData.runtimeState).toBe('permission-requested')
     expect(ccData.activeRunId).toBeDefined()
   })
 
@@ -762,9 +764,10 @@ describe('MockScenarioAdapter — change-layout tab commands', () => {
     expect(layout.root).toBeNull()
     expect(layout.panels[PANEL]).toBeUndefined()
     expect(layout.focusedPanelId).toBeUndefined()
-    // The instance survives with its run untouched.
+    // The instance survives with its run untouched (held in
+    // permission-requested since #9 gave it the actionable request).
     const ccData = after.agents.find((a) => a.agentInstanceId === CC_DATA)!
-    expect(ccData.runtimeState).toBe('running')
+    expect(ccData.runtimeState).toBe('permission-requested')
   })
 
   it('close-tab rejects a tab that is not open', async () => {
@@ -2901,7 +2904,11 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
   })
 
   for (const expected of [
-    { name: 'cc_data', runtimeState: 'running', terminalState: 'closed' },
+    {
+      name: 'cc_data',
+      runtimeState: 'permission-requested',
+      terminalState: 'closed'
+    },
     {
       name: 'cc_sql',
       runtimeState: 'needs-input',
@@ -3034,5 +3041,430 @@ describe('MockScenarioAdapter — concurrency enforcement', () => {
     expect(agent.runtimeState).toBe('queued')
     expect(after.queue.length).toBe(beforeQueue + 1)
     expect(after.projects[0].activeRunCount).toBe(3) // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Permission Center — answer-permission (#9)
+// ---------------------------------------------------------------------------
+
+function answerPermission(
+  commandId: CommandId,
+  expectedRevision: number,
+  request: WorkbenchViewModel['permissionRequests'][number],
+  decision: PermissionDecision
+): WorkbenchCommand {
+  return {
+    kind: 'answer-permission',
+    commandId,
+    expectedRevision,
+    projectId: request.projectId,
+    agentInstanceId: request.agentInstanceId,
+    runId: request.runId,
+    requestId: request.requestId,
+    decision
+  }
+}
+
+function findRequest(
+  snapshot: WorkbenchViewModel,
+  requestId: string
+): WorkbenchViewModel['permissionRequests'][number] {
+  const request = snapshot.permissionRequests.find(
+    (candidate) => candidate.requestId === id(requestId, 'PermissionRequestId')
+  )
+  if (!request) throw new Error(`scenario permission request ${requestId} missing`)
+  return request
+}
+
+describe('MockScenarioAdapter — answer-permission (#9)', () => {
+  it('applies deny: removes the request, records permission-decided activity and resumes the Run', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const request = findRequest(snap, 'perm-001')
+    const agentBefore = snap.agents.find(
+      (a) => a.agentInstanceId === request.agentInstanceId
+    )!
+    expect(agentBefore.runtimeState).toBe('permission-requested')
+    const activeBefore = snap.global.concurrency.activeGlobal
+
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, request, 'deny')
+    )
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.permissionRequests.some((r) => r.requestId === request.requestId)
+    ).toBe(false)
+    const agent = after.agents.find(
+      (a) => a.agentInstanceId === request.agentInstanceId
+    )!
+    expect(agent.runtimeState).toBe('running')
+    // Both states occupy the execution slot — the decision never changes
+    // active-run accounting.
+    expect(after.global.concurrency.activeGlobal).toBe(activeBefore)
+    const entry = after.activity.find((a) => a.kind === 'permission-decided')
+    expect(entry).toBeDefined()
+    expect(entry!.projectId).toBe(request.projectId)
+    expect(entry!.agentInstanceId).toBe(request.agentInstanceId)
+    expect(entry!.summary).toContain('已拒绝')
+    expect(entry!.summary).toContain(request.action)
+  })
+
+  it.each([
+    ['allow-once', '已允许一次'],
+    ['allow-current-run', '已允许当前 Run']
+  ] as const)('records %s with its exact scope label', async (decision, label) => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const request = findRequest(snap, 'perm-001')
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, request, decision)
+    )
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const entry = after.activity.find((a) => a.kind === 'permission-decided')!
+    expect(entry.summary).toContain(label)
+  })
+
+  it('rejects a decision the request does not offer', async () => {
+    const scenario = createStandardScenario()
+    // Narrow the authoritative offer: this request only allows denial.
+    const stored = scenario.permissionRequests.find(
+      (candidate) =>
+        candidate.requestId === id('perm-001', 'PermissionRequestId')
+    )!
+    stored.decisions = ['deny']
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+    const request = findRequest(snap, 'perm-001')
+
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, request, 'allow-once')
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+    // Rejection purity: the request stays pending and nothing is recorded.
+    const after = await adapter.getSnapshot()
+    expect(
+      after.permissionRequests.some((r) => r.requestId === request.requestId)
+    ).toBe(true)
+    expect(after.activity.some((a) => a.kind === 'permission-decided')).toBe(
+      false
+    )
+  })
+
+  it('rejects an already-handled request (duplicate response)', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const request = findRequest(snap, 'perm-001')
+    const first = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, request, 'allow-once')
+    )
+    expect(first.ok).toBe(true)
+    const between = await adapter.getSnapshot()
+    const second = await adapter.dispatch(
+      answerPermission(cmdId(2), between.revision, request, 'deny')
+    )
+    expect(second.ok).toBe(false)
+    if (!second.ok) {
+      expect(second.reason).toBe('invalid-target')
+    }
+    // The first decision stands — no extra activity, no state flip-flop.
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.filter((a) => a.kind === 'permission-decided')
+    ).toHaveLength(1)
+    expect(
+      after.activity.find((a) => a.kind === 'permission-decided')!.summary
+    ).toContain('已允许一次')
+  })
+
+  it('rejects a request that never existed', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const ghost = {
+      ...findRequest(snap, 'perm-001'),
+      requestId: id('perm-ghost', 'PermissionRequestId')
+    }
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, ghost, 'deny')
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+  })
+
+  it('forces deny with a timeout note when the request already expired', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const expired = findRequest(snap, 'perm-002')
+    expect(expired.expiresAt).toBeLessThan(Date.now())
+
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, expired, 'allow-current-run')
+    )
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.permissionRequests.some((r) => r.requestId === expired.requestId)
+    ).toBe(false)
+    const entry = after.activity.find((a) => a.kind === 'permission-decided')!
+    expect(entry.summary).toContain('超时')
+    expect(entry.summary).toContain('拒绝')
+    expect(entry.summary).not.toContain('已允许当前 Run')
+  })
+
+  it('resolves the linked permission attention item and recomputes attention counts', async () => {
+    const adapter = new MockScenarioAdapter()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await adapter.getSnapshot()
+    const linked = snap.attentionItems.find(
+      (item) => item.attentionItemId === id('att-001', 'AttentionItemId')
+    )!
+    expect(linked.state).toBe('open')
+    const projectOpenBefore = snap.projects[0].attentionCount
+    const globalOpenBefore = snap.global.attentionCount
+
+    const result = await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, findRequest(snap, 'perm-001'), 'deny')
+    )
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const resolved = after.attentionItems.find(
+      (item) => item.attentionItemId === linked.attentionItemId
+    )!
+    expect(resolved.state).toBe('resolved')
+    expect(after.projects[0].attentionCount).toBe(projectOpenBefore - 1)
+    expect(after.global.attentionCount).toBe(globalOpenBefore - 1)
+    const changed = events.find(
+      (event): event is Extract<WorkbenchEvent, { kind: 'attention-changed' }> =>
+        event.kind === 'attention-changed' &&
+        event.attentionItemId === linked.attentionItemId
+    )
+    expect(changed).toBeDefined()
+    expect(changed!.state).toBe('resolved')
+  })
+
+  it('never starts an Agent as a side effect of a decision', async () => {
+    const adapter = new MockScenarioAdapter()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await adapter.getSnapshot()
+    const runActivityBefore = snap.activity.filter(
+      (entry) => entry.kind === 'run-started'
+    ).length
+
+    await adapter.dispatch(
+      answerPermission(cmdId(1), snap.revision, findRequest(snap, 'perm-001'), 'allow-once')
+    )
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.filter((entry) => entry.kind === 'run-started')
+    ).toHaveLength(runActivityBefore)
+    expect(events.some((event) => event.kind === 'dispatch-created')).toBe(false)
+    expect(events.some((event) => event.kind === 'permission-requested')).toBe(
+      false
+    )
+    expect(after.global.concurrency.activeGlobal).toBe(
+      snap.global.concurrency.activeGlobal
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Global Attention — resolve-attention (#9)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — resolve-attention (#9)', () => {
+  it('marks an open item resolved and records it in Project Activity', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const target = snap.attentionItems.find(
+      (item) => item.attentionItemId === id('att-005', 'AttentionItemId')
+    )!
+    expect(target.state).toBe('open')
+
+    const result = await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      attentionItemId: target.attentionItemId
+    })
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const resolved = after.attentionItems.find(
+      (item) => item.attentionItemId === target.attentionItemId
+    )!
+    expect(resolved.state).toBe('resolved')
+    const entry = after.activity.find((a) => a.kind === 'attention-resolved')!
+    expect(entry).toBeDefined()
+    expect(entry.projectId).toBe(
+      target.target.kind === 'project'
+        ? target.target.projectId
+        : target.target.projectId
+    )
+    expect(entry.summary).toContain(target.title)
+  })
+
+  it('recomputes project and global attention counts and emits attention-changed', async () => {
+    const adapter = new MockScenarioAdapter()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await adapter.getSnapshot()
+    const target = snap.attentionItems.find(
+      (item) => item.attentionItemId === id('att-005', 'AttentionItemId')
+    )!
+    const projectBefore = snap.projects[0].attentionCount
+    const globalBefore = snap.global.attentionCount
+
+    await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      attentionItemId: target.attentionItemId
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].attentionCount).toBe(projectBefore - 1)
+    expect(after.global.attentionCount).toBe(globalBefore - 1)
+    const changed = events.find(
+      (event): event is Extract<WorkbenchEvent, { kind: 'attention-changed' }> =>
+        event.kind === 'attention-changed' &&
+        event.attentionItemId === target.attentionItemId
+    )
+    expect(changed).toBeDefined()
+    expect(changed!.state).toBe('resolved')
+  })
+
+  it('rejects resolving an unknown or already-resolved item', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const target = snap.attentionItems.find(
+      (item) => item.attentionItemId === id('att-005', 'AttentionItemId')
+    )!
+    await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      attentionItemId: target.attentionItemId
+    })
+    const between = await adapter.getSnapshot()
+    const second = await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(2),
+      expectedRevision: between.revision,
+      attentionItemId: target.attentionItemId
+    })
+    expect(second.ok).toBe(false)
+    if (!second.ok) expect(second.reason).toBe('invalid-target')
+
+    const ghost = await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(3),
+      expectedRevision: between.revision,
+      attentionItemId: id('att-ghost', 'AttentionItemId')
+    })
+    expect(ghost.ok).toBe(false)
+    if (!ghost.ok) expect(ghost.reason).toBe('invalid-target')
+  })
+
+  it('does not start Agents or dispatch work when resolving attention', async () => {
+    const adapter = new MockScenarioAdapter()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await adapter.getSnapshot()
+    const target = snap.attentionItems.find(
+      (item) => item.attentionItemId === id('att-005', 'AttentionItemId')
+    )!
+    const runActivityBefore = snap.activity.filter(
+      (entry) => entry.kind === 'run-started'
+    ).length
+
+    await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      attentionItemId: target.attentionItemId
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.filter((entry) => entry.kind === 'run-started')
+    ).toHaveLength(runActivityBefore)
+    expect(events.some((event) => event.kind === 'dispatch-created')).toBe(false)
+    expect(after.global.concurrency.activeGlobal).toBe(
+      snap.global.concurrency.activeGlobal
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Global Attention — scenario aggregation data (#9)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — attention scenario data (#9)', () => {
+  it('aggregates every attention kind across all projects', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const open = snap.attentionItems.filter((item) => item.state === 'open')
+    const kinds = new Set(open.map((item) => item.kind))
+    for (const kind of [
+      'permission-requested',
+      'needs-input',
+      'failed',
+      'interrupted',
+      'completed',
+      'connection-conflict',
+      'provider-unavailable'
+    ] as const) {
+      expect(kinds.has(kind)).toBe(true)
+    }
+    // Cross-project: at least one open item outside the active project.
+    expect(
+      open.some((item) => item.target.projectId !== snap.activeProjectId)
+    ).toBe(true)
+  })
+
+  it('covers every deep-link target type with stable branded IDs', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const open = snap.attentionItems.filter((item) => item.state === 'open')
+    const targetKinds = new Set(open.map((item) => item.target.kind))
+    for (const kind of [
+      'project',
+      'agent',
+      'run',
+      'project-task',
+      'external-task',
+      'knowledge',
+      'handoff'
+    ] as const) {
+      expect(targetKinds.has(kind)).toBe(true)
+    }
+  })
+
+  it('keeps attention counts consistent with the authoritative open items', async () => {
+    const scenario = createStandardScenario()
+    // Corrupt the projections on purpose — the adapter must repair them from
+    // the authoritative item list instead of trusting stale summaries.
+    scenario.projects[0].attentionCount = 99
+    scenario.global.attentionCount = 99
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+    for (const project of snap.projects) {
+      const open = snap.attentionItems.filter(
+        (item) => item.state === 'open' && item.target.projectId === project.projectId
+      ).length
+      expect(project.attentionCount).toBe(open)
+    }
+    expect(snap.global.attentionCount).toBe(
+      snap.attentionItems.filter((item) => item.state === 'open').length
+    )
   })
 })

@@ -8,6 +8,7 @@ import type {
   DispatchPlanRequest,
   DispatchPlanResult,
   PanelId,
+  PermissionDecision,
   ProjectId,
   WorkbenchCommand,
   WorkbenchEvent,
@@ -63,6 +64,7 @@ type PostDispatchEvent =
       Extract<WorkbenchEvent, { kind: 'configuration-applied' }>,
       'revision'
     >
+  | Omit<Extract<WorkbenchEvent, { kind: 'attention-changed' }>, 'revision'>
 
 type ConfigurationDraftEntry =
   WorkbenchViewModel['configurationDrafts'][number]
@@ -235,6 +237,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     // projections and may arrive stale, so repair them before exposing or
     // scheduling against the snapshot (#39).
     this.recomputeActiveRunCounts()
+    // Attention counts are projections of the authoritative item list (#9).
+    this.recomputeAttentionCounts()
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
@@ -1456,6 +1460,122 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         return null
       }
+      case 'answer-permission': {
+        const request = this.snapshot.permissionRequests.find(
+          (candidate) => candidate.requestId === command.requestId
+        )
+        if (
+          !request ||
+          request.projectId !== command.projectId ||
+          request.agentInstanceId !== command.agentInstanceId ||
+          request.runId !== command.runId
+        ) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '权限请求不存在或已处理'
+          )
+        }
+        if (!request.decisions.includes(command.decision)) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '该权限请求不提供此决定'
+          )
+        }
+        // Timeout is simulated as denial (UX-v0.2 §10): an expired request
+        // can no longer be allowed — the effective decision collapses to
+        // deny, no matter which action the user clicked.
+        const timedOut = Date.now() > request.expiresAt
+        const effectiveDecision: PermissionDecision = timedOut
+          ? 'deny'
+          : command.decision
+        this.snapshot.permissionRequests =
+          this.snapshot.permissionRequests.filter(
+            (candidate) => candidate.requestId !== request.requestId
+          )
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === request.agentInstanceId
+        )
+        // The decision releases the held Run back to running; it never
+        // starts or stops work by itself.
+        if (agent?.runtimeState === 'permission-requested') {
+          agent.runtimeState = 'running'
+        }
+        const decidedAt = Date.now()
+        if (agent) agent.lastActivityAt = decidedAt
+        const decisionLabel =
+          effectiveDecision === 'deny'
+            ? '已拒绝'
+            : effectiveDecision === 'allow-once'
+              ? '已允许一次'
+              : '已允许当前 Run'
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: request.projectId,
+            agentInstanceId: request.agentInstanceId,
+            timestamp: decidedAt,
+            kind: 'permission-decided',
+            summary: `${agent?.name ?? request.agentInstanceId} 的权限请求${decisionLabel}：${request.action}${timedOut ? '（请求已超时，按拒绝处理）' : ''}`
+          },
+          ...this.snapshot.activity
+        ]
+        // A handled request clears its Attention projection in the same
+        // transition: open permission-requested items pointing at this Run
+        // or Agent resolve without a separate user action.
+        for (const item of this.snapshot.attentionItems) {
+          if (item.state !== 'open' || item.kind !== 'permission-requested') {
+            continue
+          }
+          const linked =
+            (item.target.kind === 'run' &&
+              item.target.runId === request.runId) ||
+            (item.target.kind === 'agent' &&
+              item.target.agentInstanceId === request.agentInstanceId)
+          if (!linked) continue
+          item.state = 'resolved'
+          postEvents.push({
+            kind: 'attention-changed',
+            attentionItemId: item.attentionItemId,
+            state: 'resolved'
+          })
+        }
+        this.recomputeAttentionCounts()
+        return null
+      }
+      case 'resolve-attention': {
+        const item = this.snapshot.attentionItems.find(
+          (candidate) => candidate.attentionItemId === command.attentionItemId
+        )
+        if (!item || item.state !== 'open') {
+          return this.reject(
+            command,
+            'invalid-target',
+            '关注项不存在或已处理'
+          )
+        }
+        item.state = 'resolved'
+        // Resolved items leave the pending list but stay visible as Project
+        // Activity — the Center is a projection, not the record of truth.
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: item.target.projectId,
+            timestamp: Date.now(),
+            kind: 'attention-resolved',
+            summary: `已处理关注：${item.title}`
+          },
+          ...this.snapshot.activity
+        ]
+        postEvents.push({
+          kind: 'attention-changed',
+          attentionItemId: item.attentionItemId,
+          state: 'resolved'
+        })
+        this.recomputeAttentionCounts()
+        return null
+      }
       case 'set-terminal-takeover': {
         const project = this.snapshot.projects.find(
           (p) => p.projectId === command.projectId
@@ -1564,6 +1684,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
     }
     this.snapshot.global.concurrency.activeGlobal = this.snapshot.agents.filter(
       (agent) => isActiveStructuredRunState(agent.runtimeState)
+    ).length
+  }
+
+  /** Rebuilds attention summaries exclusively from authoritative open items. */
+  private recomputeAttentionCounts(): void {
+    for (const project of this.snapshot.projects) {
+      project.attentionCount = this.snapshot.attentionItems.filter(
+        (item) =>
+          item.state === 'open' && item.target.projectId === project.projectId
+      ).length
+    }
+    this.snapshot.global.attentionCount = this.snapshot.attentionItems.filter(
+      (item) => item.state === 'open'
     ).length
   }
 

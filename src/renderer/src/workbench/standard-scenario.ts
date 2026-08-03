@@ -146,7 +146,7 @@ export function createStandardScenario(
   }
 
   const agents: AgentInstanceViewModel[] = [
-    agent(ccData, 'cc_data', claudeCode, 'running', now - 60_000, {
+    agent(ccData, 'cc_data', claudeCode, 'permission-requested', now - 60_000, {
       activeRunId: id('run-001', 'RunId'),
       // The active Run keeps its launch-time configuration snapshot (#13):
       // applying newer configuration never rewrites this version.
@@ -187,7 +187,7 @@ export function createStandardScenario(
         activity: 'active',
         activeRunCount: 2,
         queuedRunCount: 2,
-        attentionCount: 2,
+        attentionCount: 9,
         primaryConnectionId: connId,
         resourceBindings: [
           {
@@ -226,7 +226,7 @@ export function createStandardScenario(
         activity: 'idle',
         activeRunCount: 0,
         queuedRunCount: 0,
-        attentionCount: 0,
+        attentionCount: 2,
         // No primary connection and no resource bindings — exercises the
         // "unbound" preview path (#6).
         resourceBindings: [],
@@ -260,19 +260,138 @@ export function createStandardScenario(
         priority: 'low'
       }
     ],
-    permissionRequests: [],
+    permissionRequests: [
+      {
+        // Actionable request holding cc_data's active Run (#9): the Run stays
+        // in `permission-requested` until an explicit deny / allow-once /
+        // allow-current-run decision.
+        requestId: id('perm-001', 'PermissionRequestId'),
+        projectId,
+        agentInstanceId: ccData,
+        runId: id('run-001', 'RunId'),
+        action: '写入文件',
+        scope: 'worktree 内 src/data/**',
+        reason: '清洗 Q2 销售流水需要写入中间结果',
+        expiresAt: now + 300_000,
+        decisions: ['deny', 'allow-once', 'allow-current-run']
+      },
+      {
+        // Already expired: timeout is simulated as denial, so this request
+        // can no longer be allowed (#9).
+        requestId: id('perm-002', 'PermissionRequestId'),
+        projectId,
+        agentInstanceId: ccSql,
+        runId: id('run-sql-001', 'RunId'),
+        action: '读取外部 API',
+        scope: 'https://api.example.com',
+        reason: '同步 6 月数据需要访问外部数据源',
+        expiresAt: now - 1_000,
+        decisions: ['deny', 'allow-once', 'allow-current-run']
+      }
+    ],
     attentionItems: [
       {
         attentionItemId: id('att-001', 'AttentionItemId'),
-        target: { kind: 'agent', projectId, agentInstanceId: ccSql },
+        kind: 'permission-requested',
+        target: {
+          kind: 'run',
+          projectId,
+          agentInstanceId: ccData,
+          runId: id('run-001', 'RunId')
+        },
         state: 'open',
-        title: 'cc_sql 需要确认文件写入权限'
+        title: 'cc_data 请求写入文件权限'
       },
       {
         attentionItemId: id('att-002', 'AttentionItemId'),
-        target: { kind: 'project', projectId },
+        kind: 'needs-input',
+        target: { kind: 'agent', projectId, agentInstanceId: ccSql },
         state: 'open',
-        title: 'Q2 销售流水文件缺少 6 月数据'
+        title: 'cc_sql 等待输入：确认 6 月数据口径'
+      },
+      {
+        attentionItemId: id('att-003', 'AttentionItemId'),
+        kind: 'failed',
+        target: { kind: 'agent', projectId, agentInstanceId: ccEtl },
+        state: 'open',
+        title: 'cc_etl 的 Run 失败：连接超时'
+      },
+      {
+        attentionItemId: id('att-004', 'AttentionItemId'),
+        kind: 'interrupted',
+        target: {
+          kind: 'run',
+          projectId,
+          agentInstanceId: ccEtl,
+          runId: id('run-etl-001', 'RunId')
+        },
+        state: 'open',
+        title: 'cc_etl 的上一次 Run 被中断'
+      },
+      {
+        attentionItemId: id('att-005', 'AttentionItemId'),
+        kind: 'completed',
+        target: { kind: 'agent', projectId, agentInstanceId: cxReview },
+        state: 'open',
+        title: 'cx_review 已完成客户流失复核'
+      },
+      {
+        attentionItemId: id('att-006', 'AttentionItemId'),
+        kind: 'connection-conflict',
+        target: {
+          kind: 'external-task',
+          projectId,
+          externalTaskId: id('ext-task-001', 'ExternalTaskId')
+        },
+        state: 'open',
+        title: '飞书任务「Q2 销售目标」存在版本冲突'
+      },
+      {
+        attentionItemId: id('att-007', 'AttentionItemId'),
+        kind: 'provider-unavailable',
+        target: { kind: 'agent', projectId, agentInstanceId: kimiDocs },
+        state: 'open',
+        title: 'kimi_docs 不可用：Provider 连接失败'
+      },
+      {
+        attentionItemId: id('att-008', 'AttentionItemId'),
+        kind: 'completed',
+        target: {
+          kind: 'project-task',
+          projectId,
+          projectTaskId: id('ptask-001', 'ProjectTaskId')
+        },
+        state: 'open',
+        title: '本地任务「月度报表」已完成'
+      },
+      {
+        attentionItemId: id('att-009', 'AttentionItemId'),
+        kind: 'connection-conflict',
+        target: {
+          kind: 'knowledge',
+          projectId,
+          knowledgeResourceId: id('know-001', 'KnowledgeResourceId')
+        },
+        state: 'open',
+        title: '销售知识库有未同步的修改'
+      },
+      {
+        attentionItemId: id('att-010', 'AttentionItemId'),
+        kind: 'failed',
+        target: {
+          kind: 'handoff',
+          projectId: researchId,
+          handoffId: id('handoff-001', 'HandoffId')
+        },
+        state: 'open',
+        title: '交接包不完整：缺少验证结果'
+      },
+      {
+        attentionItemId: id('att-011', 'AttentionItemId'),
+        kind: 'completed',
+        target: { kind: 'project', projectId: researchId },
+        state: 'open',
+        title: '用户研究：后台 Project 已完成全部 Run'
       }
     ],
     configurationDrafts: [],
@@ -370,7 +489,7 @@ export function createStandardScenario(
       }
     ],
     global: {
-      attentionCount: 2,
+      attentionCount: 11,
       concurrency: {
         perAgentLimit: 1,
         projectLimit: 3,

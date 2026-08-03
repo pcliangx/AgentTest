@@ -80,6 +80,19 @@ export type GlobalSurface = 'connections' | 'provider-health' | 'global-settings
 export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
 export type AgentWorktreeMode = 'isolated' | 'read-only-shared'
 
+/**
+ * Attention categories aggregated by the Global Attention Center (#9).
+ * The list mirrors UX-v0.2 §10; it is extensible, never Provider-specific.
+ */
+export type AttentionItemKind =
+  | 'permission-requested'
+  | 'needs-input'
+  | 'failed'
+  | 'interrupted'
+  | 'completed'
+  | 'connection-conflict'
+  | 'provider-unavailable'
+
 // ---------------------------------------------------------------------------
 // View models
 // ---------------------------------------------------------------------------
@@ -192,6 +205,10 @@ export interface PermissionRequestViewModel {
   projectId: ProjectId
   agentInstanceId: AgentInstanceId
   runId: RunId
+  /** The concrete action awaiting approval, e.g. 写入文件. */
+  action: string
+  /** The effective scope the decision applies to, e.g. worktree 内 src/**. */
+  scope: string
   reason: string
   expiresAt: number
   decisions: PermissionDecision[]
@@ -221,6 +238,7 @@ export type AttentionTarget =
 
 export interface AttentionItemViewModel {
   attentionItemId: AttentionItemId
+  kind: AttentionItemKind
   target: AttentionTarget
   state: 'open' | 'resolved'
   title: string
@@ -242,6 +260,7 @@ export type ActivityKind =
   | 'run-cancelled'
   | 'configuration-applied'
   | 'permission-decided'
+  | 'attention-resolved'
   | 'instruction-sent'
   | 'dispatch-created'
   | 'queue-cancelled'

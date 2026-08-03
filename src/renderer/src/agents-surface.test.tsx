@@ -80,9 +80,10 @@ describe('Agents surface — Agent Directory', () => {
 
   it('filters by runtime state', async () => {
     const { user, directory } = await gotoAgentsSurface()
+    // cc_data's active Run is held in permission-requested (#9 scenario).
     await user.selectOptions(
       within(directory).getByRole('combobox', { name: '按状态过滤' }),
-      '运行中'
+      '等待权限'
     )
     const names = directoryNames(directory)
     expect(names).toHaveLength(1)
@@ -390,7 +391,8 @@ describe('Agents surface — unique Agent Tab', () => {
 
     expect(screen.queryByRole('tab', { name: /cc_data/ })).toBeNull()
     const entry = within(directory).getByRole('button', { name: /^cc_data/ })
-    expect(entry).toHaveTextContent('运行中')
+    // cc_data's active Run is held in permission-requested (#9 scenario).
+    expect(entry).toHaveTextContent('等待权限')
   })
 
   it('closing the last tab shows the empty workspace state', async () => {
@@ -408,7 +410,8 @@ describe('Agents surface — Agent View', () => {
     // cc_data is open by default: name primary, provider and state secondary.
     expect(within(view).getByRole('heading', { name: 'cc_data' })).toBeVisible()
     expect(view).toHaveTextContent('Claude Code')
-    expect(view).toHaveTextContent('运行中')
+    // cc_data's active Run is held in permission-requested (#9 scenario).
+    expect(view).toHaveTextContent('等待权限')
 
     for (const label of ['对话', '活动', '改动', 'Terminal']) {
       expect(

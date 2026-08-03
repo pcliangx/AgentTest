@@ -661,7 +661,7 @@ describe('Workspace layout — no lifecycle side effects', () => {
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
     expect(
       within(directory).getByRole('button', { name: /^cc_data/ })
-    ).toHaveTextContent('运行中')
+    ).toHaveTextContent('等待权限')
   })
 })
 
@@ -1245,22 +1245,27 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
   it.each([
     {
       agentName: 'cc_data',
+      // #9 attention items badge entries with open agent-targeted items.
+      badge: '',
       stateLabel: '收尾中',
       chatText: '新指令将进入第 1 位',
       terminalDisabled: true
     },
     {
       agentName: 'cc_etl',
+      badge: ' 有待处理事项',
       stateLabel: '已中断',
       chatText: '暂无对话记录',
       terminalDisabled: false
     }
   ] as const)(
     'shows $stateLabel text, accessible name and actions for $agentName',
-    async ({ agentName, stateLabel, chatText, terminalDisabled }) => {
+    async ({ agentName, badge, stateLabel, chatText, terminalDisabled }) => {
       const { user, directory } = await gotoLifecycleView()
       const directoryEntry = within(directory).getByRole('button', {
-        name: new RegExp(`^${agentName} Claude Code · ${stateLabel}`)
+        name: new RegExp(
+          `^${agentName}${badge} Claude Code · ${stateLabel}`
+        )
       })
       await user.click(directoryEntry)
 
@@ -1293,7 +1298,8 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       const { user, directory } = await gotoLifecycleView()
       await user.click(
         within(directory).getByRole('button', {
-          name: /^cx_review Codex · 就绪/
+          // cx_review carries an open completed attention item (#9).
+          name: /^cx_review 有待处理事项 Codex · 就绪/
         })
       )
 
@@ -1330,7 +1336,10 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
     const { user, directory } = await gotoLifecycleView()
 
     await user.click(
-      within(directory).getByRole('button', { name: /^cc_etl Claude Code/ })
+      // cc_etl carries an open failed attention item (#9).
+      within(directory).getByRole('button', {
+        name: /^cc_etl 有待处理事项 Claude Code/
+      })
     )
     const heading = await screen.findByRole('heading', { name: 'cc_etl' })
     const view = heading.closest(

@@ -80,13 +80,16 @@ const GIT_LABEL: Record<string, string> = {
 export function SettingsSurface({
   project,
   snapshot,
-  sendCommand
+  sendCommand,
+  initialSection
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   sendCommand: SendCommand
+  /** Optional deep-linked section (e.g. permissions from the Permission Center). */
+  initialSection?: SectionKey
 }) {
-  const [section, setSection] = useState<SectionKey>('general')
+  const [section, setSection] = useState<SectionKey>(initialSection ?? 'general')
   const projectAgents = snapshot.agents.filter(
     (a) => a.projectId === project.projectId
   )

@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
+  AgentInstanceId,
   AgentProviderId,
+  AttentionItemId,
+  AttentionTarget,
   CommandResult,
   ConfirmationId,
   ConnectionId,
   GlobalSurface,
+  PanelId,
+  PermissionDecision,
+  PermissionRequestViewModel,
   ProjectId,
   ProjectSurface,
   ProjectViewModel,
@@ -17,6 +23,8 @@ import type {
 import { id } from './workbench/contract'
 import { activityKindLabel } from './activity-display'
 import { AgentsSurface } from './agents-surface'
+import { AttentionDrawer } from './attention-drawer'
+import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
 
@@ -221,6 +229,15 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // The unified Dispatch Picker lives at shell level so all Project surfaces
   // open the same dispatcher instead of owning divergent implementations.
   const [showPicker, setShowPicker] = useState(false)
+  // Global Attention Center (#9): one shell-level drawer over every surface.
+  const [showAttention, setShowAttention] = useState(false)
+  // Undelivered deep-link targets stay retained for their placeholder page
+  // until the user navigates somewhere else explicitly.
+  const [retainedDeepLink, setRetainedDeepLink] =
+    useState<AttentionTarget | null>(null)
+  // Permanent permission policy is managed only in Settings; a request from
+  // the Permission Center remounts Settings on its permissions section.
+  const [permissionsNavNonce, setPermissionsNavNonce] = useState(0)
 
   if (!snapshot) {
     return (
@@ -249,6 +266,104 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         .filter((a) => a.projectId === project.projectId)
         .sort((a, b) => b.timestamp - a.timestamp)
     : []
+
+  /**
+   * Attention deep links (#9). Delivered targets navigate straight to their
+   * work entry (overview / unique Agent Tab); undelivered details retain the
+   * target and land on the explicit placeholder page of their surface.
+   */
+  const openAgentWorkspace = async (
+    targetProject: ProjectViewModel,
+    agentInstanceId: AgentInstanceId
+  ): Promise<void> => {
+    const panels = Object.entries(targetProject.layout.panels) as Array<
+      [PanelId, { tabs: AgentInstanceId[] }]
+    >
+    const holder = panels.find(([, panel]) =>
+      panel.tabs.includes(agentInstanceId)
+    )
+    if (holder) {
+      await sendCommand({
+        kind: 'change-layout',
+        projectId: targetProject.projectId,
+        operation: {
+          kind: 'activate-tab',
+          panelId: holder[0],
+          agentInstanceId
+        }
+      })
+      return
+    }
+    const targetPanelId =
+      targetProject.layout.focusedPanelId ??
+      panels[0]?.[0] ??
+      id('panel-auto', 'PanelId')
+    await sendCommand({
+      kind: 'change-layout',
+      projectId: targetProject.projectId,
+      operation: { kind: 'open-tab', panelId: targetPanelId, agentInstanceId }
+    })
+  }
+
+  const openAttentionTarget = async (
+    target: AttentionTarget
+  ): Promise<void> => {
+    setShowAttention(false)
+    const targetProject = snapshot.projects.find(
+      (p) => p.projectId === target.projectId
+    )
+    if (!targetProject) return
+    setRetainedDeepLink(
+      target.kind === 'project' || target.kind === 'agent' || target.kind === 'run'
+        ? null
+        : target
+    )
+    switch (target.kind) {
+      case 'project':
+        await navigate(target.projectId, 'overview')
+        return
+      case 'agent':
+      case 'run':
+        await navigate(target.projectId, 'agents')
+        await openAgentWorkspace(targetProject, target.agentInstanceId)
+        return
+      case 'project-task':
+      case 'external-task':
+        await navigate(target.projectId, 'tasks')
+        return
+      case 'knowledge':
+        await navigate(target.projectId, 'knowledge')
+        return
+      case 'handoff':
+        await navigate(target.projectId, 'handoffs')
+    }
+  }
+
+  const answerPermission = (
+    request: PermissionRequestViewModel,
+    decision: PermissionDecision
+  ): void => {
+    void sendCommand({
+      kind: 'answer-permission',
+      projectId: request.projectId,
+      agentInstanceId: request.agentInstanceId,
+      runId: request.runId,
+      requestId: request.requestId,
+      decision
+    })
+  }
+
+  // Permanent policy is never created from a request; the Permission Center
+  // only navigates into the Settings permissions section (UX-v0.2 §10).
+  const managePermanentPolicy = (projectId: ProjectId): void => {
+    setShowAttention(false)
+    setPermissionsNavNonce((nonce) => nonce + 1)
+    void navigate(projectId, 'settings')
+  }
+
+  const resolveAttention = (attentionItemId: AttentionItemId): void => {
+    void sendCommand({ kind: 'resolve-attention', attentionItemId })
+  }
 
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
@@ -290,6 +405,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            aria-label="Global Attention"
+            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+            onClick={() => setShowAttention(true)}
+          >
+            关注 {snapshot.global.attentionCount}
+          </button>
           {project && (
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
@@ -349,6 +471,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
                 value={project.projectId}
                 onChange={(e) => {
+                  setRetainedDeepLink(null)
+                  setPermissionsNavNonce(0)
                   const targetId = id(e.target.value, 'ProjectId')
                   const target = snapshot.projects.find(
                     (p) => p.projectId === targetId
@@ -373,7 +497,14 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                       ? 'bg-neutral-800 text-neutral-100'
                       : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
                   }`}
-                  onClick={() => void navigate(project.projectId, surface)}
+                  onClick={() => {
+                    setRetainedDeepLink(null)
+                    // The permissions deep link is one-shot: manual surface
+                    // navigation consumes it so later Settings visits open
+                    // on the default section again.
+                    setPermissionsNavNonce(0)
+                    void navigate(project.projectId, surface)
+                  }}
                 >
                   {label}
                 </button>
@@ -406,17 +537,28 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )}
             {project.currentSurface === 'settings' && (
               <SettingsSurface
-                key={project.projectId}
+                key={`${project.projectId}:${permissionsNavNonce}`}
                 project={project}
                 snapshot={snapshot}
                 sendCommand={sendCommand}
+                initialSection={
+                  permissionsNavNonce > 0 ? 'permissions' : undefined
+                }
               />
             )}
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
               project.currentSurface !== 'agents' &&
               project.currentSurface !== 'settings' && (
-                <PlaceholderSurface surface={project.currentSurface} />
+                <PlaceholderSurface
+                  surface={project.currentSurface}
+                  retainedTarget={
+                    retainedDeepLink &&
+                    deepLinkSurface(retainedDeepLink) === project.currentSurface
+                      ? retainedDeepLink
+                      : null
+                  }
+                />
               )}
           </main>
         </div>
@@ -436,6 +578,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           planDispatch={planDispatch}
           sendCommand={sendCommand}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {showAttention && (
+        <AttentionDrawer
+          snapshot={snapshot}
+          onClose={() => setShowAttention(false)}
+          onOpenTarget={(target) => void openAttentionTarget(target)}
+          onAnswerPermission={answerPermission}
+          onManagePolicy={managePermanentPolicy}
+          onResolve={resolveAttention}
         />
       )}
 
@@ -567,15 +720,43 @@ function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
   )
 }
 
-function PlaceholderSurface({ surface }: { surface: ProjectSurface }) {
+function PlaceholderSurface({
+  surface,
+  retainedTarget
+}: {
+  surface: ProjectSurface
+  retainedTarget?: AttentionTarget | null
+}) {
   const label = SURFACES.find((s) => s.surface === surface)?.label ?? surface
   return (
-    <div className="flex h-full items-center justify-center">
-      <p className="text-sm text-neutral-500">
-        {label} 工作面尚未实现
-      </p>
+    <div className="flex h-full flex-col items-center justify-center gap-2">
+      <p className="text-sm text-neutral-500">{label} 工作面尚未实现</p>
+      {retainedTarget && (
+        <p className="text-xs text-neutral-600">
+          已保留目标：{describeAttentionTarget(retainedTarget)}
+          （详情尚未交付）
+        </p>
+      )}
     </div>
   )
+}
+
+/** The surface an Attention deep link lands on (#9). */
+function deepLinkSurface(target: AttentionTarget): ProjectSurface {
+  switch (target.kind) {
+    case 'project':
+      return 'overview'
+    case 'agent':
+    case 'run':
+      return 'agents'
+    case 'project-task':
+    case 'external-task':
+      return 'tasks'
+    case 'knowledge':
+      return 'knowledge'
+    case 'handoff':
+      return 'handoffs'
+  }
 }
 
 // ---------------------------------------------------------------------------

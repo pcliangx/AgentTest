@@ -8,6 +8,7 @@ export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   'run-cancelled': '运行已取消',
   'configuration-applied': '配置已应用',
   'permission-decided': '权限已决定',
+  'attention-resolved': '关注已处理',
   'instruction-sent': '指令已发送',
   'dispatch-created': '派发已创建',
   'queue-cancelled': '排队已取消',
