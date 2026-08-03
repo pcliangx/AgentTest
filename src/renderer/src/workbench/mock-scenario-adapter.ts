@@ -20,9 +20,12 @@ import {
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
 import {
+  fieldDescriptor,
   fieldPathsFor,
+  formatResourceScope,
   normalizeAppliedValue,
   ownerKey,
+  parseResourceScope,
   sameOwner,
   validateConfigurationValue
 } from './configuration'
@@ -63,6 +66,118 @@ type ConfigurationDraftEntry =
 type AppliedConfigurationEntry =
   WorkbenchViewModel['appliedConfigurations'][number]
 
+type ConfigurationApplyPlan = {
+  batchProjectId: ProjectId
+  ownerKeys: string[]
+  commits: Array<{
+    owner: ConfigurationOwner
+    values: Record<string, unknown>
+    appliedVersion: number
+  }>
+  integration?: {
+    nextPrimary?: ConnectionId
+    nextBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
+    removedBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
+  }
+}
+
+function sameConfigurationValue(
+  current: unknown,
+  previewed: unknown,
+  seen = new WeakMap<object, object>()
+): boolean {
+  if (Object.is(current, previewed)) return true
+  if (
+    current === null ||
+    previewed === null ||
+    typeof current !== 'object' ||
+    typeof previewed !== 'object'
+  ) {
+    return false
+  }
+  const seenPreview = seen.get(current)
+  if (seenPreview) return seenPreview === previewed
+  seen.set(current, previewed)
+
+  if (Array.isArray(current) || Array.isArray(previewed)) {
+    return (
+      Array.isArray(current) &&
+      Array.isArray(previewed) &&
+      current.length === previewed.length &&
+      current.every((value, index) =>
+        sameConfigurationValue(value, previewed[index], seen)
+      )
+    )
+  }
+  if (current instanceof Date || previewed instanceof Date) {
+    return (
+      current instanceof Date &&
+      previewed instanceof Date &&
+      current.getTime() === previewed.getTime()
+    )
+  }
+  // Configuration values are scalar or JSON-shaped. Unsupported structured
+  // objects fail closed instead of making a stale preview appear equal.
+  if (
+    Object.getPrototypeOf(current) !== Object.prototype ||
+    Object.getPrototypeOf(previewed) !== Object.prototype
+  ) {
+    return false
+  }
+  const currentKeys = Object.keys(current)
+  const previewedKeys = Object.keys(previewed)
+  return (
+    currentKeys.length === previewedKeys.length &&
+    currentKeys.every(
+      (key) =>
+        Object.hasOwn(previewed, key) &&
+        sameConfigurationValue(
+          (current as Record<string, unknown>)[key],
+          (previewed as Record<string, unknown>)[key],
+          seen
+        )
+    )
+  )
+}
+
+function sameConfigurationDraft(
+  current: ConfigurationDraftEntry | undefined,
+  previewed: ConfigurationDraftEntry
+): boolean {
+  if (
+    !current ||
+    ownerKey(current.owner) !== ownerKey(previewed.owner) ||
+    current.appliedVersion !== previewed.appliedVersion ||
+    current.changes.length !== previewed.changes.length ||
+    current.validationErrors.length !== previewed.validationErrors.length
+  ) {
+    return false
+  }
+  return (
+    current.changes.every((change, index) => {
+      const expected = previewed.changes[index]
+      return (
+        change.fieldPath === expected.fieldPath &&
+        sameConfigurationValue(change.applied, expected.applied) &&
+        sameConfigurationValue(change.draft, expected.draft)
+      )
+    }) &&
+    current.validationErrors.every((error, index) => {
+      const expected = previewed.validationErrors[index]
+      return (
+        error.fieldPath === expected.fieldPath &&
+        error.message === expected.message
+      )
+    })
+  )
+}
+
+function formatConfirmationValue(value: unknown): string {
+  if (value === null) return '无'
+  if (value === '') return '空'
+  return String(value)
+}
+
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
  *
@@ -91,9 +206,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
       id(`split-created-${++this.createdSplitCount}`, 'SplitNodeId')
   }
   private pendingAction:
-    | { type: 'connection-deletion'; connectionId: ConnectionId }
+    | {
+        type: 'connection-deletion'
+        connectionId: ConnectionId
+        affectedProjectIds: ProjectId[]
+        fingerprint: string
+      }
     | { type: 'merge-changes'; agentInstanceId: AgentInstanceId }
     | { type: 'discard-changes'; agentInstanceId: AgentInstanceId }
+    | {
+        type: 'configuration-apply'
+        plan: ConfigurationApplyPlan
+        fingerprint: string
+      }
+    | {
+        type: 'discard-configuration'
+        projectId: ProjectId
+        drafts: ConfigurationDraftEntry[]
+      }
     | null = null
 
   constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
@@ -290,22 +420,42 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'request-connection-deletion': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const conn = this.snapshot.global.connections.find(
           (c) => c.connectionId === command.connectionId
         )
         if (!conn) {
           return this.reject(command, 'invalid-target', '连接不存在')
         }
+        const affectedProjectIds =
+          this.connectionDeletionProjectIds(command.connectionId)
+        const affected = new Set(affectedProjectIds)
+        const affectedProjects = this.snapshot.projects.filter((project) =>
+          affected.has(project.projectId)
+        )
         this.pendingAction = {
           type: 'connection-deletion',
-          connectionId: command.connectionId
+          connectionId: command.connectionId,
+          affectedProjectIds,
+          fingerprint: this.connectionDeletionFingerprint(
+            command.connectionId,
+            affectedProjectIds
+          )
         }
-        const affectedProjects = this.snapshot.projects
-          .filter((p) => p.primaryConnectionId === command.connectionId)
-          .map((p) => p.name)
         let impact = `此操作将永久删除「${conn.label}」，且不可恢复。`
         if (affectedProjects.length > 0) {
-          impact += `以下 Project 的主连接将被解除绑定：${affectedProjects.join('、')}。`
+          impact += `以下 Project 将解除主连接或资源引用：${affectedProjects.map((project) => project.name).join('、')}。`
+          const removedLabels = affectedProjects.flatMap((project) =>
+            project.resourceBindings
+              .filter(
+                (binding) => binding.connectionId === command.connectionId
+              )
+              .map((binding) => binding.label)
+          )
+          if (removedLabels.length > 0) {
+            impact += `同时解除 Resource Binding：${removedLabels.join('、')}。`
+          }
         }
         this.snapshot.pendingConfirmation = {
           confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
@@ -327,6 +477,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'merge-agent-changes': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const changes = this.snapshot.changes.find(
           (c) => c.agentInstanceId === command.agentInstanceId
         )
@@ -364,6 +516,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'discard-agent-changes': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
         const changes = this.snapshot.changes.find(
           (c) => c.agentInstanceId === command.agentInstanceId
         )
@@ -395,50 +549,161 @@ export class MockScenarioAdapter implements WorkbenchPort {
             '无效或过期的确认 ID'
           )
         }
+        const pendingAction = this.pendingAction
+        if (!pendingAction) {
+          return this.reject(command, 'invalid-target', '确认操作已过期')
+        }
+        if (
+          pendingAction.type === 'discard-configuration' &&
+          pendingAction.drafts.some((previewed) => {
+            const current = this.snapshot.configurationDrafts.find(
+              (draft) => ownerKey(draft.owner) === ownerKey(previewed.owner)
+            )
+            return !sameConfigurationDraft(current, previewed)
+          })
+        ) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '确认已过期：配置草稿已变化，请重新预览'
+          )
+        }
         const { action, target } = pending
-        this.snapshot.pendingConfirmation = undefined
-        // Execute the pending mock action.
-        if (this.pendingAction) {
-          if (this.pendingAction.type === 'connection-deletion') {
-            const connId = this.pendingAction.connectionId
-            this.snapshot.global.connections =
-              this.snapshot.global.connections.filter(
-                (c) => c.connectionId !== connId
-              )
-            for (const proj of this.snapshot.projects) {
-              if (proj.primaryConnectionId === connId) {
-                proj.primaryConnectionId = undefined
-              }
-              // Bindings of the deleted connection die with it.
-              proj.resourceBindings = proj.resourceBindings.filter(
-                (b) => b.connectionId !== connId
-              )
-            }
-            // Synchronise applied configuration truth in the same
-            // transition: a stale ConnectionId must never be resurrected
-            // by a later configuration apply. The version bump also
-            // stale-rejects drafts based on the old truth.
-            for (const config of this.snapshot.appliedConfigurations) {
-              if (
-                config.owner.kind === 'project' &&
-                config.values['integrations.primaryConnectionId'] === connId
-              ) {
-                config.values['integrations.primaryConnectionId'] = null
-                config.appliedVersion += 1
-              }
-            }
-          } else {
-            // merge-changes or discard-changes: both carry agentInstanceId
-            const agentId = this.pendingAction.agentInstanceId
-            this.snapshot.changes = this.snapshot.changes.filter(
-              (c) => c.agentInstanceId !== agentId
+
+        if (pendingAction.type === 'configuration-apply') {
+          const frozen = pendingAction
+          const currentFingerprint = this.configurationApplyFingerprint(
+            frozen.plan.batchProjectId,
+            frozen.plan.ownerKeys
+          )
+          if (currentFingerprint !== frozen.fingerprint) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '集成变更预览已过期；配置或绑定已变化，请重新应用'
             )
           }
+          if (
+            !this.commitConfigurationApply(
+              frozen.plan,
+              postEvents,
+              command.commandId
+            )
+          ) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '集成变更无法原子提交，请重新应用'
+            )
+          }
+          this.snapshot.pendingConfirmation = undefined
           this.pendingAction = null
+          this.snapshot.activity.unshift({
+            activityId: this.freshId('ActivityId'),
+            projectId: frozen.plan.batchProjectId,
+            timestamp: Date.now(),
+            kind: 'dangerous-action-confirmed',
+            summary: `已确认: ${action}（${target}）`
+          })
+          return null
         }
-        // Record as a global activity — no projectId attribution.
+
+        if (pendingAction.type === 'connection-deletion') {
+          const deletion = pendingAction
+          const currentFingerprint = this.connectionDeletionFingerprint(
+            deletion.connectionId,
+            deletion.affectedProjectIds
+          )
+          if (currentFingerprint !== deletion.fingerprint) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '连接删除预览已过期；引用或配置草稿已变化，请重新发起'
+            )
+          }
+        }
+
+        let activityProjectId: ProjectId | undefined
+        let activityAgentInstanceId: AgentInstanceId | undefined
+
+        // Execute the pending mock action.
+        if (pendingAction.type === 'connection-deletion') {
+          const deletion = pendingAction
+          const connId = deletion.connectionId
+          const affected = new Set(deletion.affectedProjectIds)
+          this.snapshot.global.connections =
+            this.snapshot.global.connections.filter(
+              (c) => c.connectionId !== connId
+            )
+          for (const proj of this.snapshot.projects) {
+            if (!affected.has(proj.projectId)) continue
+            if (proj.primaryConnectionId === connId) {
+              proj.primaryConnectionId = undefined
+            }
+            // Bindings of the deleted connection die with it.
+            proj.resourceBindings = proj.resourceBindings.filter(
+              (b) => b.connectionId !== connId
+            )
+          }
+          // Synchronise applied configuration truth in the same
+          // transition: a stale ConnectionId must never be resurrected
+          // by a later configuration apply. The version bump also
+          // stale-rejects drafts based on the old truth.
+          for (const config of this.snapshot.appliedConfigurations) {
+            if (config.owner.kind !== 'project') continue
+            const ownerProjectId = config.owner.projectId
+            if (!affected.has(ownerProjectId)) continue
+            const project = this.snapshot.projects.find(
+              (candidate) => candidate.projectId === ownerProjectId
+            )
+            if (!project) continue
+            const primaryChanged =
+              config.values['integrations.primaryConnectionId'] === connId
+            const nextScope = formatResourceScope(project.resourceBindings)
+            const scopeChanged =
+              config.values['integrations.resourceScope'] !== nextScope
+            if (primaryChanged) {
+              config.values['integrations.primaryConnectionId'] = null
+            }
+            if (scopeChanged) {
+              config.values['integrations.resourceScope'] = nextScope
+            }
+            if (primaryChanged || scopeChanged) {
+              config.appliedVersion += 1
+            }
+          }
+        } else if (pendingAction.type === 'discard-configuration') {
+          const drop = new Set(
+            pendingAction.drafts.map((draft) => ownerKey(draft.owner))
+          )
+          this.snapshot.configurationDrafts =
+            this.snapshot.configurationDrafts.filter(
+              (draft) => !drop.has(ownerKey(draft.owner))
+            )
+          activityProjectId = pendingAction.projectId
+          if (
+            pendingAction.drafts.length === 1 &&
+            pendingAction.drafts[0].owner.kind === 'agent'
+          ) {
+            activityAgentInstanceId =
+              pendingAction.drafts[0].owner.agentInstanceId
+          }
+        } else {
+          // merge-changes or discard-changes: both carry agentInstanceId
+          const agentId = pendingAction.agentInstanceId
+          this.snapshot.changes = this.snapshot.changes.filter(
+            (c) => c.agentInstanceId !== agentId
+          )
+        }
+
+        this.snapshot.pendingConfirmation = undefined
+        this.pendingAction = null
         this.snapshot.activity.unshift({
           activityId: id(crypto.randomUUID(), 'ActivityId'),
+          ...(activityProjectId ? { projectId: activityProjectId } : {}),
+          ...(activityAgentInstanceId
+            ? { agentInstanceId: activityAgentInstanceId }
+            : {}),
           timestamp: Date.now(),
           kind: 'dangerous-action-confirmed',
           summary: `已确认: ${action}（${target}）`
@@ -747,13 +1012,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'discard-configuration': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        if (command.owners.length === 0) {
+          return this.reject(command, 'invalid-target', '没有待丢弃的配置草稿')
+        }
+        const ownerKeys = command.owners.map((owner) => ownerKey(owner))
+        if (new Set(ownerKeys).size !== ownerKeys.length) {
+          return this.reject(command, 'invalid-target', 'owner 列表包含重复项')
+        }
         // Batches stay inside one project: a Project Settings operation
         // must never touch another project's drafts (US-67, Project-first).
-        const projectIds = new Set(
-          command.owners
-            .map((o) => this.projectIdForOwner(o))
-            .filter((pid) => pid !== undefined)
+        const resolvedProjectIds = command.owners.map((owner) =>
+          this.projectIdForOwner(owner)
         )
+        if (resolvedProjectIds.some((projectId) => projectId === undefined)) {
+          return this.reject(command, 'invalid-target', '配置 owner 不存在')
+        }
+        const projectIds = new Set(resolvedProjectIds)
         if (projectIds.size > 1) {
           return this.reject(
             command,
@@ -761,16 +1037,57 @@ export class MockScenarioAdapter implements WorkbenchPort {
             '一次只能丢弃同一 Project 的配置草稿'
           )
         }
-        // Discard drops drafts only — applied values were never touched.
-        const drop = new Set(command.owners.map((o) => ownerKey(o)))
-        this.snapshot.configurationDrafts =
-          this.snapshot.configurationDrafts.filter(
-            (d) => !drop.has(ownerKey(d.owner))
+        const drafts = command.owners.map((owner) =>
+          this.snapshot.configurationDrafts.find(
+            (draft) => ownerKey(draft.owner) === ownerKey(owner)
           )
+        )
+        if (drafts.some((draft) => !draft || draft.changes.length === 0)) {
+          return this.reject(command, 'invalid-target', '没有待丢弃的配置草稿')
+        }
+        const frozenDrafts = structuredClone(
+          drafts as ConfigurationDraftEntry[]
+        )
+        const target = command.owners
+          .map((owner) => this.ownerLabelFor(owner))
+          .join('、')
+        const changes = frozenDrafts.flatMap((draft) =>
+          draft.changes.map((change) => {
+            const fieldLabel =
+              fieldDescriptor(change.fieldPath)?.label ?? change.fieldPath
+            return `${this.ownerLabelFor(draft.owner)} · ${fieldLabel}：${formatConfirmationValue(change.applied)} → ${formatConfirmationValue(change.draft)}`
+          })
+        )
+        this.pendingAction = {
+          type: 'discard-configuration',
+          projectId: resolvedProjectIds[0]!,
+          drafts: frozenDrafts
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: '丢弃配置草稿',
+          target,
+          impact: `将永久丢弃以下 ${changes.length} 项配置草稿且不可恢复：${changes.join('；')}。`,
+          nonBypassableReason: '丢弃配置草稿需要二次确认，无法跳过'
+        }
         return null
       }
       case 'apply-configuration': {
         const keys = command.owners.map((o) => ownerKey(o.owner))
+        const frozenOwnerKeys =
+          this.pendingAction?.type === 'configuration-apply'
+            ? this.pendingAction.plan.ownerKeys
+            : null
+        if (
+          frozenOwnerKeys &&
+          keys.some((key) => frozenOwnerKeys.includes(key))
+        ) {
+          return this.reject(
+            command,
+            'busy',
+            '配置 owner 正在等待集成影响确认，请先确认或取消'
+          )
+        }
         if (new Set(keys).size !== keys.length) {
           return this.reject(command, 'invalid-target', 'owner 列表包含重复项')
         }
@@ -911,53 +1228,152 @@ export class MockScenarioAdapter implements WorkbenchPort {
             )
           }
         }
-        // Commit: move draft values into applied truth, bump each owner's
-        // version exactly once, then clear the consumed drafts.
-        const appliedOwners: Array<{
-          owner: ConfigurationOwner
-          appliedVersion: number
-        }> = []
-        for (const { owner, draft, applied } of pending) {
+        // Build the complete candidate without mutating live truth. A
+        // destructive integration transition freezes this whole multi-owner
+        // plan behind the shared confirmation contract.
+        const commits = pending.map(({ owner, draft, applied }) => {
+          const values = structuredClone(applied.values)
           for (const change of draft.changes) {
-            applied.values[change.fieldPath] = normalizeAppliedValue(
+            values[change.fieldPath] = normalizeAppliedValue(
               change.fieldPath,
               change.draft
             )
           }
-          applied.appliedVersion += 1
-          appliedOwners.push({ owner, appliedVersion: applied.appliedVersion })
-          this.applyImmediateEffects(owner, applied.values)
-        }
-        const consumed = new Set(keys)
-        this.snapshot.configurationDrafts =
-          this.snapshot.configurationDrafts.filter(
-            (d) => !consumed.has(ownerKey(d.owner))
-          )
-        // Configuration audit must be attributable: Project Activity filters
-        // by projectId, so an entry without one would vanish from the UI
-        // (US-61). Batches are single-project by construction.
-        const singleAgentOwner =
-          pending.length === 1 && pending[0].owner.kind === 'agent'
-            ? pending[0].owner
-            : null
-        this.snapshot.activity = [
-          {
-            activityId: this.freshId('ActivityId'),
-            projectId: batchProjectId,
-            ...(singleAgentOwner
-              ? { agentInstanceId: singleAgentOwner.agentInstanceId }
-              : {}),
-            timestamp: Date.now(),
-            kind: 'configuration-applied',
-            summary: `已原子应用 ${pending.length} 个 owner 的配置变更`
-          },
-          ...this.snapshot.activity
-        ]
-        postEvents.push({
-          kind: 'configuration-applied',
-          correlationId: command.commandId,
-          owners: appliedOwners
+          return {
+            owner: structuredClone(owner),
+            values,
+            appliedVersion: applied.appliedVersion + 1
+          }
         })
+
+        const plan: ConfigurationApplyPlan = {
+          batchProjectId,
+          ownerKeys: keys,
+          commits
+        }
+        const projectPending = pending.find(
+          ({ owner, draft }) =>
+            owner.kind === 'project' &&
+            draft.changes.some((change) =>
+              change.fieldPath.startsWith('integrations.')
+            )
+        )
+        if (projectPending) {
+          const project = this.snapshot.projects.find(
+            (candidate) => candidate.projectId === batchProjectId
+          )!
+          const projectCommit = commits.find(
+            ({ owner }) => owner.kind === 'project'
+          )!
+          const requestedPrimary =
+            projectCommit.values['integrations.primaryConnectionId']
+          const nextPrimary =
+            typeof requestedPrimary === 'string'
+              ? id(requestedPrimary, 'ConnectionId')
+              : undefined
+          const primaryChanged = project.primaryConnectionId !== nextPrimary
+          const scopeChanged = projectPending.draft.changes.some(
+            (change) => change.fieldPath === 'integrations.resourceScope'
+          )
+          // Only already-authoritative bindings for the target ConnectionId
+          // may survive. This preserves a trusted pre-authorised binding in
+          // legacy state without ever fabricating identity from scope text.
+          let nextBindings = project.resourceBindings.filter(
+            (binding) => binding.connectionId === nextPrimary
+          )
+          if (scopeChanged) {
+            const rawScope =
+              projectCommit.values['integrations.resourceScope']
+            const parsed =
+              typeof rawScope === 'string'
+                ? parseResourceScope(rawScope)
+                : { ok: false as const, message: '资源范围必须是文本' }
+            if (!parsed.ok) {
+              return this.reject(
+                command,
+                'invariant-violation',
+                `${parsed.message}，已保留全部草稿`
+              )
+            }
+            const selected = new Set(parsed.labels)
+            nextBindings = nextBindings.filter((binding) =>
+              selected.has(binding.label)
+            )
+          }
+          const kept = new Set(
+            nextBindings.map((binding) => binding.bindingId as string)
+          )
+          const removedBindings = project.resourceBindings.filter(
+            (binding) => !kept.has(binding.bindingId as string)
+          )
+          projectCommit.values['integrations.primaryConnectionId'] =
+            nextPrimary ?? null
+          projectCommit.values['integrations.resourceScope'] =
+            formatResourceScope(nextBindings)
+          plan.integration = {
+            nextPrimary,
+            nextBindings: structuredClone(nextBindings),
+            removedBindings: structuredClone(removedBindings)
+          }
+
+          if (primaryChanged || removedBindings.length > 0) {
+            if (this.snapshot.pendingConfirmation) {
+              return this.reject(
+                command,
+                'busy',
+                '已有待确认操作，请先确认或取消'
+              )
+            }
+            const previousConnection = this.snapshot.global.connections.find(
+              (connection) =>
+                connection.connectionId === project.primaryConnectionId
+            )
+            const nextConnection = this.snapshot.global.connections.find(
+              (connection) => connection.connectionId === nextPrimary
+            )
+            const bindingImpact = removedBindings
+              .map(
+                (binding) =>
+                  `${binding.label}（${binding.resourceType}；${binding.allowedOperations.join('/')}）`
+              )
+              .join('、')
+            const impact =
+              removedBindings.length > 0
+                ? `将解除 ${removedBindings.length} 个 Resource Binding：${bindingImpact}。解除后需重新授权才能恢复。`
+                : '将解除 0 个 Resource Binding；当前没有绑定会丢失，但主连接差异仍需确认。'
+            this.pendingAction = {
+              type: 'configuration-apply',
+              plan,
+              fingerprint: this.configurationApplyFingerprint(
+                batchProjectId,
+                keys
+              )
+            }
+            this.snapshot.pendingConfirmation = {
+              confirmationId: this.freshId('ConfirmationId'),
+              action: '确认集成绑定变更',
+              target: `${project.name}：${previousConnection?.label ?? '无连接'} → ${nextConnection?.label ?? '无连接'}`,
+              impact,
+              nonBypassableReason:
+                '主连接切换与破坏性解绑必须先确认影响，无法跳过'
+            }
+            return null
+          }
+        }
+
+        if (
+          !this.commitConfigurationApply(
+            plan,
+            postEvents,
+            command.commandId
+          )
+        ) {
+          return this.reject(
+            command,
+            'stale-revision',
+            '配置 truth 已变化，请查看最新值后重试'
+          )
+        }
         return null
       }
       case 'manage-queue': {
@@ -1203,6 +1619,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
   }
 
+  /** A single shared confirmation slot cannot be replaced while pending. */
+  private rejectIfConfirmationPending(
+    command: WorkbenchCommand
+  ): CommandResult | null {
+    if (!this.snapshot.pendingConfirmation && !this.pendingAction) return null
+    return this.reject(command, 'busy', '请先处理当前待确认操作')
+  }
+
   /**
    * Finds the applied configuration truth for an owner, or undefined when
    * the owner does not exist (unknown project/agent).
@@ -1242,6 +1666,190 @@ export class MockScenarioAdapter implements WorkbenchPort {
     )
   }
 
+  /** Projects whose structured or applied truth references a connection. */
+  private connectionDeletionProjectIds(
+    connectionId: ConnectionId
+  ): ProjectId[] {
+    const referenced = new Set<ProjectId>()
+    for (const project of this.snapshot.projects) {
+      if (
+        project.primaryConnectionId === connectionId ||
+        project.resourceBindings.some(
+          (binding) => binding.connectionId === connectionId
+        )
+      ) {
+        referenced.add(project.projectId)
+      }
+    }
+    for (const config of this.snapshot.appliedConfigurations) {
+      if (
+        config.owner.kind === 'project' &&
+        config.values['integrations.primaryConnectionId'] === connectionId
+      ) {
+        referenced.add(config.owner.projectId)
+      }
+    }
+    return this.snapshot.projects
+      .map((project) => project.projectId)
+      .filter((projectId) => referenced.has(projectId))
+  }
+
+  /**
+   * Freezes deletion impact without coupling it to unrelated Projects. A new
+   * reference also changes `currentAffectedProjectIds`, expiring the preview.
+   */
+  private connectionDeletionFingerprint(
+    connectionId: ConnectionId,
+    expectedProjectIds: ProjectId[]
+  ): string {
+    const currentAffectedProjectIds =
+      this.connectionDeletionProjectIds(connectionId)
+    const relevant = new Set([
+      ...expectedProjectIds,
+      ...currentAffectedProjectIds
+    ])
+    return JSON.stringify({
+      connection: this.snapshot.global.connections.find(
+        (candidate) => candidate.connectionId === connectionId
+      ),
+      currentAffectedProjectIds,
+      projects: this.snapshot.projects
+        .filter((project) => relevant.has(project.projectId))
+        .map((project) => ({
+          projectId: project.projectId,
+          name: project.name,
+          primaryConnectionId: project.primaryConnectionId,
+          resourceBindings: project.resourceBindings
+        })),
+      applied: this.snapshot.appliedConfigurations.filter(
+        (config) =>
+          config.owner.kind === 'project' &&
+          relevant.has(config.owner.projectId)
+      ),
+      drafts: this.snapshot.configurationDrafts.filter(
+        (draft) =>
+          draft.owner.kind === 'project' &&
+          relevant.has(draft.owner.projectId)
+      )
+    })
+  }
+
+  /**
+   * Fingerprints only facts that can affect a frozen configuration plan.
+   * Navigation, queue and runtime events do not expire a confirmation, while
+   * owner drafts, applied truth, connection metadata or binding identity do.
+   */
+  private configurationApplyFingerprint(
+    projectId: ProjectId,
+    ownerKeys: string[]
+  ): string {
+    const selected = new Set(ownerKeys)
+    const project = this.snapshot.projects.find(
+      (candidate) => candidate.projectId === projectId
+    )
+    return JSON.stringify({
+      project: project
+        ? {
+            projectId: project.projectId,
+            name: project.name,
+            primaryConnectionId: project.primaryConnectionId,
+            resourceBindings: project.resourceBindings
+          }
+        : null,
+      agentNames: this.snapshot.agents
+        .filter((agent) => agent.projectId === projectId)
+        .map((agent) => ({
+          agentInstanceId: agent.agentInstanceId,
+          name: agent.name
+        })),
+      applied: this.snapshot.appliedConfigurations.filter((entry) =>
+        selected.has(ownerKey(entry.owner))
+      ),
+      drafts: this.snapshot.configurationDrafts.filter((entry) =>
+        selected.has(ownerKey(entry.owner))
+      ),
+      connections: this.snapshot.global.connections
+    })
+  }
+
+  /**
+   * Commits a fully validated candidate in one in-memory transition. Every
+   * target is checked before the first write so confirmation drift cannot
+   * produce a half-applied batch.
+   */
+  private commitConfigurationApply(
+    plan: ConfigurationApplyPlan,
+    postEvents: PostDispatchEvent[],
+    correlationId: CommandId
+  ): boolean {
+    const targets = plan.commits.map((commit) =>
+      this.findAppliedConfig(commit.owner)
+    )
+    if (
+      targets.some(
+        (target, index) =>
+          !target ||
+          target.appliedVersion !== plan.commits[index].appliedVersion - 1
+      )
+    ) {
+      return false
+    }
+    const project = this.snapshot.projects.find(
+      (candidate) => candidate.projectId === plan.batchProjectId
+    )
+    if (plan.integration && !project) return false
+
+    const appliedOwners: Array<{
+      owner: ConfigurationOwner
+      appliedVersion: number
+    }> = []
+    for (const [index, commit] of plan.commits.entries()) {
+      const target = targets[index]!
+      target.values = structuredClone(commit.values)
+      target.appliedVersion = commit.appliedVersion
+      appliedOwners.push({
+        owner: structuredClone(commit.owner),
+        appliedVersion: commit.appliedVersion
+      })
+      this.applyImmediateEffects(commit.owner, target.values)
+    }
+    if (plan.integration && project) {
+      project.primaryConnectionId = plan.integration.nextPrimary
+      project.resourceBindings = structuredClone(
+        plan.integration.nextBindings
+      )
+    }
+
+    const consumed = new Set(plan.ownerKeys)
+    this.snapshot.configurationDrafts =
+      this.snapshot.configurationDrafts.filter(
+        (draft) => !consumed.has(ownerKey(draft.owner))
+      )
+    const singleAgentOwner =
+      plan.commits.length === 1 && plan.commits[0].owner.kind === 'agent'
+        ? plan.commits[0].owner
+        : null
+    this.snapshot.activity = [
+      {
+        activityId: this.freshId('ActivityId'),
+        projectId: plan.batchProjectId,
+        ...(singleAgentOwner
+          ? { agentInstanceId: singleAgentOwner.agentInstanceId }
+          : {}),
+        timestamp: Date.now(),
+        kind: 'configuration-applied',
+        summary: `已原子应用 ${plan.commits.length} 个 owner 的配置变更`
+      },
+      ...this.snapshot.activity
+    ]
+    postEvents.push({
+      kind: 'configuration-applied',
+      correlationId,
+      owners: appliedOwners
+    })
+    return true
+  }
+
   /**
    * Applies the immediate effects of a committed configuration (US-91):
    * identity and routing metadata take effect at once. Run configuration
@@ -1271,18 +1879,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
     if (typeof projectName === 'string' && projectName.trim()) {
       project.name = projectName.trim()
     }
-    // The primary connection is an optional 0..1 reference (US-72). Scope
-    // moves with it atomically: bindings of the old connection are invalid
-    // under the new one and are dropped in the same transition.
-    const connection = values['integrations.primaryConnectionId']
-    const nextPrimary =
-      typeof connection === 'string'
-        ? id(connection, 'ConnectionId')
-        : undefined
-    project.resourceBindings = project.resourceBindings.filter(
-      (b) => b.connectionId === nextPrimary
-    )
-    project.primaryConnectionId = nextPrimary
+    // Project integration state is a single aggregate and is committed only
+    // by `commitConfigurationApply`; applying an unrelated project field
+    // must never rewrite its connection or structured bindings.
   }
 
   private reject(

@@ -119,7 +119,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         'defaults.worktreeMode': 'isolated',
         'integrations.primaryConnectionId': primaryConnectionId,
         'integrations.resourceScope':
-          ownerProjectId === projectId ? '销售团队任务清单、产品知识库' : '',
+          ownerProjectId === projectId ? '销售团队任务清单、销售知识库' : '',
         'permissions.defaultPolicy': 'ask-each-time'
       }
     }
