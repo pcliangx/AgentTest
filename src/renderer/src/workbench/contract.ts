@@ -213,11 +213,27 @@ export interface ConfirmationViewModel {
 
 export interface ActivityEntry {
   activityId: ActivityId
-  projectId: ProjectId
+  projectId?: ProjectId
   agentInstanceId?: AgentInstanceId
   timestamp: number
   kind: string
   summary: string
+}
+
+export interface WorktreeChangesViewModel {
+  agentInstanceId: AgentInstanceId
+  baseCommit: string
+  drift: 'none' | 'behind'
+  files: Array<{
+    path: string
+    status: 'modified' | 'added' | 'deleted'
+    additions: number
+    deletions: number
+  }>
+  validation: {
+    status: 'pass' | 'fail' | 'pending'
+    message?: string
+  }
 }
 
 export interface WorkbenchViewModel {
@@ -232,6 +248,7 @@ export interface WorkbenchViewModel {
   attentionItems: AttentionItemViewModel[]
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
+  changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
   global: {
     attentionCount: number
@@ -247,7 +264,11 @@ export interface WorkbenchViewModel {
       label: string
       status: 'connected' | 'disconnected' | 'offline' | 'error'
     }>
-    providers: Array<{ providerId: AgentProviderId; status: 'ready' | 'blocked' }>
+    providers: Array<{
+      providerId: AgentProviderId
+      displayName: string
+      status: 'ready' | 'blocked'
+    }>
   }
 }
 
@@ -266,6 +287,14 @@ export type LayoutOperation =
   | { kind: 'close-tab'; panelId: PanelId; agentInstanceId: AgentInstanceId }
   | { kind: 'move-tab'; agentInstanceId: AgentInstanceId; targetPanelId: PanelId }
   | {
+      kind: 'open-tab-in-new-panel'
+      agentInstanceId: AgentInstanceId
+      direction: 'horizontal' | 'vertical'
+      position?: 'before' | 'after'
+      relativeToPanelId?: PanelId
+    }
+  | { kind: 'close-panel'; panelId: PanelId; migrateToPanelId?: PanelId }
+  | {
       kind: 'split-panel'
       panelId: PanelId
       direction: 'horizontal' | 'vertical'
@@ -274,7 +303,7 @@ export type LayoutOperation =
   | { kind: 'focus-panel'; panelId?: PanelId }
   | { kind: 'prune-empty-panels' }
 
-export type AgentOpenMode = 'current-panel' | 'background'
+export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
 
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
@@ -352,6 +381,11 @@ export type WorkbenchCommandBody =
       mode: 'execute-confirmed'
       confirmationId: ConfirmationId
     }
+  | { kind: 'request-connection-deletion'; connectionId: ConnectionId }
+  | { kind: 'request-provider-recovery'; providerId: AgentProviderId }
+  | { kind: 'dismiss-confirmation' }
+  | { kind: 'merge-agent-changes'; agentInstanceId: AgentInstanceId }
+  | { kind: 'discard-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'request-quit-preview' }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 

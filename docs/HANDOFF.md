@@ -54,7 +54,8 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | Agent Squad HQ 产品身份、技术 slug 与旧数据兼容 | ✅ [#17](https://github.com/pcliangx/agent-squad-hq/issues/17) 已完成并发布 |
 | Phase 1 spec 与 GitHub Issues #1–#16 | ✅ 已迁移；GitHub 是 ticket 唯一 truth |
 | 生产 UI-first + contract mock 交付顺序 | ✅ 用户已确认 |
-| Phase 1 #1 Project Shell + WorkbenchPort + MockScenarioAdapter | ✅ [PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)；#2–#16 尚未启动 |
+| Phase 1 #1 Project Shell + WorkbenchPort + MockScenarioAdapter | ✅ [PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18) |
+| Phase 1 #2 全局 Connections/Provider Health/确认宿主 | ✅ [PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19)；#3–#16 尚未启动 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
@@ -72,7 +73,7 @@ linked worktree 使用。
 1. 本文档。
 2. [领域词汇表](../CONTEXT.md)。
 3. [PLAN-v0.2](./PLAN-v0.2.md)。
-4. [UX-v0.2](./UX-v0.2.md)；设计基线已冻结；Phase 1 #1 已完成，其余 tickets 尚未启动。
+4. [UX-v0.2](./UX-v0.2.md)；设计基线已冻结；Phase 1 #1–#2 已完成，其余 tickets 尚未启动。
 5. [ADR-0008](./adr/0008-project-first-agent-instances.md)。
 6. [ADR-0009](./adr/0009-command-center-workspace-lifecycle.md)。
 7. [ADR-0010](./adr/0010-feishu-integration-trust-boundaries.md)。
@@ -277,9 +278,10 @@ CONTEXT.md                      Project、Agent、Tab、Panel 领域词汇
 ## 9. 下一步
 
 Design Gate 已关闭，冻结结果是”指挥中心 A 主骨架 + B 态势抽屉 + C Focus/窄窗口
-palette”和”Settings A 完整编辑器 + B 比较视图 + C readiness 摘要”。Phase 1 #1 已完成
-（[PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)：Project Shell + 版本化
-WorkbenchPort + MockScenarioAdapter）；剩余 #2–#16 按 GitHub Relationships 的原生
+palette”和”Settings A 完整编辑器 + B 比较视图 + C readiness 摘要”。Phase 1 #1–#2 已完成
+（[PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)：Project Shell + WorkbenchPort；
+[PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19)：全局 Connections/Provider Health/
+确认宿主）；剩余 #3–#16 按 GitHub Relationships 的原生
 `blocked by` 处理 frontier。#1–#16 的理论关键路径为 7 批、最大并行度为 4；Issue 正文、
 labels、comments、状态和依赖只以 GitHub 为 truth。共享工作树默认仍按本仓库协作协议串行
 接力，只有分配独立 worktree 与清晰边界后才并行。

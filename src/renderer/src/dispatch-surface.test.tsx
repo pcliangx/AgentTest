@@ -329,7 +329,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const { user, port } = await gotoAgentsSurface()
     // cc_sql is in the `needs-input` state in the standard scenario — open it.
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     await user.type(
@@ -349,7 +349,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const { user, port } = await gotoAgentsSurface()
     // cx_anti holds an active Terminal takeover in the standard scenario.
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /cx_anti/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cx_anti/ }))
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     // Composer must be disabled and explain the Terminal mutex.
@@ -476,7 +476,7 @@ describe('Dispatch — Agent Tab composer', () => {
     void rest
     // cx_review is ready (idle) in the standard scenario — open it first.
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /cx_review/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cx_review/ }))
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     await user.type(
@@ -529,7 +529,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const { user } = await gotoAgentsSurface()
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
     await user.click(
-      within(directory).getByRole('button', { name: /cx_forecast/ })
+      within(directory).getByRole('button', { name: /^cx_forecast/ })
     )
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
@@ -20,9 +20,16 @@ async function gotoAgentsSurface() {
 /** Names of agent buttons currently listed in the directory. */
 function directoryNames(directory: HTMLElement): string[] {
   const list = within(directory).getByRole('list', { name: 'Agent 列表' })
-  return within(list)
-    .queryAllByRole('button')
-    .map((b) => b.textContent ?? '')
+  return (
+    within(list)
+      .queryAllByRole('button')
+      // Entry rows also carry a secondary "open in new panel" action (#4);
+      // only the primary open button represents the entry itself.
+      .filter(
+        (b) => !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开')
+      )
+      .map((b) => b.textContent ?? '')
+  )
 }
 
 describe('Agents surface — Agent Directory', () => {
@@ -174,7 +181,7 @@ describe('Agents surface — New Agent', () => {
 describe('Agents surface — unique Agent Tab', () => {
   it('opening an instance from the directory adds its tab; reopening only focuses it', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    const ccSql = within(directory).getByRole('button', { name: /cc_sql/ })
+    const ccSql = within(directory).getByRole('button', { name: /^cc_sql/ })
 
     await user.click(ccSql)
     expect(
@@ -182,7 +189,7 @@ describe('Agents surface — unique Agent Tab', () => {
     ).toBe(1)
 
     // Click again — still exactly one tab, now selected.
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const tabs = await screen.findAllByRole('tab', { name: /cc_sql/ })
     expect(tabs).toHaveLength(1)
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
@@ -190,7 +197,7 @@ describe('Agents surface — unique Agent Tab', () => {
 
   it('switching between tabs activates the clicked one', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     await screen.findAllByRole('tab', { name: /cc_sql/ })
 
     await user.click(screen.getByRole('tab', { name: /cc_data/ }))
@@ -211,7 +218,7 @@ describe('Agents surface — unique Agent Tab', () => {
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
 
     expect(screen.queryByRole('tab', { name: /cc_data/ })).toBeNull()
-    const entry = within(directory).getByRole('button', { name: /cc_data/ })
+    const entry = within(directory).getByRole('button', { name: /^cc_data/ })
     expect(entry).toHaveTextContent('运行中')
   })
 
@@ -247,9 +254,11 @@ describe('Agents surface — Agent View', () => {
     await user.click(within(view).getByRole('button', { name: '活动' }))
     expect(view).toHaveTextContent(/cc_data 开始清洗/)
 
-    // Changes empty state.
+    // Changes sub-view shows port-driven worktree changes.
     await user.click(within(view).getByRole('button', { name: '改动' }))
-    expect(view).toHaveTextContent('暂无改动')
+    expect(view).toHaveTextContent('src/clean.ts')
+    expect(view).toHaveTextContent('验证：通过')
+    expect(view).toHaveTextContent('ff-only 合并')
 
     // Terminal takeover state from the port.
     await user.click(within(view).getByRole('button', { name: 'Terminal' }))
@@ -258,7 +267,7 @@ describe('Agents surface — Agent View', () => {
 
   it('marks a tab whose instance has an open attention item', async () => {
     const { user, directory } = await gotoAgentsSurface()
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const tab = (await screen.findAllByRole('tab', { name: /cc_sql/ }))[0]
     expect(
       within(tab).getByRole('img', { name: '有待处理事项' })
@@ -270,7 +279,7 @@ describe('Agents surface — port-driven chat state (#20)', () => {
   it('shows the neutral empty chat state for a ready agent', async () => {
     const { user, directory } = await gotoAgentsSurface()
     await user.click(
-      within(directory).getByRole('button', { name: /cx_review/ })
+      within(directory).getByRole('button', { name: /^cx_review/ })
     )
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('发送首条消息')
@@ -279,7 +288,7 @@ describe('Agents surface — port-driven chat state (#20)', () => {
   it('shows an unavailable notice instead of the empty prompt for unavailable agents', async () => {
     const { user, directory } = await gotoAgentsSurface()
     await user.click(
-      within(directory).getByRole('button', { name: /kimi_docs/ })
+      within(directory).getByRole('button', { name: /^kimi_docs/ })
     )
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Provider 不可用')
@@ -292,26 +301,26 @@ describe('Agents surface — identity and view state (#20)', () => {
     const { user, directory } = await gotoAgentsSurface()
 
     // cc_data is the only open tab and active in its panel → 当前可见.
-    expect(within(directory).getByRole('button', { name: /cc_data/ })).toHaveTextContent(
+    expect(within(directory).getByRole('button', { name: /^cc_data/ })).toHaveTextContent(
       '当前可见'
     )
     // cx_anti holds a Terminal takeover in the mock scenario.
     expect(
-      within(directory).getByRole('button', { name: /cx_anti/ })
+      within(directory).getByRole('button', { name: /^cx_anti/ })
     ).toHaveTextContent('Terminal 接管')
     // cx_review is not open anywhere → no view-state badge.
     expect(
-      within(directory).getByRole('button', { name: /cx_review/ })
+      within(directory).getByRole('button', { name: /^cx_review/ })
     ).not.toHaveTextContent('已打开')
 
     // Opening cc_sql makes it the visible tab; cc_data stays open in background.
-    await user.click(within(directory).getByRole('button', { name: /cc_sql/ }))
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     await screen.findAllByRole('tab', { name: /cc_sql/ })
-    expect(within(directory).getByRole('button', { name: /cc_sql/ })).toHaveTextContent(
+    expect(within(directory).getByRole('button', { name: /^cc_sql/ })).toHaveTextContent(
       '当前可见'
     )
     expect(
-      within(directory).getByRole('button', { name: /cc_data/ })
+      within(directory).getByRole('button', { name: /^cc_data/ })
     ).toHaveTextContent('已打开')
 
     // Tabs carry the provider as secondary identity.
@@ -345,5 +354,123 @@ describe('Agents surface — per-project filter isolation (#20)', () => {
       within(researchDirectory).getByRole('textbox', { name: '搜索 Agent' })
     ).toHaveValue('')
     expect(directoryNames(researchDirectory)).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Changes sub-view — safe merge, drift, validation and confirmation (#8)
+// ---------------------------------------------------------------------------
+
+describe('Agents surface — Changes sub-view', () => {
+  /** Renders the shell, navigates to the Agents surface, opens cc_data's
+   *  Agent View and switches to the Changes sub-view. */
+  async function gotoChanges() {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    // Click on cc_data agent to open Agent View
+    await user.click(screen.getByRole('button', { name: /^cc_data/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    return { user, view }
+  }
+
+  it('shows files, validation status and base commit for cc_data', async () => {
+    const { view } = await gotoChanges()
+    expect(view).toHaveTextContent('src/clean.ts')
+    expect(view).toHaveTextContent('src/types.ts')
+    expect(view).toHaveTextContent('验证：通过')
+    expect(view).toHaveTextContent('a1b2c3d')
+  })
+
+  it('shows ff-only merge and discard buttons for a clean agent', async () => {
+    const { view } = await gotoChanges()
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).not.toBeDisabled()
+    expect(
+      within(view).getByRole('button', { name: '丢弃改动' })
+    ).toBeVisible()
+  })
+
+  it('merge on clean agent triggers confirmation dialog', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('合并')
+    expect(dialog).toHaveTextContent('cc_data')
+  })
+
+  it('confirming merge clears changes and closes dialog', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '确认' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Changes cleared — empty state now shows
+    expect(view).toHaveTextContent('暂无改动')
+  })
+
+  it('canceling merge via cancel button keeps changes', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Changes still present
+    expect(view).toHaveTextContent('src/clean.ts')
+  })
+
+  it('discard triggers confirmation with discard action text', async () => {
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: '丢弃改动' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('丢弃')
+  })
+
+  it('shows needs-rebase notice for drifted agent (cc_sql)', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    await user.click(screen.getByRole('button', { name: /^cc_sql/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    expect(view).toHaveTextContent('需要 rebase')
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).toBeDisabled()
+  })
+
+  it('shows validation failure for cx_anti', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await screen.findByRole('button', { name: '概览' })
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    await screen.findByRole('region', { name: 'Agent 目录' })
+    await user.click(screen.getByRole('button', { name: /^cx_anti/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    expect(view).toHaveTextContent('验证：失败')
+    expect(
+      within(view).getByRole('button', { name: 'ff-only 合并' })
+    ).toBeDisabled()
+  })
+
+  it('does not call window.api during changes interactions', async () => {
+    const apiSpy = vi.fn()
+    Object.defineProperty(window, 'api', {
+      value: apiSpy,
+      writable: true,
+      configurable: true
+    })
+    const { user, view } = await gotoChanges()
+    await user.click(within(view).getByRole('button', { name: 'ff-only 合并' }))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(apiSpy).not.toHaveBeenCalled()
   })
 })

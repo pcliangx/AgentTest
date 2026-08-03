@@ -30,7 +30,7 @@ Accepted ADR → `docs/PLAN-v0.2.md` → `docs/HANDOFF.md` → 历史规划。
 UI/UX Design Gate 已于 2026-08-02 关闭，设计基线见
 [`docs/UX-v0.2.md`](./docs/UX-v0.2.md)。Phase 1“生产 UI 与契约化
 Mock”已由 [#1](https://github.com/pcliangx/agent-squad-hq/issues/1)（[PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18)）启动；后续按
-[GitHub Issues #2–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的原生依赖 frontier
+[GitHub Issues #3–#16](https://github.com/pcliangx/agent-squad-hq/issues) 的原生依赖 frontier
 实施。throwaway prototype 不能直接当生产代码。
 
 ## Claude Code / Codex 协作协议

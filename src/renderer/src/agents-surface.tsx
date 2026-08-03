@@ -1,77 +1,30 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type {
   AgentInstanceViewModel,
-  AgentProviderId,
   AgentRuntimeState,
   CommandResult,
-  PanelId,
+  LayoutOperation,
   ProjectViewModel,
   WorkbenchCommandBody,
   WorkbenchViewModel
 } from './workbench/contract'
 import { id } from './workbench/contract'
-import {
-  getProjectDispatchBlockReason,
-  isAgentBusy,
-  isTerminalExecutionSlotOccupied
-} from './workbench/dispatchability'
+import { providerLabel, RUNTIME_STATE_LABEL } from './agent-display'
+import { WorkspaceArea } from './workspace-layout'
 
 /**
- * Agents surface — Agent Directory, single-panel workspace with unique
- * Agent Tabs, and the Agent View with its four secondary entries.
+ * Agents surface — Agent Directory, the split-tree workspace with unique
+ * Agent Tabs (see `workspace-layout.tsx`), and the New Agent dialog.
  *
  * All facts come from the WorkbenchPort snapshot; every mutation is a
  * typed command sent through the port. The renderer never keys interactions
  * by provider id, array index or panel id — only AgentInstanceId.
  */
 
-export type SendCommand = (body: WorkbenchCommandBody) => Promise<CommandResult>
-
-// ---------------------------------------------------------------------------
-// Display metadata (labels only — never business branching)
-// ---------------------------------------------------------------------------
-
-const PROVIDER_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  'kimi-code': 'Kimi Code',
-  'gemini-cli': 'Gemini CLI'
-}
-
-function providerLabel(providerId: AgentProviderId): string {
-  return PROVIDER_LABEL[providerId] ?? providerId
-}
-
-export const RUNTIME_STATE_LABEL: Record<AgentRuntimeState, string> = {
-  ready: '就绪',
-  queued: '排队中',
-  starting: '启动中',
-  running: '运行中',
-  finishing: '收尾中',
-  'needs-input': '需要输入',
-  'permission-requested': '等待权限',
-  failed: '失败',
-  cancelled: '已取消',
-  interrupted: '已中断',
-  unavailable: '不可用',
-  archived: '已归档'
-}
-
-const TERMINAL_STATE_LABEL: Record<AgentInstanceViewModel['terminalState'], string> = {
-  closed: 'Terminal 未接管',
-  opening: 'Terminal 正在打开',
-  active: 'Terminal 接管中',
-  failed: 'Terminal 打开失败'
-}
-
-type AgentSubView = 'chat' | 'activity' | 'changes' | 'terminal'
-
-const SUB_VIEWS: Array<{ view: AgentSubView; label: string }> = [
-  { view: 'chat', label: '对话' },
-  { view: 'activity', label: '活动' },
-  { view: 'changes', label: '改动' },
-  { view: 'terminal', label: 'Terminal' }
-]
+export type SendCommand = (
+  body: WorkbenchCommandBody,
+  expectedRevision?: number
+) => Promise<CommandResult>
 
 // ---------------------------------------------------------------------------
 // Agents surface
@@ -101,12 +54,44 @@ export function AgentsSurface({
     }
     return set
   }, [snapshot.attentionItems])
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(null)
+
+  /**
+   * The surface's single layout-command path: every layout mutation — from
+   * the directory or from the workspace — goes through here, so a
+   * rejection always restores the authoritative layout and surfaces a
+   * recoverable notice (Issue #4 AC4) instead of being dropped silently.
+   *
+   * Commands bind to the revision of the render the user acted on:
+   * discrete actions use that render's revision by default, while
+   * multi-event gestures (divider drags, tab drops, dialog confirmations)
+   * pass the baseline they captured when the gesture started. A command
+   * issued from a stale render stale-rejects instead of silently
+   * overwriting a newer authoritative layout.
+   */
+  const sendLayout = async (
+    operation: LayoutOperation,
+    expectedRevision?: number
+  ): Promise<CommandResult> => {
+    const result = await sendCommand(
+      {
+        kind: 'change-layout',
+        projectId: project.projectId,
+        operation
+      },
+      expectedRevision ?? snapshot.revision
+    )
+    if (!result.ok) {
+      setLayoutNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
+    }
+    return result
+  }
 
   return (
     <section
       role="region"
       aria-label="Agent 工作区"
-      className="flex h-full min-h-0"
+      className="relative flex h-full min-h-0"
     >
       <AgentDirectory
         project={project}
@@ -114,14 +99,31 @@ export function AgentsSurface({
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
         sendCommand={sendCommand}
+        sendLayout={sendLayout}
         onDispatch={onDispatch ?? (() => {})}
       />
       <WorkspaceArea
         project={project}
         snapshot={snapshot}
         openAttentionTargets={openAttentionTargets}
+        sendLayout={sendLayout}
         sendCommand={sendCommand}
       />
+      {layoutNotice && (
+        <div
+          role="status"
+          className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded border border-amber-700 bg-neutral-900 px-3 py-1.5 text-xs text-amber-300"
+        >
+          <span>{layoutNotice}</span>
+          <button
+            aria-label="关闭提示"
+            className="rounded px-1 text-amber-300 hover:bg-neutral-800"
+            onClick={() => setLayoutNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -138,6 +140,7 @@ function AgentDirectory({
   snapshot,
   openAttentionTargets,
   sendCommand,
+  sendLayout,
   onDispatch
 }: {
   project: ProjectViewModel
@@ -145,6 +148,7 @@ function AgentDirectory({
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
   sendCommand: SendCommand
+  sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
   onDispatch: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -209,14 +213,20 @@ function AgentDirectory({
       (Object.keys(layout.panels)[0] as string | undefined) ??
       // Empty workspace: the layout owner allocates a fresh panel.
       'panel-fallback'
-    void sendCommand({
-      kind: 'change-layout',
-      projectId: project.projectId,
-      operation: {
-        kind: 'open-tab',
-        panelId: id(panelId, 'PanelId'),
-        agentInstanceId
-      }
+    void sendLayout({
+      kind: 'open-tab',
+      panelId: id(panelId, 'PanelId'),
+      agentInstanceId
+    })
+  }
+
+  const openAgentInNewPanel = (
+    agentInstanceId: AgentInstanceViewModel['agentInstanceId']
+  ) => {
+    void sendLayout({
+      kind: 'open-tab-in-new-panel',
+      agentInstanceId,
+      direction: 'horizontal'
     })
   }
 
@@ -309,9 +319,9 @@ function AgentDirectory({
           else if (openTabs.has(agent.agentInstanceId)) viewBadges.push('已打开')
           if (agent.terminalState === 'active') viewBadges.push('Terminal 接管')
           return (
-            <li key={agent.agentInstanceId}>
+            <li key={agent.agentInstanceId} className="flex items-stretch">
               <button
-                className="block w-full rounded px-2 py-1.5 text-left hover:bg-neutral-900"
+                className="block min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-neutral-900"
                 onClick={() => openAgent(agent.agentInstanceId)}
               >
                 <span className="flex items-center gap-1.5">
@@ -333,6 +343,16 @@ function AgentDirectory({
                   {RUNTIME_STATE_LABEL[agent.runtimeState]}
                   {viewBadges.length > 0 && ` · ${viewBadges.join(' · ')}`}
                 </span>
+              </button>
+              <button
+                aria-label={`在新 Panel 打开 ${agent.name}`}
+                className="shrink-0 rounded px-1.5 text-xs text-neutral-600 hover:bg-neutral-900 hover:text-neutral-300"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openAgentInNewPanel(agent.agentInstanceId)
+                }}
+              >
+                ⇱
               </button>
             </li>
           )
@@ -373,9 +393,9 @@ function NewAgentDialog({
   const [providerId, setProviderId] = useState<string>(
     readyProviders[0]?.providerId ?? ''
   )
-  const [open, setOpen] = useState<'current-panel' | 'background'>(
-    'current-panel'
-  )
+  const [open, setOpen] = useState<
+    'current-panel' | 'background' | 'new-panel'
+  >('current-panel')
   const [error, setError] = useState<string | null>(null)
 
   const submit = async () => {
@@ -435,10 +455,13 @@ function NewAgentDialog({
             className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={open}
             onChange={(e) =>
-              setOpen(e.target.value as 'current-panel' | 'background')
+              setOpen(
+                e.target.value as 'current-panel' | 'background' | 'new-panel'
+              )
             }
           >
             <option value="current-panel">当前 Panel</option>
+            <option value="new-panel">新 Panel</option>
             <option value="background">后台打开</option>
           </select>
         </label>
@@ -463,396 +486,6 @@ function NewAgentDialog({
             创建 Agent
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Workspace — panels and unique Agent Tabs
-// ---------------------------------------------------------------------------
-
-function WorkspaceArea({
-  project,
-  snapshot,
-  openAttentionTargets,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  snapshot: WorkbenchViewModel
-  openAttentionTargets: Set<string>
-  sendCommand: SendCommand
-}) {
-  const layout = project.layout
-  const panelEntries = Object.entries(layout.panels)
-
-  if (!layout.root || panelEntries.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-neutral-500">
-          尚未打开任何 Agent，请从左侧目录选择。
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1">
-      {panelEntries.map(([panelId, panel]) => (
-        <PanelView
-          key={panelId}
-          project={project}
-          panelId={id(panelId, 'PanelId')}
-          tabs={panel.tabs}
-          activeTabId={panel.activeTabId}
-          snapshot={snapshot}
-          openAttentionTargets={openAttentionTargets}
-          sendCommand={sendCommand}
-        />
-      ))}
-    </div>
-  )
-}
-
-function PanelView({
-  project,
-  panelId,
-  tabs,
-  activeTabId,
-  snapshot,
-  openAttentionTargets,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  panelId: PanelId
-  tabs: AgentInstanceViewModel['agentInstanceId'][]
-  activeTabId?: AgentInstanceViewModel['agentInstanceId']
-  snapshot: WorkbenchViewModel
-  openAttentionTargets: Set<string>
-  sendCommand: SendCommand
-}) {
-  const activeAgent = snapshot.agents.find(
-    (a) => a.agentInstanceId === activeTabId
-  )
-
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div
-        role="tablist"
-        aria-label="Agent 标签"
-        className="flex shrink-0 overflow-x-auto border-b border-neutral-800"
-      >
-        {tabs.map((tabId) => {
-          const agent = snapshot.agents.find(
-            (a) => a.agentInstanceId === tabId
-          )
-          if (!agent) return null
-          const selected = tabId === activeTabId
-          return (
-            <div
-              key={tabId}
-              role="tab"
-              aria-selected={selected}
-              tabIndex={0}
-              className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm ${
-                selected
-                  ? 'bg-neutral-900 text-neutral-100'
-                  : 'text-neutral-500 hover:bg-neutral-900/60'
-              }`}
-              onClick={() =>
-                void sendCommand({
-                  kind: 'change-layout',
-                  projectId: project.projectId,
-                  operation: { kind: 'activate-tab', panelId, agentInstanceId: tabId }
-                })
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  void sendCommand({
-                    kind: 'change-layout',
-                    projectId: project.projectId,
-                    operation: {
-                      kind: 'activate-tab',
-                      panelId,
-                      agentInstanceId: tabId
-                    }
-                  })
-                }
-              }}
-            >
-              <span>{agent.name}</span>
-              {openAttentionTargets.has(tabId) && (
-                <span role="img" aria-label="有待处理事项" className="text-amber-400">
-                  ●
-                </span>
-              )}
-              <span className="text-xs text-neutral-600">
-                {providerLabel(agent.providerId)} ·{' '}
-                {RUNTIME_STATE_LABEL[agent.runtimeState]}
-              </span>
-              <button
-                aria-label={`关闭标签 ${agent.name}`}
-                className="ml-1 rounded px-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  void sendCommand({
-                    kind: 'change-layout',
-                    projectId: project.projectId,
-                    operation: {
-                      kind: 'close-tab',
-                      panelId,
-                      agentInstanceId: tabId
-                    }
-                  })
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )
-        })}
-      </div>
-
-      {activeAgent ? (
-        <AgentView
-          key={activeAgent.agentInstanceId}
-          project={project}
-          agent={activeAgent}
-          snapshot={snapshot}
-          sendCommand={sendCommand}
-        />
-      ) : (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-neutral-500">未选择 Agent</p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Agent View — four stable secondary entries
-// ---------------------------------------------------------------------------
-
-function AgentView({
-  project,
-  agent,
-  snapshot,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  agent: AgentInstanceViewModel
-  snapshot: WorkbenchViewModel
-  sendCommand: SendCommand
-}) {
-  const [subView, setSubView] = useState<AgentSubView>('chat')
-
-  const agentActivity = snapshot.activity
-    .filter((a) => a.agentInstanceId === agent.agentInstanceId)
-    .sort((a, b) => b.timestamp - a.timestamp)
-
-  return (
-    <section
-      role="region"
-      aria-label="Agent 视图"
-      className="flex min-h-0 flex-1 flex-col p-4"
-    >
-      <header className="mb-3">
-        <h3 className="text-base font-medium text-neutral-100">{agent.name}</h3>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          {providerLabel(agent.providerId)} ·{' '}
-          {RUNTIME_STATE_LABEL[agent.runtimeState]}
-        </p>
-      </header>
-
-      <div className="mb-3 flex gap-1 border-b border-neutral-800">
-        {SUB_VIEWS.map(({ view, label }) => (
-          <button
-            key={view}
-            className={`px-2 py-1 text-sm ${
-              subView === view
-                ? 'border-b-2 border-neutral-300 text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-300'
-            }`}
-            onClick={() => setSubView(view)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto text-sm text-neutral-400">
-        {subView === 'chat' && (
-          <ChatState
-            project={project}
-            agent={agent}
-            sendCommand={sendCommand}
-          />
-        )}
-        {subView === 'activity' &&
-          (agentActivity.length === 0 ? (
-            <p className="text-neutral-500">暂无活动记录</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {agentActivity.map((entry) => (
-                <li key={entry.activityId} className="text-neutral-300">
-                  {entry.summary}
-                </li>
-              ))}
-            </ul>
-          ))}
-        {subView === 'changes' && (
-          <p className="text-neutral-500">暂无改动</p>
-        )}
-        {subView === 'terminal' && (
-          <p className="text-neutral-500">
-            {TERMINAL_STATE_LABEL[agent.terminalState]}
-          </p>
-        )}
-      </div>
-    </section>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Chat sub-view — state text driven only by port-judged facts (#20)
-// ---------------------------------------------------------------------------
-
-function ChatState({
-  project,
-  agent,
-  sendCommand
-}: {
-  project: ProjectViewModel
-  agent: AgentInstanceViewModel
-  sendCommand: SendCommand
-}) {
-  const [draft, setDraft] = useState('')
-  const [notice, setNotice] = useState<string | null>(null)
-  const submittingRef = useRef(false)
-  const [submitting, setSubmitting] = useState(false)
-
-  const lifecycleBlocked =
-    agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
-  const projectBlockReason = getProjectDispatchBlockReason(project)
-  const projectBlocked = projectBlockReason !== undefined
-  // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
-  // Terminal is opening or active the composer is disabled and shows why.
-  const terminalBlocked = isTerminalExecutionSlotOccupied(agent.terminalState)
-  const disabled =
-    projectBlocked || lifecycleBlocked || terminalBlocked || submitting
-  const awaitingInput = agent.runtimeState === 'needs-input'
-  const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
-
-  const submit = async () => {
-    const instruction = draft.trim()
-    if (!instruction || disabled || submittingRef.current) return
-    submittingRef.current = true
-    setSubmitting(true)
-    setNotice(null)
-    try {
-      const result = await sendCommand({
-        kind: 'send-agent-instruction',
-        projectId: project.projectId,
-        agentInstanceId: agent.agentInstanceId,
-        instruction,
-        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
-        // Any other active state enqueues as the next Run instead of being
-        // mistaken for a reply to the current Run.
-        mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
-      })
-      if (result.ok) {
-        setDraft('')
-      } else {
-        setNotice(result.message)
-      }
-    } finally {
-      submittingRef.current = false
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        role="log"
-        aria-label="对话记录"
-        className="min-h-0 flex-1 overflow-auto"
-      >
-        {projectBlockReason === 'project-archived' ? (
-          <p className="text-neutral-500">
-            Project 已归档；仅可查看历史记录，不能发送新指令。
-          </p>
-        ) : projectBlockReason === 'project-root-unavailable' ? (
-          <p className="text-neutral-500">
-            Project Root 不可用；仅可查看历史记录，请先恢复或重新定位 Root。
-          </p>
-        ) : projectBlockReason === 'project-repository-not-ready' ? (
-          <p className="text-neutral-500">
-            Project 尚未初始化或绑定 Git 仓库；仅可查看历史记录，请先完成 Git
-            初始化或绑定。
-          </p>
-        ) : agent.runtimeState === 'unavailable' ? (
-          <p className="text-neutral-500">
-            Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
-          </p>
-        ) : agent.runtimeState === 'archived' ? (
-          <p className="text-neutral-500">
-            Agent 已归档；仅可查看历史记录，不能发送新指令。
-          </p>
-        ) : terminalBlocked ? (
-          <p className="text-neutral-500">
-            {agent.terminalState === 'opening'
-              ? 'Terminal 正在打开或接管中；结构化 Run 与 PTY 互斥，请等待打开完成并结束接管。'
-              : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
-          </p>
-        ) : awaitingInput ? (
-          <p className="text-neutral-500">
-            当前 Run 正在等待输入，可直接回复。
-          </p>
-        ) : hasQueuedWork && agent.queueDepth > 0 ? (
-          <p className="text-neutral-500">
-            当前已有 {agent.queueDepth} 项排队；新指令将进入第{' '}
-            {agent.queueDepth + 1} 位。
-          </p>
-        ) : hasQueuedWork ? (
-          <p className="text-neutral-500">
-            当前 Agent 已在排队；新指令将继续加入下一 Run 队列。
-          </p>
-        ) : isAgentBusy(agent) ? (
-          <p className="text-neutral-500">
-            当前有进行中的 Run；新指令将进入下一 Run 队列。
-          </p>
-        ) : (
-          <p className="text-neutral-500">
-            暂无对话记录；发送首条消息后才会启动 Run。
-          </p>
-        )}
-      </div>
-
-      {notice && (
-        <p role="alert" className="mt-2 text-xs text-red-400">
-          {notice}
-        </p>
-      )}
-
-      <div className="mt-2 flex gap-2 border-t border-neutral-800 pt-2">
-        <textarea
-          aria-label="发送给当前 Agent"
-          placeholder="发送给当前 Agent…"
-          className="min-h-[2.5rem] flex-1 resize-none rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
-          value={draft}
-          disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button
-          className="shrink-0 rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
-          disabled={disabled || draft.trim().length === 0}
-          onClick={() => void submit()}
-        >
-          发送给当前 Agent
-        </button>
       </div>
     </div>
   )

@@ -6,7 +6,7 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
-import { RUNTIME_STATE_LABEL } from './agents-surface'
+import { RUNTIME_STATE_LABEL } from './agent-display'
 import {
   getProjectDispatchBlockReason,
   isAgentBusy,
