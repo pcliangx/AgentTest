@@ -18,6 +18,14 @@ import {
 } from './layout-reducer'
 import { createStandardScenario } from './standard-scenario'
 import { validateAgentName } from './agent-name'
+import {
+  fieldPathsFor,
+  normalizeAppliedValue,
+  ownerKey,
+  sameOwner,
+  validateConfigurationValue
+} from './configuration'
+import type { ConfigurationOwner } from './contract'
 import type { ProjectDispatchBlockReason } from './dispatchability'
 import {
   getDispatchBlockReason,
@@ -40,10 +48,17 @@ function projectExecutionUnavailableMessage(
   }
 }
 
-type PostDispatchEvent = Omit<
-  Extract<WorkbenchEvent, { kind: 'dispatch-created' }>,
-  'revision'
->
+type PostDispatchEvent =
+  | Omit<Extract<WorkbenchEvent, { kind: 'dispatch-created' }>, 'revision'>
+  | Omit<
+      Extract<WorkbenchEvent, { kind: 'configuration-applied' }>,
+      'revision'
+    >
+
+type ConfigurationDraftEntry =
+  WorkbenchViewModel['configurationDrafts'][number]
+type AppliedConfigurationEntry =
+  WorkbenchViewModel['appliedConfigurations'][number]
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -622,6 +637,176 @@ export class MockScenarioAdapter implements WorkbenchPort {
         })
         return null
       }
+      case 'stage-configuration': {
+        const applied = this.findAppliedConfig(command.owner)
+        if (!applied) {
+          return this.reject(command, 'invalid-target', '配置 owner 不存在')
+        }
+        if (!fieldPathsFor(command.owner).includes(command.fieldPath)) {
+          return this.reject(command, 'invalid-target', '字段不存在')
+        }
+        // Staging only ever produces a draft — applied truth, active Runs
+        // and identity stay untouched until an explicit apply (US-68).
+        let draft = this.snapshot.configurationDrafts.find((d) =>
+          sameOwner(d.owner, command.owner)
+        )
+        if (!draft) {
+          draft = {
+            owner: command.owner,
+            appliedVersion: applied.appliedVersion,
+            changes: [],
+            validationErrors: []
+          }
+          this.snapshot.configurationDrafts.push(draft)
+        }
+        const appliedValue = applied.values[command.fieldPath]
+        const changeIndex = draft.changes.findIndex(
+          (c) => c.fieldPath === command.fieldPath
+        )
+        if (Object.is(command.value, appliedValue)) {
+          // Staging the applied value back un-stages the change.
+          if (changeIndex >= 0) draft.changes.splice(changeIndex, 1)
+        } else if (changeIndex >= 0) {
+          draft.changes[changeIndex] = {
+            fieldPath: command.fieldPath,
+            applied: appliedValue,
+            draft: command.value
+          }
+        } else {
+          draft.changes.push({
+            fieldPath: command.fieldPath,
+            applied: appliedValue,
+            draft: command.value
+          })
+        }
+        // Field-level validation is recorded on the draft so the editor can
+        // show errors before any apply is attempted (US-70).
+        draft.validationErrors = draft.validationErrors.filter(
+          (e) => e.fieldPath !== command.fieldPath
+        )
+        const error = validateConfigurationValue(
+          command.owner,
+          command.fieldPath,
+          command.value,
+          this.snapshot
+        )
+        if (error) {
+          draft.validationErrors.push({
+            fieldPath: command.fieldPath,
+            message: error
+          })
+        }
+        if (draft.changes.length === 0 && draft.validationErrors.length === 0) {
+          this.snapshot.configurationDrafts =
+            this.snapshot.configurationDrafts.filter((d) => d !== draft)
+        }
+        return null
+      }
+      case 'discard-configuration': {
+        // Discard drops drafts only — applied values were never touched.
+        const drop = new Set(command.owners.map((o) => ownerKey(o)))
+        this.snapshot.configurationDrafts =
+          this.snapshot.configurationDrafts.filter(
+            (d) => !drop.has(ownerKey(d.owner))
+          )
+        return null
+      }
+      case 'apply-configuration': {
+        const keys = command.owners.map((o) => ownerKey(o.owner))
+        if (new Set(keys).size !== keys.length) {
+          return this.reject(command, 'invalid-target', 'owner 列表包含重复项')
+        }
+        // Resolve and re-validate EVERY owner before mutating anything —
+        // one failure aborts the whole apply with all drafts kept (US-70).
+        const pending: Array<{
+          owner: ConfigurationOwner
+          draft: ConfigurationDraftEntry
+          applied: AppliedConfigurationEntry
+        }> = []
+        for (const { owner, expectedAppliedVersion } of command.owners) {
+          const applied = this.findAppliedConfig(owner)
+          if (!applied) {
+            return this.reject(command, 'invalid-target', '配置 owner 不存在')
+          }
+          if (applied.appliedVersion !== expectedAppliedVersion) {
+            return this.reject(
+              command,
+              'stale-revision',
+              '配置版本已过期，请查看最新值后重试'
+            )
+          }
+          const draft = this.snapshot.configurationDrafts.find((d) =>
+            sameOwner(d.owner, owner)
+          )
+          if (!draft || draft.changes.length === 0) {
+            return this.reject(command, 'invalid-target', '没有待应用的草稿')
+          }
+          pending.push({ owner, draft, applied })
+        }
+        let hasErrors = false
+        for (const { owner, draft } of pending) {
+          draft.validationErrors = []
+          for (const change of draft.changes) {
+            const error = validateConfigurationValue(
+              owner,
+              change.fieldPath,
+              change.draft,
+              this.snapshot
+            )
+            if (error) {
+              draft.validationErrors.push({
+                fieldPath: change.fieldPath,
+                message: error
+              })
+              hasErrors = true
+            }
+          }
+        }
+        if (hasErrors) {
+          return this.reject(
+            command,
+            'invariant-violation',
+            '部分字段未通过验证，已保留全部草稿'
+          )
+        }
+        // Commit: move draft values into applied truth, bump each owner's
+        // version exactly once, then clear the consumed drafts.
+        const appliedOwners: Array<{
+          owner: ConfigurationOwner
+          appliedVersion: number
+        }> = []
+        for (const { owner, draft, applied } of pending) {
+          for (const change of draft.changes) {
+            applied.values[change.fieldPath] = normalizeAppliedValue(
+              change.fieldPath,
+              change.draft
+            )
+          }
+          applied.appliedVersion += 1
+          appliedOwners.push({ owner, appliedVersion: applied.appliedVersion })
+          this.applyImmediateEffects(owner, applied.values)
+        }
+        const consumed = new Set(keys)
+        this.snapshot.configurationDrafts =
+          this.snapshot.configurationDrafts.filter(
+            (d) => !consumed.has(ownerKey(d.owner))
+          )
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            timestamp: Date.now(),
+            kind: 'configuration-applied',
+            summary: `已原子应用 ${pending.length} 个 owner 的配置变更`
+          },
+          ...this.snapshot.activity
+        ]
+        postEvents.push({
+          kind: 'configuration-applied',
+          correlationId: command.commandId,
+          owners: appliedOwners
+        })
+        return null
+      }
       default:
         return this.reject(command, 'scenario-read-only', '此命令尚未实现')
     }
@@ -669,6 +854,53 @@ export class MockScenarioAdapter implements WorkbenchPort {
       (q) => q.projectId === project.projectId
     ).length
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
+  }
+
+  /**
+   * Finds the applied configuration truth for an owner, or undefined when
+   * the owner does not exist (unknown project/agent).
+   */
+  private findAppliedConfig(owner: ConfigurationOwner) {
+    return this.snapshot.appliedConfigurations.find(
+      (c) => ownerKey(c.owner) === ownerKey(owner)
+    )
+  }
+
+  /**
+   * Applies the immediate effects of a committed configuration (US-91):
+   * identity and routing metadata take effect at once. Run configuration
+   * (model, permissions, proxy, env, resources, concurrency, budget) has NO
+   * side effect here — it only takes effect on the next Run, and the active
+   * Run keeps its launch-time snapshot (`activeRunConfigVersion`).
+   */
+  private applyImmediateEffects(
+    owner: ConfigurationOwner,
+    values: Record<string, unknown>
+  ): void {
+    if (owner.kind === 'agent') {
+      const agent = this.snapshot.agents.find(
+        (a) => a.agentInstanceId === owner.agentInstanceId
+      )
+      const name = values['identity.name']
+      if (agent && typeof name === 'string' && name.trim()) {
+        agent.name = name.trim()
+      }
+      return
+    }
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === owner.projectId
+    )
+    if (!project) return
+    const projectName = values['general.name']
+    if (typeof projectName === 'string' && projectName.trim()) {
+      project.name = projectName.trim()
+    }
+    // The primary connection is an optional 0..1 reference (US-72).
+    const connection = values['integrations.primaryConnectionId']
+    project.primaryConnectionId =
+      typeof connection === 'string'
+        ? id(connection, 'ConnectionId')
+        : undefined
   }
 
   private reject(
