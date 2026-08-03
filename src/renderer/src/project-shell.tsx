@@ -240,6 +240,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const [permissionsNavNonce, setPermissionsNavNonce] = useState(0)
   // Deep-link failures are surfaced, never dropped silently (#9).
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null)
+  // Generation token for in-flight deep links: any newer intentional
+  // navigation (or a newer deep link) supersedes an awaiting attempt, whose
+  // continuation must then send no further commands and write no local
+  // state (spec 566–568 — stale results are safely ignored).
+  const deepLinkAttemptRef = useRef(0)
 
   if (!snapshot) {
     return (
@@ -321,6 +326,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const openAttentionTarget = async (
     target: AttentionTarget
   ): Promise<void> => {
+    const attempt = ++deepLinkAttemptRef.current
+    const isCurrent = () => deepLinkAttemptRef.current === attempt
     setShowAttention(false)
     setDeepLinkNotice(null)
     const targetProject = snapshot.projects.find(
@@ -328,6 +335,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     )
     if (!targetProject) return
     const navResult = await navigate(target.projectId, deepLinkSurface(target))
+    if (!isCurrent()) return // superseded by a newer navigation
     if (!navResult.ok) {
       setDeepLinkNotice(`无法打开目标：${navResult.message}`)
       return
@@ -338,6 +346,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         target.agentInstanceId,
         navResult.acceptedRevision
       )
+      if (!isCurrent()) return // superseded while opening the workspace
       if (!layoutResult.ok) {
         setDeepLinkNotice(
           `已到达 Agent 工作面，但未能打开目标 Tab：${layoutResult.message}`
@@ -371,6 +380,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const managePermanentPolicy = async (
     projectId: ProjectId
   ): Promise<CommandResult> => {
+    deepLinkAttemptRef.current += 1 // intentional navigation supersedes deep links
     const result = await navigate(projectId, 'settings')
     if (result.ok) {
       setShowAttention(false)
@@ -405,7 +415,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                       ? 'bg-neutral-700 text-neutral-100'
                       : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
                   }`}
-                  onClick={() => void navigateGlobal(surface)}
+                  onClick={() => {
+                    deepLinkAttemptRef.current += 1
+                    void navigateGlobal(surface)
+                  }}
                 >
                   {label}
                 </button>
@@ -415,9 +428,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {inGlobalView && project && (
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
-              onClick={() =>
+              onClick={() => {
+                deepLinkAttemptRef.current += 1
                 void navigate(project.projectId, project.currentSurface)
-              }
+              }}
             >
               ← 返回项目
             </button>
@@ -490,6 +504,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
                 value={project.projectId}
                 onChange={(e) => {
+                  deepLinkAttemptRef.current += 1
                   setRetainedDeepLink(null)
                   setDeepLinkNotice(null)
                   setPermissionsNavNonce(0)
@@ -518,6 +533,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                       : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
                   }`}
                   onClick={() => {
+                    deepLinkAttemptRef.current += 1
                     setRetainedDeepLink(null)
                     setDeepLinkNotice(null)
                     // The permissions deep link is one-shot: manual surface

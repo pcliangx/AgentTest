@@ -516,3 +516,50 @@ describe('Global Attention — review hardening (#9)', () => {
     ).toBeNull()
   })
 })
+
+describe('Global Attention — superseded deep link (#9 review)', () => {
+  it('ignores a stale continuation: manual navigation wins, nothing pollutes the chosen page', async () => {
+    const commands: WorkbenchCommand[] = []
+    class DeferredResultPort extends MockScenarioAdapter {
+      override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+        commands.push(command)
+        const result = super.dispatch(command)
+        const isFirstNavigate =
+          command.kind === 'navigate' &&
+          commands.filter((c) => c.kind === 'navigate').length === 1
+        if (isFirstNavigate) {
+          // The deep-link navigation publishes its event at once but returns
+          // its CommandResult later — a contract-legal order (spec 566–568).
+          return new Promise((resolve) =>
+            setTimeout(() => {
+              void result.then(resolve)
+            }, 30)
+          )
+        }
+        return result
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new DeferredResultPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_etl 的 Run 失败：连接超时'
+      })
+    )
+    // While the deep link's first command result is still in flight, the
+    // user navigates manually — this supersedes the whole deep link.
+    await user.click(screen.getByRole('button', { name: '任务' }))
+    await screen.findByText(/任务 工作面尚未实现/)
+    // Let the deferred result land, then observe.
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    // No stale continuation: no follow-up layout command, no notice, no
+    // retained target — the page the user actually chose stays clean.
+    expect(commands.some((c) => c.kind === 'change-layout')).toBe(false)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/已保留目标/)).toBeNull()
+    expect(screen.getByText(/任务 工作面尚未实现/)).toBeVisible()
+  })
+})
