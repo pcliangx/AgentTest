@@ -96,19 +96,79 @@ describe('Settings A — draft lifecycle', () => {
     ).toBeDefined()
   })
 
-  it('restores the applied view on discard', async () => {
-    const { user } = await gotoSettingsSurface()
+  it('previews discard and preserves the draft when cancelled or closed', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoSettingsSurface(port)
     await stageText(user, '项目名称', '销售分析 v2')
     expect(screen.getByText('待应用：销售分析 v2')).toBeDefined()
 
     await user.click(
       screen.getByRole('button', { name: '丢弃「销售数据分析」的草稿' })
     )
-    expect(screen.queryByText('待应用：销售分析 v2')).toBeNull()
-    expect(screen.getByRole('textbox', { name: '项目名称' })).toHaveValue(
-      '销售数据分析'
+    const dialog = await screen.findByRole('dialog', {
+      name: '丢弃配置草稿'
+    })
+    expect(dialog).toHaveTextContent('销售数据分析')
+    expect(dialog).toHaveTextContent('项目名称')
+    expect(dialog).toHaveTextContent('销售数据分析 → 销售分析 v2')
+    expect(dialog).toHaveTextContent('不可恢复')
+    expect((await port.getSnapshot()).configurationDrafts).toHaveLength(1)
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('待应用：销售分析 v2')).toBeDefined()
+    expect((await port.getSnapshot()).configurationDrafts).toHaveLength(1)
+
+    await user.click(
+      screen.getByRole('button', { name: '丢弃「销售数据分析」的草稿' })
     )
-    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    await screen.findByRole('dialog', {
+      name: '丢弃配置草稿'
+    })
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('待应用：销售分析 v2')).toBeDefined()
+    expect((await port.getSnapshot()).configurationDrafts).toHaveLength(1)
+  })
+
+  it('confirms discard for only the previewed owner and records the result', async () => {
+    const port = new MockScenarioAdapter()
+    const { user } = await gotoSettingsSurface(port)
+    await stageText(user, '项目名称', '销售分析 v2')
+    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '选择实例' }),
+      'cc_data'
+    )
+    await stageText(user, '模型', 'model-a')
+
+    await user.click(
+      screen.getByRole('button', { name: '丢弃「销售数据分析」的草稿' })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: '丢弃配置草稿'
+    })
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      within(summaryPanel()).queryByText(/销售数据分析.*1 项变更/)
+    ).toBeNull()
+    expect(within(summaryPanel()).getByText(/cc_data.*1 项变更/)).toBeDefined()
+    expect(screen.getByRole('textbox', { name: '模型' })).toHaveValue('model-a')
+
+    const snapshot = await port.getSnapshot()
+    expect(
+      snapshot.configurationDrafts.some(
+        (draft) => draft.owner.kind === 'project'
+      )
+    ).toBe(false)
+    expect(
+      snapshot.configurationDrafts.some(
+        (draft) => draft.owner.kind === 'agent'
+      )
+    ).toBe(true)
+    expect(snapshot.activity[0].summary).toContain('丢弃配置草稿')
   })
 
   it('isolates drafts between two instances for the same field path', async () => {
