@@ -18,6 +18,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run",
+    "test:ui:run": "playwright test --config playwright.ui.config.ts",
+    "test:ui": "npm run build && npm run test:ui:run",
+    "check:release": "npm run typecheck && npm test && npm run build && npm run test:ui:run",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
@@ -35,6 +38,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "~6.6.3",

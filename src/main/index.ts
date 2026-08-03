@@ -5,14 +5,18 @@ import {
   APP_ID,
   prepareApplicationDataDirectory
 } from './app-identity'
-import { disposeServices, initServices, registerIpc } from './ipc'
+import { resolveUiSmokeMode } from './ui-smoke-mode'
 
 let mainWindow: BrowserWindow | null = null
+let services: typeof import('./ipc') | undefined
 
 app.setName(APP_DISPLAY_NAME)
 app.setAppUserModelId(APP_ID)
 
-const applicationData = prepareApplicationDataDirectory(app.getPath('appData'))
+const uiSmokeMode = resolveUiSmokeMode(process.env)
+const applicationData = uiSmokeMode.enabled
+  ? { path: uiSmokeMode.userDataPath, status: 'current' as const }
+  : prepareApplicationDataDirectory(app.getPath('appData'))
 app.setPath('userData', applicationData.path)
 app.setPath('sessionData', applicationData.path)
 
@@ -23,10 +27,14 @@ if (applicationData.status === 'migrated') {
 }
 
 function createWindow(): void {
+  const viewport = uiSmokeMode.enabled
+    ? uiSmokeMode.scenario.viewport
+    : { width: 1280, height: 840 }
   mainWindow = new BrowserWindow({
     title: APP_DISPLAY_NAME,
-    width: 1280,
-    height: 840,
+    width: viewport.width,
+    height: viewport.height,
+    useContentSize: uiSmokeMode.enabled,
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -37,18 +45,37 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  if (uiSmokeMode.enabled) {
+    mainWindow.webContents.on('console-message', (details) => {
+      console.info(`[ui-smoke:renderer:${details.level}] ${details.message}`)
+    })
+    mainWindow.webContents.once('did-finish-load', () => {
+      console.info(
+        'Agent Squad HQ UI smoke mode: real main services are disabled.'
+      )
+    })
+  }
 
   // electron-vite dev injects ELECTRON_RENDERER_URL; prod loads the built index.html.
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  const developmentRendererUrl = process.env['ELECTRON_RENDERER_URL']
+  if (developmentRendererUrl && !uiSmokeMode.enabled) {
+    void mainWindow.loadURL(developmentRendererUrl)
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(
+      join(__dirname, '../renderer/index.html'),
+      uiSmokeMode.enabled
+        ? { query: { scenario: uiSmokeMode.scenario.id } }
+        : undefined
+    )
   }
 }
 
-app.whenReady().then(() => {
-  initServices(applicationData.path)
-  registerIpc(ipcMain)
+app.whenReady().then(async () => {
+  if (!uiSmokeMode.enabled) {
+    services = await import('./ipc')
+    services.initServices(applicationData.path)
+    services.registerIpc(ipcMain)
+  }
   createWindow()
 
   app.on('activate', () => {
@@ -61,5 +88,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  void disposeServices()
+  void services?.disposeServices()
 })
