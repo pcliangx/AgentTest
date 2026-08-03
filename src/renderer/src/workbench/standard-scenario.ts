@@ -183,7 +183,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         rootAvailability: 'available',
         repositoryReadiness: 'ready',
         activity: 'active',
-        activeRunCount: 1,
+        activeRunCount: 2,
         queuedRunCount: 2,
         attentionCount: 2,
         primaryConnectionId: connId,
@@ -373,7 +373,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         perAgentLimit: 1,
         projectLimit: 3,
         globalLimit: 6,
-        activeGlobal: 1,
+        activeGlobal: 2,
         queuedGlobal: 2
       },
       connections: [

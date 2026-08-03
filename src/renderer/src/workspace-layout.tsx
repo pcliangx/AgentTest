@@ -28,6 +28,7 @@ import {
 import type { SendCommand } from './agents-surface'
 import {
   getProjectDispatchBlockReason,
+  isActiveStructuredRunState,
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './workbench/dispatchability'
@@ -1517,14 +1518,6 @@ function ChangesView({
 // Terminal Takeover — execution slot mutual exclusion (#7)
 // ---------------------------------------------------------------------------
 
-const ACTIVE_RUN_STATES: ReadonlySet<string> = new Set([
-  'starting',
-  'running',
-  'finishing',
-  'needs-input',
-  'permission-requested'
-])
-
 function TerminalStateView({
   project,
   agent,
@@ -1538,7 +1531,7 @@ function TerminalStateView({
   const isTakeover = ts === 'active'
   const isOpening = ts === 'opening'
   const isFailed = ts === 'failed'
-  const runBlocks = ACTIVE_RUN_STATES.has(agent.runtimeState)
+  const runBlocks = isActiveStructuredRunState(agent.runtimeState)
   const unavailable =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
   const canOpen = !isTakeover && !isOpening && !runBlocks && !unavailable
