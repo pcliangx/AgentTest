@@ -1,6 +1,7 @@
 import { id } from './contract'
 import type {
   AgentInstanceViewModel,
+  AgentProviderId,
   AppliedConfigurationViewModel,
   ProjectId,
   WorkbenchViewModel
@@ -27,6 +28,32 @@ export function createStandardScenario(): WorkbenchViewModel {
   const claudeCode = id('claude-code', 'AgentProviderId')
   const codex = id('codex', 'AgentProviderId')
   const kimiCode = id('kimi-code', 'AgentProviderId')
+  const providers: WorkbenchViewModel['global']['providers'] = [
+    {
+      providerId: claudeCode,
+      displayName: 'Claude Code',
+      status: 'ready',
+      models: [{ modelId: 'claude-sonnet-4', displayName: 'Claude Sonnet 4' }]
+    },
+    {
+      providerId: codex,
+      displayName: 'Codex',
+      status: 'ready',
+      models: [{ modelId: 'gpt-5-codex', displayName: 'GPT-5 Codex' }]
+    },
+    {
+      providerId: kimiCode,
+      displayName: 'Kimi Code',
+      status: 'ready',
+      models: [{ modelId: 'kimi-k2', displayName: 'Kimi K2' }]
+    },
+    {
+      providerId: id('gemini-cli', 'AgentProviderId'),
+      displayName: 'Gemini CLI',
+      status: 'blocked',
+      models: []
+    }
+  ]
 
   const ccData = id('inst-cc-data', 'AgentInstanceId')
   const ccSql = id('inst-cc-sql', 'AgentInstanceId')
@@ -54,6 +81,7 @@ export function createStandardScenario(): WorkbenchViewModel {
       providerId,
       runtimeState,
       terminalState: 'closed',
+      worktreeMode: 'isolated',
       queueDepth: 0,
       doctor: 'ready',
       lastActivityAt,
@@ -69,11 +97,9 @@ export function createStandardScenario(): WorkbenchViewModel {
    * fields (model/proxy/env/concurrency/budget/permissions/scope) only take
    * effect on the next Run.
    */
-  const MODEL_BY_PROVIDER = new Map<string, string>([
-    [claudeCode, 'claude-sonnet-4'],
-    [codex, 'gpt-5-codex'],
-    [kimiCode, 'kimi-k2']
-  ])
+  const defaultModelFor = (providerId: AgentProviderId): string =>
+    providers.find((provider) => provider.providerId === providerId)?.models[0]
+      ?.modelId ?? ''
 
   function projectConfig(
     ownerProjectId: ProjectId,
@@ -88,7 +114,7 @@ export function createStandardScenario(): WorkbenchViewModel {
         'general.name': name,
         'general.landingSurface': 'overview',
         'defaults.providerId': claudeCode,
-        'defaults.model': MODEL_BY_PROVIDER.get(claudeCode)!,
+        'defaults.model': defaultModelFor(claudeCode),
         'defaults.openMode': 'current-panel',
         'defaults.worktreeMode': 'isolated',
         'integrations.primaryConnectionId': primaryConnectionId,
@@ -108,7 +134,7 @@ export function createStandardScenario(): WorkbenchViewModel {
       appliedVersion,
       values: {
         'identity.name': a.name,
-        'model.id': MODEL_BY_PROVIDER.get(a.providerId) ?? '',
+        'model.id': defaultModelFor(a.providerId),
         'proxy.http': '',
         'env.custom': '',
         'concurrency.priority': 'normal',
@@ -367,16 +393,7 @@ export function createStandardScenario(): WorkbenchViewModel {
           status: 'error'
         }
       ],
-      providers: [
-        { providerId: claudeCode, displayName: 'Claude Code', status: 'ready' },
-        { providerId: codex, displayName: 'Codex', status: 'ready' },
-        { providerId: kimiCode, displayName: 'Kimi Code', status: 'ready' },
-        {
-          providerId: id('gemini-cli', 'AgentProviderId'),
-          displayName: 'Gemini CLI',
-          status: 'blocked'
-        }
-      ]
+      providers
     }
   }
 }

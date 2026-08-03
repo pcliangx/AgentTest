@@ -35,6 +35,7 @@ import {
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
+import { resolveProviderModelSelection } from './provider-capability'
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
@@ -193,19 +194,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
-        const provider = this.snapshot.global.providers.find(
-          (p) => p.providerId === command.providerId
+        const selection = resolveProviderModelSelection(
+          this.snapshot.global.providers,
+          command.providerId,
+          command.modelId
         )
-        if (!provider) {
-          return this.reject(command, 'invalid-target', 'Provider 不存在')
-        }
-        if (provider.status !== 'ready') {
+        if (!selection.ok) {
           return this.reject(
             command,
-            'unavailable',
-            'Provider Doctor 未通过，不能创建实例'
+            selection.code === 'provider-unavailable'
+              ? 'unavailable'
+              : 'invalid-target',
+            selection.message
           )
         }
+        const { provider } = selection
         const nameCheck = validateAgentName(command.name)
         if (!nameCheck.ok) {
           return this.reject(command, 'invalid-target', nameCheck.reason!)
@@ -237,22 +240,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
           providerId: provider.providerId,
           runtimeState: 'ready',
           terminalState: 'closed',
+          worktreeMode: command.worktreeMode,
           queueDepth: 0,
           doctor: 'ready',
           lastActivityAt: Date.now()
         })
-        // Every configurable owner needs its applied truth (#13): a created
-        // instance starts at version 1, inheriting the project's applied
-        // defaults — otherwise Settings could never edit it.
-        const projectConfig = this.snapshot.appliedConfigurations.find(
-          (c) => c.owner.kind === 'project' && c.owner.projectId === project.projectId
-        )
+        // Every configurable owner needs its applied truth (#13). The
+        // command carries the user's confirmed creation draft, initially
+        // seeded from the Project's applied defaults by the renderer.
         this.snapshot.appliedConfigurations.push({
           owner: { kind: 'agent', agentInstanceId },
           appliedVersion: 1,
           values: {
             'identity.name': name,
-            'model.id': projectConfig?.values['defaults.model'] ?? '',
+            'model.id': command.modelId,
             'proxy.http': '',
             'env.custom': '',
             'concurrency.priority': 'normal',
@@ -829,8 +830,36 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
           pending.push({ owner, draft, applied })
         }
-        // Re-validate against the live snapshot — but publish failures ONLY
-        // through this rejection. A rejected command never mutates the
+        // Agent-name validation must observe the atomic batch's FINAL name
+        // set. Stage-time validation still uses the live snapshot for early
+        // feedback, while Apply projects every pending rename together so a
+        // legal swap/cycle is not rejected as a transient collision.
+        const pendingRenames = new Map<AgentInstanceId, string>()
+        for (const { owner, draft } of pending) {
+          if (owner.kind !== 'agent') continue
+          for (const change of draft.changes) {
+            if (
+              change.fieldPath === 'identity.name' &&
+              typeof change.draft === 'string'
+            ) {
+              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
+            }
+          }
+        }
+        const validationSnapshot: WorkbenchViewModel =
+          pendingRenames.size === 0
+            ? this.snapshot
+            : {
+                ...this.snapshot,
+                agents: this.snapshot.agents.map((agent) => {
+                  const finalName = pendingRenames.get(agent.agentInstanceId)
+                  return finalName === undefined
+                    ? agent
+                    : { ...agent, name: finalName }
+                })
+              }
+        // Re-validate against the projected snapshot — but publish failures
+        // ONLY through this rejection. A rejected command never mutates the
         // snapshot (rejection purity), so freshly discovered errors travel
         // in the message instead of being written into drafts invisibly.
         const discovered: string[] = []
@@ -840,7 +869,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
               owner,
               change.fieldPath,
               change.draft,
-              this.snapshot
+              validationSnapshot
             )
             if (error) {
               discovered.push(
@@ -856,22 +885,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
             `部分字段未通过验证（${discovered.join('；')}），已保留全部草稿`
           )
         }
-        // Batch rename uniqueness: project the FINAL name set after all
-        // pending renames and check case-insensitive duplicates — per-change
-        // validation alone misses collisions between two renames staged in
-        // the same batch (Agent Name is project-unique, ADR-0008).
-        const pendingRenames = new Map<string, string>()
-        for (const { owner, draft } of pending) {
-          if (owner.kind !== 'agent') continue
-          for (const change of draft.changes) {
-            if (
-              change.fieldPath === 'identity.name' &&
-              typeof change.draft === 'string'
-            ) {
-              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
-            }
-          }
-        }
+        // Independently assert the projected FINAL name-set invariant after
+        // all pending renames. This keeps Project-wide, case-insensitive
+        // uniqueness (ADR-0008) explicit even if field validation evolves.
         if (pendingRenames.size > 0) {
           const seen = new Map<string, string>()
           let collision: string | null = null
