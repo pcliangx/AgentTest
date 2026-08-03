@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentOpenMode,
   AgentInstanceViewModel,
@@ -154,6 +154,10 @@ export function AgentsSurface({
 
 type SortMode = 'recent-activity' | 'name'
 
+const DIALOG_FOCUSABLE_SELECTOR =
+  'button:not(:disabled), input:not(:disabled), select:not(:disabled), ' +
+  'textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+
 function AgentDirectory({
   project,
   agents,
@@ -176,6 +180,12 @@ function AgentDirectory({
   const [stateFilter, setStateFilter] = useState<'all' | AgentRuntimeState>('all')
   const [sortMode, setSortMode] = useState<SortMode>('recent-activity')
   const [showNewAgent, setShowNewAgent] = useState(false)
+  const newAgentButtonRef = useRef<HTMLButtonElement>(null)
+
+  const closeNewAgentDialog = () => {
+    setShowNewAgent(false)
+    newAgentButtonRef.current?.focus()
+  }
 
   // View state derived from the project layout by AgentInstanceId:
   // which instances are open as tabs, and which one is currently visible.
@@ -273,7 +283,8 @@ function AgentDirectory({
             派发给 Agent
           </button>
           <button
-            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
+            ref={newAgentButtonRef}
+            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-neutral-400"
             onClick={() => setShowNewAgent(true)}
           >
             新建 Agent
@@ -388,7 +399,7 @@ function AgentDirectory({
           project={project}
           snapshot={snapshot}
           sendCommand={sendCommand}
-          onClose={() => setShowNewAgent(false)}
+          onClose={closeNewAgentDialog}
         />
       )}
     </aside>
@@ -451,6 +462,12 @@ function NewAgentDialog({
       : 'isolated'
   )
   const [error, setError] = useState<string | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    nameInputRef.current?.focus()
+  }, [])
+
   const selectedProvider = snapshot.global.providers.find(
     (provider) => provider.providerId === providerId
   )
@@ -507,7 +524,34 @@ function NewAgentDialog({
     <div
       role="dialog"
       aria-label="新建 Agent"
+      aria-modal="true"
       className="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+          return
+        }
+        if (event.key !== 'Tab') return
+
+        const focusable = Array.from(
+          event.currentTarget.querySelectorAll<HTMLElement>(
+            DIALOG_FOCUSABLE_SELECTOR
+          )
+        )
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (!first || !last) return
+        const leavesDialog = event.shiftKey
+          ? document.activeElement === first
+          : document.activeElement === last
+        if (leavesDialog) {
+          event.preventDefault()
+          const next = event.shiftKey ? last : first
+          next.focus()
+        }
+      }}
     >
       <div className="w-80 space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4">
         <h3 className="text-sm font-medium text-neutral-100">新建 Agent</h3>
@@ -515,6 +559,7 @@ function NewAgentDialog({
         <label className="block text-xs text-neutral-400">
           Agent 名称
           <input
+            ref={nameInputRef}
             aria-label="Agent 名称"
             className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
             value={name}

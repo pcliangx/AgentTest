@@ -219,6 +219,82 @@ describe('Workspace layout — Focus', () => {
     expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
   })
 
+  it.each([
+    { targetRole: 'textbox', targetName: 'Agent 名称' },
+    { targetRole: 'button', targetName: '取消' }
+  ] as const)(
+    'lets the New Agent dialog consume Escape from $targetName',
+    async ({ targetRole, targetName }) => {
+      const port = new RecordingPort()
+      const { user } = await gotoAgentsSurface(port)
+      const directory = screen.getByRole('region', { name: 'Agent 目录' })
+      await user.click(
+        screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+      )
+      await user.click(
+        within(panels()[1]).getByRole('button', {
+          name: 'Focus 此 Panel'
+        })
+      )
+      expect(panels()).toHaveLength(1)
+
+      const opener = within(directory).getByRole('button', {
+        name: '新建 Agent'
+      })
+      await user.click(opener)
+      const dialog = screen.getByRole('dialog', { name: '新建 Agent' })
+      const target = within(dialog).getByRole(targetRole, {
+        name: targetName
+      })
+      if (targetRole === 'button') {
+        await user.click(
+          within(dialog).getByRole('textbox', { name: 'Agent 名称' })
+        )
+        for (
+          let attempt = 0;
+          attempt < 10 && document.activeElement !== target;
+          attempt++
+        ) {
+          await user.tab()
+        }
+      } else {
+        await user.click(target)
+      }
+      expect(target).toHaveFocus()
+      const commandCountBeforeEscape = port.commands.length
+
+      await user.keyboard('{Escape}')
+
+      expect(port.commands).toHaveLength(commandCountBeforeEscape)
+      expect(
+        screen.queryByRole('dialog', { name: '新建 Agent' })
+      ).not.toBeInTheDocument()
+      expect(panels()).toHaveLength(1)
+      expect(screen.getByRole('button', { name: '退出 Focus' })).toBeVisible()
+      expect(opener).toHaveFocus()
+      expect(document.activeElement).not.toBe(document.body)
+    }
+  )
+
+  it('keeps Tab focus inside the New Agent dialog while it is open', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(
+      within(directory).getByRole('button', { name: '新建 Agent' })
+    )
+
+    const dialog = screen.getByRole('dialog', { name: '新建 Agent' })
+    const nameInput = within(dialog).getByRole('textbox', {
+      name: 'Agent 名称'
+    })
+    expect(nameInput).toHaveFocus()
+
+    await user.tab({ shift: true })
+    expect(dialog).toContainElement(document.activeElement as HTMLElement)
+    await user.tab()
+    expect(nameInput).toHaveFocus()
+  })
+
   it('falls back to the newly focused panel when the focused panel is pruned', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(
