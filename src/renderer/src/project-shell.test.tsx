@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 import { createStandardScenario } from './workbench/standard-scenario'
+import { id } from './workbench/contract'
 import type {
   CommandResult,
   WorkbenchCommand,
@@ -95,6 +96,42 @@ describe('ProjectShell — navigation', () => {
     expect(region).toHaveTextContent(/cc_data 开始清洗/)
     expect(region).toHaveTextContent('运行开始')
     expect(region).not.toHaveTextContent('run-started')
+  })
+
+  it('renders a queue cancellation as a distinct Chinese activity result', async () => {
+    const scenario = createStandardScenario()
+    const item = scenario.queue[0]
+    scenario.activity.unshift({
+      activityId: id('act-queue-cancelled', 'ActivityId'),
+      projectId: item.projectId,
+      agentInstanceId: item.agentInstanceId,
+      queueItemId: item.queueItemId,
+      timestamp: Date.now(),
+      kind: 'queue-cancelled',
+      reason: 'user-cancelled',
+      summary: 'cx_forecast 的排队项已由用户取消'
+    })
+    scenario.activity.unshift({
+      activityId: id('act-run-failed', 'ActivityId'),
+      projectId: item.projectId,
+      agentInstanceId: item.agentInstanceId,
+      timestamp: Date.now() + 1,
+      kind: 'run-failed',
+      summary: 'cx_forecast 运行失败'
+    })
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
+    await waitForLoad()
+
+    await user.click(screen.getByRole('button', { name: '活动' }))
+
+    const region = await screen.findByRole('region', { name: '活动' })
+    expect(region).toHaveTextContent('cx_forecast 的排队项已由用户取消')
+    expect(region).toHaveTextContent('排队已取消')
+    expect(region).toHaveTextContent('运行完成')
+    expect(region).toHaveTextContent('运行失败')
+    expect(region).not.toHaveTextContent('queue-cancelled')
+    expect(region).not.toHaveTextContent('run-failed')
   })
 
   it('does not show the old Provider three-slot UI', async () => {

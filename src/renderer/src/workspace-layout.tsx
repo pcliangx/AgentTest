@@ -1821,8 +1821,16 @@ function QueuePanel({
   const queueItems = snapshot.queue
     .filter((q) => q.projectId === project.projectId)
     .sort((a, b) => a.position - b.position)
+  const cancellations = snapshot.activity
+    .filter(
+      (entry) =>
+        entry.projectId === project.projectId &&
+        entry.kind === 'queue-cancelled'
+    )
+    .sort((a, b) => b.timestamp - a.timestamp)
+  const latestCancellation = cancellations[0]
 
-  if (queueItems.length === 0) return null
+  if (queueItems.length === 0 && !latestCancellation) return null
 
   const manage = (
     queueItemId: QueueItemId,
@@ -1917,6 +1925,20 @@ function QueuePanel({
           </div>
         )
       })}
+      <p
+        role={latestCancellation ? 'status' : undefined}
+        aria-label="队列取消结果"
+        aria-live="polite"
+        aria-atomic="true"
+        className="text-xs text-neutral-400"
+      >
+        {latestCancellation && (
+          <>
+            {latestCancellation.summary}
+            <span className="sr-only">；第 {cancellations.length} 条取消记录</span>
+          </>
+        )}
+      </p>
     </div>
   )
 }

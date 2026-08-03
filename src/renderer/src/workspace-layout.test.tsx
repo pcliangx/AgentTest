@@ -881,14 +881,34 @@ describe('Workspace layout — queue and terminal (#7)', () => {
     expect(queue).toHaveTextContent('队列深度：2')
   })
 
-  it('canceling a queue item removes it from the list', async () => {
+  it('canceling a queue item removes it and announces the port result', async () => {
     const { user } = await gotoAgentView()
     expect(screen.getByText('队列深度：2')).toBeVisible()
+    const status = within(
+      screen.getByRole('region', { name: '队列' })
+    ).getByLabelText('队列取消结果')
+    expect(status).toBeEmptyDOMElement()
+    expect(status).not.toHaveAttribute('role')
     const cancelButtons = screen.getAllByRole('button', { name: '取消排队' })
     await user.click(cancelButtons[0])
     await waitFor(() => {
       expect(screen.getByText('队列深度：1')).toBeVisible()
     })
+    expect(status).toHaveTextContent(
+      'cx_forecast 的排队项已由用户取消；第 1 条取消记录'
+    )
+    expect(status).toHaveAttribute('role', 'status')
+    const firstAnnouncement = status.textContent
+
+    await user.click(screen.getByRole('button', { name: '取消排队' }))
+    await waitFor(() => {
+      expect(screen.getByText('队列深度：0')).toBeVisible()
+      expect(status).toHaveTextContent('第 2 条取消记录')
+    })
+    expect(
+      screen.getByRole('status', { name: '队列取消结果' })
+    ).toBe(status)
+    expect(status.textContent).not.toBe(firstAnnouncement)
   })
 
   it.each([

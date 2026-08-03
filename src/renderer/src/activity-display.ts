@@ -1,4 +1,6 @@
-export const ACTIVITY_KIND_LABEL: Record<string, string> = {
+import type { ActivityKind } from './workbench/contract'
+
+export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   'run-started': '运行开始',
   'run-completed': '运行完成',
   'run-failed': '运行失败',
@@ -12,6 +14,6 @@ export const ACTIVITY_KIND_LABEL: Record<string, string> = {
   'dangerous-action-confirmed': '高风险操作已确认'
 }
 
-export function activityKindLabel(kind: string): string {
-  return ACTIVITY_KIND_LABEL[kind] ?? kind
+export function activityKindLabel(kind: ActivityKind): string {
+  return ACTIVITY_KIND_LABEL[kind]
 }
