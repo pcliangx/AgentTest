@@ -273,6 +273,8 @@ describe('Workspace layout — divider', () => {
       getSnapshot() {
         return this.inner.getSnapshot()
       }
+      planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+        this.inner.planDispatch(request)
       subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
         return this.inner.subscribe(listener)
       }
@@ -556,6 +558,8 @@ describe('Workspace layout — rejection recovery', () => {
       getSnapshot() {
         return this.inner.getSnapshot()
       }
+      planDispatch: WorkbenchPort['planDispatch'] = (request) =>
+        this.inner.planDispatch(request)
       subscribe(listener: Parameters<WorkbenchPort['subscribe']>[0]) {
         return this.inner.subscribe(listener)
       }

@@ -25,11 +25,11 @@ import {
   RUNTIME_STATE_LABEL,
   TERMINAL_STATE_LABEL
 } from './agent-display'
-import type { SendCommand } from './agents-surface'
+import type { PlanDispatch, SendCommand } from './agents-surface'
+import { useDispatchPlan } from './use-dispatch-plan'
 import {
   getProjectDispatchBlockReason,
   isActiveStructuredRunState,
-  isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './workbench/dispatchability'
 
@@ -62,6 +62,7 @@ interface LayoutRenderContext {
     operation: LayoutOperation,
     expectedRevision?: number
   ) => Promise<CommandResult>
+  planDispatch: PlanDispatch
   sendCommand: SendCommand
   onPreviewRatio: (splitNodeId: SplitNodeId, ratio: number) => void
   onCommitRatio: (
@@ -85,12 +86,14 @@ export function WorkspaceArea({
   project,
   snapshot,
   openAttentionTargets,
+  planDispatch,
   sendLayout: sendLayoutCommand,
   sendCommand
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   openAttentionTargets: Set<string>
+  planDispatch: PlanDispatch
   sendLayout: (
     operation: LayoutOperation,
     expectedRevision?: number
@@ -241,6 +244,7 @@ export function WorkspaceArea({
     layoutRevision: snapshot.revision,
     ...(focusPanelId ? { temporaryFocusPanelId: focusPanelId } : {}),
     sendLayout,
+    planDispatch,
     sendCommand,
     onPreviewRatio: (splitNodeId, ratio) =>
       setPreviewRatios((prev) => ({ ...prev, [splitNodeId]: ratio })),
@@ -985,6 +989,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
           project={project}
           agent={activeAgent}
           snapshot={snapshot}
+          planDispatch={ctx.planDispatch}
           sendCommand={ctx.sendCommand}
         />
       ) : (
@@ -1127,11 +1132,13 @@ function AgentView({
   project,
   agent,
   snapshot,
+  planDispatch,
   sendCommand
 }: {
   project: ProjectViewModel
   agent: AgentInstanceViewModel
   snapshot: WorkbenchViewModel
+  planDispatch: PlanDispatch
   sendCommand: SendCommand
 }) {
   const [subView, setSubView] = useState<AgentSubView>('chat')
@@ -1176,6 +1183,7 @@ function AgentView({
             project={project}
             agent={agent}
             snapshot={snapshot}
+            planDispatch={planDispatch}
             sendCommand={sendCommand}
           />
         )}
@@ -1221,11 +1229,13 @@ function ChatState({
   project,
   agent,
   snapshot,
+  planDispatch,
   sendCommand
 }: {
   project: ProjectViewModel
   agent: AgentInstanceViewModel
   snapshot: WorkbenchViewModel
+  planDispatch: PlanDispatch
   sendCommand: SendCommand
 }) {
   const [draft, setDraft] = useState('')
@@ -1241,36 +1251,56 @@ function ChatState({
   // ADR-0007: structured Run and Terminal PTY are mutually exclusive. While
   // Terminal is opening or active the composer is disabled and shows why.
   const terminalBlocked = isTerminalExecutionSlotOccupied(agent.terminalState)
-  const disabled =
+  const baseDisabled =
     projectBlocked || lifecycleBlocked || terminalBlocked || submitting
   const awaitingInput = agent.runtimeState === 'needs-input'
-  const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
-  const projectQueueLength = snapshot.queue.filter(
-    (q) => q.projectId === project.projectId
-  ).length
+  const replyingToCurrentRun = awaitingInput && sendMode === 'reply'
+  const {
+    plan: currentPlan,
+    planning,
+    error: planError,
+    retry: retryPlan
+  } = useDispatchPlan({
+    planDispatch,
+    revision: snapshot.revision,
+    projectId: project.projectId,
+    targetIds: [agent.agentInstanceId],
+    enabled:
+      !projectBlocked &&
+      !lifecycleBlocked &&
+      !terminalBlocked &&
+      !replyingToCurrentRun
+  })
+  const planEntry = currentPlan?.entries[0]
+
+  const disabled =
+    baseDisabled || (!replyingToCurrentRun && (planning || !currentPlan))
 
   const submit = async () => {
     const instruction = draft.trim()
     if (!instruction || disabled || submittingRef.current) return
+    const mode = replyingToCurrentRun
+      ? 'reply-current-run'
+      : 'start-or-queue'
+    const expectedRevision = replyingToCurrentRun
+      ? snapshot.revision
+      : currentPlan!.revision
     submittingRef.current = true
     setSubmitting(true)
     setNotice(null)
     try {
-      const result = await sendCommand({
-        kind: 'send-agent-instruction',
-        projectId: project.projectId,
-        agentInstanceId: agent.agentInstanceId,
-        instruction,
-        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
-        // Any other active state enqueues as the next Run instead of being
-        // mistaken for a reply to the current Run.
-        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
-        // The user explicitly chooses reply vs enqueue via the sendMode toggle.
-        mode:
-          awaitingInput && sendMode === 'reply'
-            ? 'reply-current-run'
-            : 'start-or-queue'
-      })
+      const result = await sendCommand(
+        {
+          kind: 'send-agent-instruction',
+          projectId: project.projectId,
+          agentInstanceId: agent.agentInstanceId,
+          instruction,
+          // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied
+          // to. Every start-or-queue instruction is bound to its preview.
+          mode
+        },
+        expectedRevision
+      )
       if (result.ok) {
         setDraft('')
       } else {
@@ -1287,6 +1317,7 @@ function ChatState({
       <div
         role="log"
         aria-label="对话记录"
+        aria-busy={planning}
         className="min-h-0 flex-1 overflow-auto"
       >
         {projectBlockReason === 'project-archived' ? (
@@ -1341,19 +1372,28 @@ function ChatState({
                 加入下一队列
               </label>
             </div>
+            {sendMode === 'enqueue' && (
+              <p className="text-neutral-500">
+                {planEntry?.outcome === 'queue'
+                  ? `加入下一 Run 将进入第 ${planEntry.position} 位。`
+                  : planEntry?.outcome === 'start'
+                    ? '下一 Run 可立即启动。'
+                    : '正在计算下一 Run 队位…'}
+              </p>
+            )}
           </fieldset>
-        ) : hasQueuedWork && projectQueueLength > 0 ? (
+        ) : planEntry?.outcome === 'queue' ? (
           <p className="text-neutral-500">
-            当前 Project 已有 {projectQueueLength}{' '}
-            项排队；新指令将进入第 {projectQueueLength + 1} 位。
+            当前 Project 已有 {planEntry.position - 1}{' '}
+            项排队；新指令将进入第 {planEntry.position} 位。
           </p>
-        ) : hasQueuedWork ? (
+        ) : planning ? (
           <p className="text-neutral-500">
-            当前 Agent 已在排队；新指令将继续加入下一 Run 队列。
+            正在计算新指令的启动与队位…
           </p>
-        ) : isAgentBusy(agent) ? (
+        ) : planError ? (
           <p className="text-neutral-500">
-            当前有进行中的 Run；新指令将进入下一 Run 队列。
+            暂时无法计算新指令的启动与队位。
           </p>
         ) : (
           <p className="text-neutral-500">
@@ -1368,13 +1408,29 @@ function ChatState({
         </p>
       )}
 
+      {planError && (
+        <div
+          role="alert"
+          className="mt-2 flex items-center gap-2 text-xs text-red-400"
+        >
+          <span>{planError}</span>
+          <button
+            className="rounded px-2 py-1 text-neutral-300 hover:bg-neutral-800"
+            disabled={submitting}
+            onClick={retryPlan}
+          >
+            重新计算
+          </button>
+        </div>
+      )}
+
       <div className="mt-2 flex gap-2 border-t border-neutral-800 pt-2">
         <textarea
           aria-label="发送给当前 Agent"
           placeholder="发送给当前 Agent…"
           className="min-h-[2.5rem] flex-1 resize-none rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
           value={draft}
-          disabled={disabled}
+          disabled={baseDisabled}
           onChange={(e) => setDraft(e.target.value)}
         />
         <button

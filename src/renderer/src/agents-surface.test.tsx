@@ -416,9 +416,9 @@ describe('Agents surface — Agent View', () => {
       ).toBeVisible()
     }
 
-    // Chat state is driven by the port-judged runtime state: cc_data is
-    // running, so it must NOT show the "send your first message" empty state.
-    expect(view).toHaveTextContent('进行中的 Run')
+    // The port-owned plan accounts for the running slot and existing Project
+    // queue, so the composer exposes the exact next position.
+    expect(view).toHaveTextContent('新指令将进入第 3 位')
     expect(view).not.toHaveTextContent('发送首条消息')
 
     // Activity sub-view is driven by the port snapshot.

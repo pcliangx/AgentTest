@@ -1885,6 +1885,227 @@ function expectQueueProjection(snapshot: WorkbenchViewModel): void {
 }
 
 describe('MockScenarioAdapter — concurrency enforcement', () => {
+  it('plans unique Project queue positions for an ordered busy batch and executes that plan', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const targets = ['cc_data', 'cx_anti'].map(
+      (name) => before.agents.find((agent) => agent.name === name)!
+    )
+    const events: WorkbenchEvent[] = []
+    const unsubscribe = adapter.subscribe((event) => events.push(event))
+
+    const result = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: targets.map((agent) => agent.agentInstanceId)
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      plan: {
+        revision: before.revision,
+        projectId: project.projectId,
+        entries: [
+          {
+            agentInstanceId: targets[0].agentInstanceId,
+            outcome: 'queue',
+            position: 3
+          },
+          {
+            agentInstanceId: targets[1].agentInstanceId,
+            outcome: 'queue',
+            position: 4
+          }
+        ]
+      }
+    })
+    expect(
+      await adapter.planDispatch({
+        expectedRevision: before.revision,
+        projectId: project.projectId,
+        targets: targets.map((agent) => agent.agentInstanceId)
+      })
+    ).toEqual(result)
+    expect(await adapter.getSnapshot()).toEqual(before)
+    expect(events).toEqual([])
+    unsubscribe()
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(99),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: targets.map((agent) => agent.agentInstanceId),
+      instruction: 'queue in preview order'
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.queue
+        .filter((item) =>
+          targets.some(
+            (target) => target.agentInstanceId === item.agentInstanceId
+          )
+        )
+        .map((item) => ({
+          agentInstanceId: item.agentInstanceId,
+          position: item.position
+        }))
+    ).toEqual([
+      { agentInstanceId: targets[0].agentInstanceId, position: 3 },
+      { agentInstanceId: targets[1].agentInstanceId, position: 4 }
+    ])
+  })
+
+  it('plans a ready Agent as queued when Project capacity is full', async () => {
+    const adapter = new MockScenarioAdapter(createProjectCapacityScenario())
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const target = before.agents.find((agent) => agent.name === 'cx_review')!
+
+    const result = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId]
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      plan: {
+        revision: before.revision,
+        projectId: project.projectId,
+        entries: [
+          {
+            agentInstanceId: target.agentInstanceId,
+            outcome: 'queue',
+            position: 3
+          }
+        ]
+      }
+    })
+  })
+
+  it('plans a ready Agent as queued when only Global capacity is full', async () => {
+    const { scenario, projectId, targetId } = createGlobalCapacityScenario()
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    const result = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId,
+      targets: [targetId]
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      plan: {
+        revision: before.revision,
+        projectId,
+        entries: [
+          { agentInstanceId: targetId, outcome: 'queue', position: 1 }
+        ]
+      }
+    })
+  })
+
+  it('reserves remaining capacity in target order before assigning queue positions', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const targets = ['cx_review', 'kimi_visual'].map(
+      (name) => before.agents.find((agent) => agent.name === name)!
+    )
+
+    const result = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: targets.map((agent) => agent.agentInstanceId)
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      plan: {
+        revision: before.revision,
+        projectId: project.projectId,
+        entries: [
+          {
+            agentInstanceId: targets[0].agentInstanceId,
+            outcome: 'start'
+          },
+          {
+            agentInstanceId: targets[1].agentInstanceId,
+            outcome: 'queue',
+            position: 3
+          }
+        ]
+      }
+    })
+
+    await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(98),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: targets.map((agent) => agent.agentInstanceId),
+      instruction: 'cross one remaining slot'
+    })
+    const after = await adapter.getSnapshot()
+    expect(
+      after.agents.find(
+        (agent) => agent.agentInstanceId === targets[0].agentInstanceId
+      )!.runtimeState
+    ).toBe('running')
+    expect(
+      after.queue.find(
+        (item) => item.agentInstanceId === targets[1].agentInstanceId
+      )?.position
+    ).toBe(3)
+  })
+
+  it('rejects stale plans and stale confirmations without partial mutation', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const project = before.projects[0]
+    const target = before.agents.find((agent) => agent.name === 'cx_review')!
+    const planned = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId]
+    })
+    expect(planned.ok).toBe(true)
+
+    await adapter.dispatch({
+      kind: 'navigate',
+      commandId: cmdId(97),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      surface: 'activity'
+    })
+    const changed = await adapter.getSnapshot()
+    const stalePlan = await adapter.planDispatch({
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId]
+    })
+    expect(stalePlan).toMatchObject({
+      ok: false,
+      reason: 'stale-revision',
+      latestRevision: changed.revision
+    })
+
+    const result = await adapter.dispatch({
+      kind: 'confirm-dispatch',
+      commandId: cmdId(96),
+      expectedRevision: before.revision,
+      projectId: project.projectId,
+      targets: [target.agentInstanceId],
+      instruction: 'must not partially apply'
+    })
+    expect(result).toMatchObject({ ok: false, reason: 'stale-revision' })
+    expect(await adapter.getSnapshot()).toEqual(changed)
+  })
+
   it('ships a standard scenario whose summaries equal active Agent states', () => {
     const snapshot = createStandardScenario()
     expect(

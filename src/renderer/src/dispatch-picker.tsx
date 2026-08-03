@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type {
   AgentInstanceViewModel,
+  DispatchPlan,
   ProjectViewModel,
+  WorkbenchPort,
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
 import { RUNTIME_STATE_LABEL } from './agent-display'
+import { useDispatchPlan } from './use-dispatch-plan'
 import {
   getProjectDispatchBlockReason,
-  isAgentBusy,
   isDispatchable
 } from './workbench/dispatchability'
 
@@ -58,6 +60,7 @@ interface BroadcastConfirmation {
   targetIds: AgentInstanceViewModel['agentInstanceId'][]
   instruction: string
   revision: number
+  plan: DispatchPlan
 }
 
 interface DispatchTargetPreview {
@@ -73,6 +76,7 @@ interface PendingSubmission {
   targetPreviews: DispatchTargetPreview[]
   instruction: string
   resourceScope: string
+  revision: number
 }
 
 /** Scans routing mentions without consulting project state. */
@@ -214,11 +218,13 @@ function resolveAtAt(
 export function DispatchPicker({
   project,
   snapshot,
+  planDispatch,
   sendCommand,
   onClose
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
+  planDispatch: WorkbenchPort['planDispatch']
   sendCommand: SendCommand
   onClose: () => void
 }) {
@@ -301,9 +307,28 @@ export function DispatchPicker({
   )
   const blockedTargets = selectedTargets.filter((a) => !isDispatchable(a))
   const targets = selectedTargets.filter(isDispatchable)
+  const dispatchTargetIds = targets.map((target) => target.agentInstanceId)
+  const {
+    plan: currentPlan,
+    planning,
+    error: planError,
+    retry: retryPlan
+  } = useDispatchPlan({
+    planDispatch,
+    revision: snapshot.revision,
+    projectId: project.projectId,
+    targetIds: dispatchTargetIds,
+    enabled:
+      !projectBlocked &&
+      dispatchTargetIds.length > 0 &&
+      blockedTargets.length === 0
+  })
+
   const confirmationBlocked =
     projectBlocked ||
     submitting ||
+    planning ||
+    !currentPlan ||
     targets.length === 0 ||
     blockedTargets.length > 0 ||
     resolved.unresolved.length > 0 ||
@@ -320,14 +345,6 @@ export function DispatchPicker({
       return next
     })
   }
-
-  // Project-scoped queue position: how many items are already in this
-  // project's queue determines where a new dispatch will land.
-  const projectQueueLength = snapshot.queue.filter(
-    (q) => q.projectId === project.projectId
-  ).length
-  const queuePositionFor = (a: AgentInstanceViewModel): string =>
-    isAgentBusy(a) ? `第 ${projectQueueLength + 1} 位` : '无需排队'
 
   // Authoritative resource scope comes from the port's Resource Bindings, not
   // from the connection label (#6 P2-3). External Connection and Resource
@@ -350,11 +367,24 @@ export function DispatchPicker({
   const liveTargetPreviews: DispatchTargetPreview[] = selectedTargets.map(
     (agent) => {
       const blocked = !isDispatchable(agent)
+      const entry = currentPlan?.entries.find(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      )
       return {
         agentInstanceId: agent.agentInstanceId,
         name: agent.name,
         blocked,
-        queuePosition: blocked ? '不可派发' : queuePositionFor(agent)
+        queuePosition: blocked
+          ? '不可派发'
+          : entry?.outcome === 'queue'
+            ? `第 ${entry.position} 位`
+            : entry?.outcome === 'start'
+              ? '无需排队'
+              : blockedTargets.length > 0
+                ? '待全部目标可派发'
+                : planError
+                  ? '无法计算'
+                  : '计算中…'
       }
     }
   )
@@ -377,11 +407,15 @@ export function DispatchPicker({
     }
     setNotice(null)
     if (resolved.hasAll && !broadcastConfirmation) {
+      if (!currentPlan) return
       setBroadcastConfirmation({
         projectId: project.projectId,
-        targetIds: targets.map((agent) => agent.agentInstanceId),
+        targetIds: currentPlan.entries.map(
+          (entry) => entry.agentInstanceId
+        ),
         instruction: resolved.instruction,
-        revision: snapshot.revision
+        revision: currentPlan.revision,
+        plan: currentPlan
       })
       return
     }
@@ -405,6 +439,8 @@ export function DispatchPicker({
         return
       }
     }
+    const confirmedPlan = broadcastConfirmation?.plan ?? currentPlan
+    if (!confirmedPlan || confirmedPlan.revision !== snapshot.revision) return
     // A WorkbenchPort event may arrive before its response. Guard with a ref,
     // not only rendered state, so a second activation in the same pending
     // window cannot mint a fresh CommandId for the same logical confirmation.
@@ -412,27 +448,37 @@ export function DispatchPicker({
       projectId: broadcastConfirmation?.projectId ?? project.projectId,
       targetIds:
         broadcastConfirmation?.targetIds ??
-        targets.map((agent) => agent.agentInstanceId),
-      targetPreviews: targets.map((agent) => ({
-        agentInstanceId: agent.agentInstanceId,
-        name: agent.name,
-        blocked: false,
-        queuePosition: queuePositionFor(agent)
-      })),
+        confirmedPlan.entries.map((entry) => entry.agentInstanceId),
+      targetPreviews: targets.map((agent, index) => {
+        const entry = confirmedPlan.entries[index]
+        return {
+          agentInstanceId: agent.agentInstanceId,
+          name: agent.name,
+          blocked: false,
+          queuePosition:
+            entry.outcome === 'queue'
+              ? `第 ${entry.position} 位`
+              : '无需排队'
+        }
+      }),
       instruction:
         broadcastConfirmation?.instruction ?? resolved.instruction,
-      resourceScope
+      resourceScope,
+      revision: confirmedPlan.revision
     }
     submittingRef.current = true
     setPendingSubmission(submission)
     setSubmitting(true)
     try {
-      const result = await sendCommand({
-        kind: 'confirm-dispatch',
-        projectId: submission.projectId,
-        targets: submission.targetIds,
-        instruction: submission.instruction
-      })
+      const result = await sendCommand(
+        {
+          kind: 'confirm-dispatch',
+          projectId: submission.projectId,
+          targets: submission.targetIds,
+          instruction: submission.instruction
+        },
+        submission.revision
+      )
       if (result.ok) {
         onClose()
       } else {
@@ -633,7 +679,12 @@ export function DispatchPicker({
               <span className="text-neutral-500">资源范围：</span>
               {displayedResourceScope}
             </div>
-            <div>
+            <div
+              role="status"
+              aria-label="派发计划状态"
+              aria-live="polite"
+              aria-busy={planning}
+            >
               <span className="text-neutral-500">队列位置：</span>
               {displayedTargetPreviews
                 .map(
@@ -648,6 +699,22 @@ export function DispatchPicker({
           <p role="alert" className="text-xs text-red-400">
             {notice}
           </p>
+        )}
+
+        {planError && (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-2 text-xs text-red-400"
+          >
+            <span>{planError}</span>
+            <button
+              className="rounded px-2 py-1 text-neutral-300 hover:bg-neutral-800"
+              disabled={submitting}
+              onClick={retryPlan}
+            >
+              重新计算
+            </button>
+          </div>
         )}
 
         <div className="flex justify-end gap-2">
