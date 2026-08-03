@@ -31,6 +31,7 @@ import type { ProjectDispatchBlockReason } from './dispatchability'
 import {
   getDispatchBlockReason,
   getProjectDispatchBlockReason,
+  isActiveStructuredRunState,
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
@@ -60,15 +61,6 @@ type ConfigurationDraftEntry =
   WorkbenchViewModel['configurationDrafts'][number]
 type AppliedConfigurationEntry =
   WorkbenchViewModel['appliedConfigurations'][number]
-
-/** Runtime states that occupy the execution slot with an active structured Run. */
-const ACTIVE_STRUCTURED_RUN_STATES: ReadonlySet<string> = new Set([
-  'starting',
-  'running',
-  'finishing',
-  'needs-input',
-  'permission-requested'
-])
 
 /**
  * In-memory WorkbenchPort backed by a deterministic scenario snapshot.
@@ -105,6 +97,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
   constructor(snapshot: WorkbenchViewModel = createStandardScenario()) {
     this.snapshot = structuredClone(snapshot)
+    // Agent runtime states are authoritative. Scenario summary fields are
+    // projections and may arrive stale, so repair them before exposing or
+    // scheduling against the snapshot (#39).
+    this.recomputeActiveRunCounts()
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
@@ -1041,7 +1037,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
           // Only an active structured Run blocks Terminal — queued work does
           // not occupy the execution slot (ADR-0009 §显式执行与并发).
-          if (ACTIVE_STRUCTURED_RUN_STATES.has(agent.runtimeState)) {
+          if (isActiveStructuredRunState(agent.runtimeState)) {
             return this.reject(
               command,
               'busy',
@@ -1099,13 +1095,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
     )
     if (!project) return false
     const { projectLimit, globalLimit } = this.snapshot.global.concurrency
-    if (project.activeRunCount >= projectLimit) return false
-    if (this.snapshot.global.concurrency.activeGlobal >= globalLimit) return false
+    const projectActive = this.snapshot.agents.filter(
+      (agent) =>
+        agent.projectId === projectId &&
+        isActiveStructuredRunState(agent.runtimeState)
+    ).length
+    const globalActive = this.snapshot.agents.filter((agent) =>
+      isActiveStructuredRunState(agent.runtimeState)
+    ).length
+    if (projectActive >= projectLimit) return false
+    if (globalActive >= globalLimit) return false
     return true
   }
 
-  /** Occupies the execution slot: sets runtimeState, activeRunId, increments
-   *  Project and Global active counters. Does NOT record a `run-started`
+  /** Occupies the execution slot: sets runtimeState and activeRunId, then
+   *  projects the authoritative Agent states into Project / Global summaries.
+   *  Does NOT record a `run-started`
    *  activity — Phase 1 does not create real Runs (#6 P1-3). */
   private startMockRun(
     agent: WorkbenchViewModel['agents'][number],
@@ -1117,10 +1122,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
       (p) => p.projectId === projectId
     )
     if (project) {
-      project.activeRunCount++
       project.activity = 'active'
     }
-    this.snapshot.global.concurrency.activeGlobal++
+    this.recomputeActiveRunCounts()
+  }
+
+  /** Rebuilds active summaries exclusively from authoritative Agent states. */
+  private recomputeActiveRunCounts(): void {
+    for (const project of this.snapshot.projects) {
+      const activeRunCount = this.snapshot.agents.filter(
+        (agent) =>
+          agent.projectId === project.projectId &&
+          isActiveStructuredRunState(agent.runtimeState)
+      ).length
+      project.activeRunCount = activeRunCount
+    }
+    this.snapshot.global.concurrency.activeGlobal = this.snapshot.agents.filter(
+      (agent) => isActiveStructuredRunState(agent.runtimeState)
+    ).length
   }
 
   /** Renumbers queue items for a project to be sequential 1..N by current position. */
