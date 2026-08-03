@@ -195,6 +195,43 @@ describe('Workspace layout — Focus', () => {
       within(directory).getByRole('button', { name: /^cc_sql/ })
     ).not.toHaveTextContent('当前可见')
   })
+
+  it('exits Focus with Escape even when focus is inside the directory', async () => {
+    const { user } = await gotoAgentsSurface()
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(panels()).toHaveLength(1)
+
+    // The directory is a sibling of the workspace: Escape there must still
+    // exit Focus — the user should not have to Tab back to the exit button.
+    await user.click(within(directory).getByRole('textbox', { name: '搜索 Agent' }))
+    await user.keyboard('{Escape}')
+    expect(panels()).toHaveLength(2)
+    expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
+  })
+
+  it('falls back to the newly focused panel when the focused panel is pruned', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    await user.click(
+      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+
+    // Closing the focused panel's only tab prunes it and auto-exits Focus;
+    // the original trigger button no longer exists.
+    await user.click(screen.getByRole('button', { name: '关闭标签 cc_sql' }))
+    expect(panels()).toHaveLength(1)
+    expect(document.activeElement).toBe(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -517,6 +554,34 @@ describe('Workspace layout — keyboard parity', () => {
     const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
     ccSqlTab.focus()
     fireEvent.keyDown(ccSqlTab, { key: 'ArrowRight', ctrlKey: true })
+    const movedTab = await within(panels()[1]).findByRole('tab', {
+      name: /cc_sql/
+    })
+    await waitFor(() => expect(document.activeElement).toBe(movedTab))
+  })
+
+  it('keeps the pending focus restore of a succeeded move when an overlapping follow-up stale-rejects', async () => {
+    const { user } = await gotoAgentsSurface(new DelayedEventPort())
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await screen.findByRole('tab', { name: /cc_sql/ })
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    await waitFor(() => expect(panels()).toHaveLength(2))
+
+    const ccSqlTab = screen.getByRole('tab', { name: /cc_sql/ })
+    ccSqlTab.focus()
+    // Two overlapping gestures on the still-mounted tab: the first will
+    // succeed, the second (dispatched with the pre-event revision) must
+    // stale-reject — without cancelling the first one's pending restore.
+    fireEvent.keyDown(ccSqlTab, { key: 'ArrowRight', ctrlKey: true })
+    fireEvent.keyDown(ccSqlTab, {
+      key: 'ArrowDown',
+      ctrlKey: true,
+      shiftKey: true
+    })
+
     const movedTab = await within(panels()[1]).findByRole('tab', {
       name: /cc_sql/
     })

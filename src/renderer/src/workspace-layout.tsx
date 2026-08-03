@@ -66,8 +66,8 @@ interface LayoutRenderContext {
   onCancelRatio: (splitNodeId: SplitNodeId) => void
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
-  onRequestTabFocus: (tab: AgentInstanceId) => void
-  onCancelTabFocus: (tab: AgentInstanceId) => void
+  onRequestTabFocus: (tab: AgentInstanceId) => number
+  onCancelTabFocus: (token: number) => void
   onRequestClosePanel: (panelId: PanelId) => void
 }
 
@@ -131,25 +131,50 @@ export function WorkspaceArea({
     if (focusPanelId && previous === undefined) {
       exitFocusButtonRef.current?.focus()
     } else if (!focusPanelId && previous) {
-      findFocusTrigger(previous)?.focus()
+      const trigger = findFocusTrigger(previous)
+      if (trigger) {
+        trigger.focus()
+      } else {
+        // The original trigger is gone (the focused panel was pruned with
+        // its last tab): land on the panel the reducer now points at —
+        // its Focus trigger, else its active tab.
+        const fallbackPanelId = layout.focusedPanelId
+        const fallbackTabId = fallbackPanelId
+          ? layout.panels[fallbackPanelId]?.activeTabId
+          : undefined
+        const fallback =
+          (fallbackPanelId ? findFocusTrigger(fallbackPanelId) : null) ??
+          (fallbackTabId ? findRenderedTab(fallbackTabId) : null)
+        fallback?.focus()
+      }
     }
     previousFocusPanelId.current = focusPanelId
   }, [focusPanelId])
 
-  // Keyboard moves rebuild the tab node elsewhere in the tree. The restore
-  // intent carries the command's baseline revision: only once an
-  // authoritative layout NEWER than that baseline has rendered (command
-  // response and view-model-updated may arrive in any order) is the tab
-  // looked up by its raw ID and focused (#24 round-2 review).
-  const [pendingTabFocus, setPendingTabFocus] = useState<{
-    tabId: AgentInstanceId
-    startRevision: number
-  } | null>(null)
+  // Keyboard moves rebuild the tab node elsewhere in the tree. Restore
+  // intents are kept per gesture (own token and baseline revision): only
+  // once an authoritative layout NEWER than an intent's baseline has
+  // rendered (command response and view-model-updated may arrive in any
+  // order) is the tab looked up by its raw ID and focused. An overlapping
+  // stale-rejected gesture cancels only its own intent — never an earlier
+  // succeeded one's pending restore (#24 round-2/round-3 review).
+  const tabFocusIntentCounter = useRef(0)
+  const [pendingTabFocus, setPendingTabFocus] = useState<
+    Array<{ tabId: AgentInstanceId; startRevision: number; token: number }>
+  >([])
   useEffect(() => {
-    if (!pendingTabFocus) return
-    if (snapshot.revision <= pendingTabFocus.startRevision) return
-    findRenderedTab(pendingTabFocus.tabId)?.focus()
-    setPendingTabFocus(null)
+    if (pendingTabFocus.length === 0) return
+    const fulfilled = pendingTabFocus.filter(
+      (intent) => snapshot.revision > intent.startRevision
+    )
+    if (fulfilled.length === 0) return
+    const latest = fulfilled[fulfilled.length - 1]
+    findRenderedTab(latest.tabId)?.focus()
+    setPendingTabFocus((prev) =>
+      prev.filter(
+        (intent) => !fulfilled.some((done) => done.token === intent.token)
+      )
+    )
   }, [pendingTabFocus, snapshot])
 
   /**
@@ -236,10 +261,18 @@ export function WorkspaceArea({
       // instead of overwriting it.
       setDraggingTab({ tabId: tab, startRevision: snapshot.revision }),
     onDragTabEnd: () => setDraggingTab(null),
-    onRequestTabFocus: (tab) =>
-      setPendingTabFocus({ tabId: tab, startRevision: snapshot.revision }),
-    onCancelTabFocus: (tab) =>
-      setPendingTabFocus((prev) => (prev?.tabId === tab ? null : prev)),
+    onRequestTabFocus: (tab) => {
+      const token = ++tabFocusIntentCounter.current
+      setPendingTabFocus((prev) => [
+        ...prev,
+        { tabId: tab, startRevision: snapshot.revision, token }
+      ])
+      return token
+    },
+    onCancelTabFocus: (token) =>
+      setPendingTabFocus((prev) =>
+        prev.filter((intent) => intent.token !== token)
+      ),
     onRequestClosePanel: requestClosePanel
   }
 
@@ -250,18 +283,7 @@ export function WorkspaceArea({
   const panelCount = Object.keys(layout.panels).length
 
   return (
-    <div
-      className="relative flex min-h-0 flex-1 flex-col"
-      onKeyDown={(e) => {
-        // Escape is the keyboard exit from temporary Focus — the pointer
-        // equivalent of the 退出 Focus button, normalised to the same
-        // focus-panel command.
-        if (e.key === 'Escape' && focusPanelId) {
-          e.preventDefault()
-          void sendLayout({ kind: 'focus-panel' })
-        }
-      }}
-    >
+    <div className="relative flex min-h-0 flex-1 flex-col">
       {focusPanelId ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-2 py-1">
@@ -704,7 +726,7 @@ function handleTabKeyDown(
     const position =
       e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? 'before' : 'after'
     // The tab node is rebuilt in the new panel — refocus it after render.
-    ctx.onRequestTabFocus(tabId)
+    const splitMoveIntent = ctx.onRequestTabFocus(tabId)
     void ctx
       .sendLayout({
         kind: 'open-tab-in-new-panel',
@@ -714,7 +736,7 @@ function handleTabKeyDown(
         relativeToPanelId: panelId
       })
       .then((result) => {
-        if (!result.ok) ctx.onCancelTabFocus(tabId)
+        if (!result.ok) ctx.onCancelTabFocus(splitMoveIntent)
       })
     return
   }
@@ -727,7 +749,7 @@ function handleTabKeyDown(
   )
   if (target) {
     // The tab node is rebuilt in the target panel — refocus after render.
-    ctx.onRequestTabFocus(tabId)
+    const moveIntent = ctx.onRequestTabFocus(tabId)
     void ctx
       .sendLayout({
         kind: 'move-tab',
@@ -735,7 +757,7 @@ function handleTabKeyDown(
         targetPanelId: target
       })
       .then((result) => {
-        if (!result.ok) ctx.onCancelTabFocus(tabId)
+        if (!result.ok) ctx.onCancelTabFocus(moveIntent)
       })
   }
 }

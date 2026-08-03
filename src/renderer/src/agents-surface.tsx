@@ -89,6 +89,17 @@ export function AgentsSurface({
       role="region"
       aria-label="Agent 工作区"
       className="relative flex h-full min-h-0"
+      onKeyDown={(e) => {
+        // Escape is the keyboard exit from temporary Focus — normalised to
+        // the same focus-panel command as the 退出 Focus button. It lives
+        // on the surface (not the workspace container) because the Agent
+        // Directory is a sibling of the workspace: Escape must work even
+        // when focus is inside the directory (#24 round-3 review).
+        if (e.key === 'Escape' && project.layout.temporaryFocusPanelId) {
+          e.preventDefault()
+          void sendLayout({ kind: 'focus-panel' })
+        }
+      }}
     >
       <AgentDirectory
         project={project}
