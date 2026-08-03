@@ -1597,6 +1597,17 @@ export class MockScenarioAdapter implements WorkbenchPort {
       (p) => p.projectId === agent.projectId
     )
     if (!project) return
+    // A capacity-blocked idle instance enters the observable queued state in
+    // the same transition as its QueueItem. Existing structured Run or PTY
+    // occupancy remains authoritative while additional work queues behind it.
+    if (
+      !isAgentBusy({
+        runtimeState: agent.runtimeState,
+        terminalState: agent.terminalState
+      })
+    ) {
+      agent.runtimeState = 'queued'
+    }
     agent.queueDepth += 1
     // Position is project-scoped sequential: next slot after all existing
     // queue items for this project, so reorder operations work correctly.
