@@ -29,7 +29,7 @@ import {
 
 function projectExecutionUnavailableMessage(
   reason: ProjectDispatchBlockReason,
-  action: '发送新指令' | '创建新派发'
+  action: '发送新指令' | '创建新派发' | '接管 Terminal'
 ): string {
   switch (reason) {
     case 'project-archived':
@@ -700,6 +700,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'set-terminal-takeover': {
+        const project = this.snapshot.projects.find(
+          (p) => p.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
         const agent = this.snapshot.agents.find(
           (a) =>
             a.agentInstanceId === command.agentInstanceId &&
@@ -709,6 +715,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(command, 'invalid-target', 'Agent 不存在')
         }
         if (command.operation === 'open') {
+          const projectBlock = getProjectDispatchBlockReason(project)
+          if (projectBlock) {
+            return this.reject(
+              command,
+              'unavailable',
+              projectExecutionUnavailableMessage(projectBlock, '接管 Terminal')
+            )
+          }
           // Only an active structured Run blocks Terminal — queued work does
           // not occupy the execution slot (ADR-0009 §显式执行与并发).
           if (ACTIVE_STRUCTURED_RUN_STATES.has(agent.runtimeState)) {

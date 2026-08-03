@@ -806,6 +806,7 @@ function AgentView({
           <ChatState
             project={project}
             agent={agent}
+            snapshot={snapshot}
             sendCommand={sendCommand}
           />
         )}
@@ -850,16 +851,19 @@ function AgentView({
 function ChatState({
   project,
   agent,
+  snapshot,
   sendCommand
 }: {
   project: ProjectViewModel
   agent: AgentInstanceViewModel
+  snapshot: WorkbenchViewModel
   sendCommand: SendCommand
 }) {
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
+  const [sendMode, setSendMode] = useState<'reply' | 'enqueue'>('reply')
 
   const lifecycleBlocked =
     agent.runtimeState === 'unavailable' || agent.runtimeState === 'archived'
@@ -872,6 +876,9 @@ function ChatState({
     projectBlocked || lifecycleBlocked || terminalBlocked || submitting
   const awaitingInput = agent.runtimeState === 'needs-input'
   const hasQueuedWork = agent.runtimeState === 'queued' || agent.queueDepth > 0
+  const projectQueueLength = snapshot.queue.filter(
+    (q) => q.projectId === project.projectId
+  ).length
 
   const submit = async () => {
     const instruction = draft.trim()
@@ -888,7 +895,12 @@ function ChatState({
         // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
         // Any other active state enqueues as the next Run instead of being
         // mistaken for a reply to the current Run.
-        mode: awaitingInput ? 'reply-current-run' : 'start-or-queue'
+        // UX-v0.2 §6.3: only an explicitly needs-input Run may be replied to.
+        // The user explicitly chooses reply vs enqueue via the sendMode toggle.
+        mode:
+          awaitingInput && sendMode === 'reply'
+            ? 'reply-current-run'
+            : 'start-or-queue'
       })
       if (result.ok) {
         setDraft('')
@@ -936,13 +948,35 @@ function ChatState({
               : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
           </p>
         ) : awaitingInput ? (
+          <div className="space-y-1">
+            <p className="text-neutral-500">
+              当前 Run 正在等待输入。选择回复当前 Run 或加入下一 Run 队列。
+            </p>
+            <div className="flex gap-3 text-xs">
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="send-mode"
+                  checked={sendMode === 'reply'}
+                  onChange={() => setSendMode('reply')}
+                />
+                回复当前 Run
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="send-mode"
+                  checked={sendMode === 'enqueue'}
+                  onChange={() => setSendMode('enqueue')}
+                />
+                加入下一队列
+              </label>
+            </div>
+          </div>
+        ) : hasQueuedWork && projectQueueLength > 0 ? (
           <p className="text-neutral-500">
-            当前 Run 正在等待输入，可直接回复。
-          </p>
-        ) : hasQueuedWork && agent.queueDepth > 0 ? (
-          <p className="text-neutral-500">
-            当前已有 {agent.queueDepth} 项排队；新指令将进入第{' '}
-            {agent.queueDepth + 1} 位。
+            当前 Project 已有 {projectQueueLength}{' '}
+            项排队；新指令将进入第 {projectQueueLength + 1} 位。
           </p>
         ) : hasQueuedWork ? (
           <p className="text-neutral-500">
@@ -1177,7 +1211,7 @@ function TerminalStateView({
             })
           }
         >
-          结束接管
+          {isTakeover ? '结束接管' : '清除失败'}
         </button>
       )}
       {!isTakeover && !isOpening && (

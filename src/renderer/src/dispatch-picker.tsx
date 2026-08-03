@@ -321,10 +321,13 @@ export function DispatchPicker({
     })
   }
 
-  // Authoritative per-target queue position comes from each instance's own
-  // queueDepth in the port snapshot — never a renderer-guessed global value.
+  // Project-scoped queue position: how many items are already in this
+  // project's queue determines where a new dispatch will land.
+  const projectQueueLength = snapshot.queue.filter(
+    (q) => q.projectId === project.projectId
+  ).length
   const queuePositionFor = (a: AgentInstanceViewModel): string =>
-    isAgentBusy(a) ? `第 ${a.queueDepth + 1} 位` : '无需排队'
+    isAgentBusy(a) ? `第 ${projectQueueLength + 1} 位` : '无需排队'
 
   // Authoritative resource scope comes from the port's Resource Bindings, not
   // from the connection label (#6 P2-3). External Connection and Resource

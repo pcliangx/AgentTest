@@ -1609,18 +1609,22 @@ describe('MockScenarioAdapter — manage-queue ownership', () => {
   it('cancel restores agent to ready when queue is empty', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    // cx_forecast has queueDepth 1 and runtimeState 'queued'
-    const item = snap.queue.find(
-      (q) => q.agentInstanceId === snap.agents.find((a) => a.name === 'cx_forecast')!.agentInstanceId
-    )!
-    await adapter.dispatch({
-      kind: 'manage-queue',
-      commandId: cmdId(1),
-      expectedRevision: snap.revision,
-      projectId: item.projectId,
-      queueItemId: item.queueItemId,
-      operation: 'cancel'
-    })
+    // cx_forecast has queueDepth 2 and runtimeState 'queued'
+    const forecastId = snap.agents.find((a) => a.name === 'cx_forecast')!.agentInstanceId
+    const items = snap.queue.filter((q) => q.agentInstanceId === forecastId)
+    // Cancel both items
+    let rev = snap.revision
+    for (const item of items) {
+      await adapter.dispatch({
+        kind: 'manage-queue',
+        commandId: cmdId(items.indexOf(item) + 1),
+        expectedRevision: rev,
+        projectId: item.projectId,
+        queueItemId: item.queueItemId,
+        operation: 'cancel'
+      })
+      rev++
+    }
     const after = await adapter.getSnapshot()
     const agent = after.agents.find((a) => a.name === 'cx_forecast')!
     expect(agent.queueDepth).toBe(0)
