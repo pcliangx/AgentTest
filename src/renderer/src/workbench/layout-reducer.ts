@@ -101,21 +101,7 @@ function resizeSplitNode(
 // ---------------------------------------------------------------------------
 
 function cloneLayout(layout: WorkspaceLayoutViewModel): WorkspaceLayoutViewModel {
-  const panels = {} as WorkspaceLayoutViewModel['panels']
-  for (const [key, panel] of Object.entries(layout.panels)) {
-    panels[key as PanelId] = {
-      tabs: [...panel.tabs],
-      ...(panel.activeTabId ? { activeTabId: panel.activeTabId } : {})
-    }
-  }
-  return {
-    root: layout.root ? structuredClone(layout.root) : null,
-    panels,
-    ...(layout.focusedPanelId ? { focusedPanelId: layout.focusedPanelId } : {}),
-    ...(layout.temporaryFocusPanelId
-      ? { temporaryFocusPanelId: layout.temporaryFocusPanelId }
-      : {})
-  }
+  return structuredClone(layout)
 }
 
 /** Removes a panel record and its tree leaf; repairs the focused panel. */

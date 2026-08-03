@@ -547,17 +547,11 @@ function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
 }
 
 function PlaceholderSurface({ surface }: { surface: ProjectSurface }) {
-  const labels: Partial<Record<ProjectSurface, string>> = {
-    agents: 'Agent',
-    tasks: '任务',
-    knowledge: '知识',
-    handoffs: '交接',
-    settings: '设置'
-  }
+  const label = SURFACES.find((s) => s.surface === surface)?.label ?? surface
   return (
     <div className="flex h-full items-center justify-center">
       <p className="text-sm text-neutral-500">
-        {labels[surface]} 工作面尚未实现
+        {label} 工作面尚未实现
       </p>
     </div>
   )
