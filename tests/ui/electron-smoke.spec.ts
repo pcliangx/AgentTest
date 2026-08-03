@@ -6,7 +6,7 @@ import {
   type Page,
   type TestInfo
 } from '@playwright/test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -21,8 +21,10 @@ const SCENARIO = {
   coverage: [
     'Project Shell',
     'Project navigation',
+    'pre-renderer network guard',
+    'renderer error gate',
     'three Panel baseline',
-    'fourth Panel overflow',
+    'fourth Panel scroll and operation',
     'Tab keyboard move',
     'divider keyboard resize',
     'Focus restore',
@@ -31,17 +33,33 @@ const SCENARIO = {
 } as const
 
 interface SmokeEvidence {
+  readonly blockedNetworkRequests: string[]
+  readonly completedExternalRequests: string[]
   readonly console: string[]
+  readonly rendererErrors: string[]
   readonly steps: string[]
-  readonly externalRequests: string[]
 }
+
+type LaunchLabel = 'first' | 'second'
 
 interface SmokeSession {
   readonly app: ElectronApplication
   page?: Page
   readonly pid: number
-  readonly run: string
+  readonly launchLabel: LaunchLabel
   readonly userDataPath: string
+}
+
+function recordRendererError(
+  session: SmokeSession,
+  evidence: SmokeEvidence,
+  message: string
+): void {
+  const entry = `[${session.launchLabel}:renderer:error] ${message}`
+  if (!evidence.rendererErrors.includes(entry)) {
+    evidence.rendererErrors.push(entry)
+    evidence.console.push(entry)
+  }
 }
 
 function sanitizedEnvironment(userDataPath: string): Record<string, string> {
@@ -76,11 +94,11 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function launchSmokeApplication(
-  run: string,
+  launchLabel: LaunchLabel,
   evidence: SmokeEvidence
 ): Promise<SmokeSession> {
   const userDataPath = await mkdtemp(
-    join(tmpdir(), `agent-squad-hq-ui-smoke-${run}-`)
+    join(tmpdir(), `agent-squad-hq-ui-smoke-${launchLabel}-`)
   )
   let app: ElectronApplication | undefined
   try {
@@ -92,23 +110,23 @@ async function launchSmokeApplication(
     })
     const child = app.process()
     child.stdout?.on('data', (chunk: Buffer | string) => {
-      evidence.console.push(`[${run}:main:stdout] ${String(chunk).trimEnd()}`)
+      evidence.console.push(
+        `[${launchLabel}:main:stdout] ${String(chunk).trimEnd()}`
+      )
     })
     child.stderr?.on('data', (chunk: Buffer | string) => {
-      evidence.console.push(`[${run}:main:stderr] ${String(chunk).trimEnd()}`)
+      evidence.console.push(
+        `[${launchLabel}:main:stderr] ${String(chunk).trimEnd()}`
+      )
     })
 
     const context = app.context()
-    await context.route(/^https?:\/\//, async (route) => {
-      evidence.externalRequests.push(route.request().url())
-      await route.abort('blockedbyclient')
-    })
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true })
 
     return {
       app,
       pid: child.pid ?? -1,
-      run,
+      launchLabel,
       userDataPath
     }
   } catch (error) {
@@ -125,14 +143,80 @@ async function connectSmokeWindow(
   const page = await session.app.firstWindow()
   session.page = page
   page.on('pageerror', (error) => {
-    evidence.console.push(`[${session.run}:renderer:error] ${error.message}`)
+    recordRendererError(session, evidence, error.message)
+  })
+  for (const error of await page.pageErrors()) {
+    recordRendererError(session, evidence, error.message)
+  }
+  page.on('requestfinished', (request) => {
+    if (/^(?:https?|wss?):\/\//i.test(request.url())) {
+      evidence.completedExternalRequests.push(request.url())
+    }
   })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   return page
 }
 
-async function stopSmokeSession(session: SmokeSession): Promise<void> {
+interface BlockedNetworkRequest {
+  readonly url: string
+  readonly resourceType: string
+}
+
+async function readBlockedNetworkRequests(
+  session: SmokeSession
+): Promise<BlockedNetworkRequest[]> {
   try {
+    const contents = await readFile(
+      join(session.userDataPath, SCENARIO.networkEvidenceFile),
+      'utf8'
+    )
+    return contents
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as BlockedNetworkRequest)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function collectBlockedNetworkEvidence(
+  session: SmokeSession,
+  evidence: SmokeEvidence
+): Promise<BlockedNetworkRequest[]> {
+  const records = await readBlockedNetworkRequests(session)
+  for (const record of records) {
+    const entry = `[${session.launchLabel}:${record.resourceType}] ${record.url}`
+    if (!evidence.blockedNetworkRequests.includes(entry)) {
+      evidence.blockedNetworkRequests.push(entry)
+    }
+  }
+  return records
+}
+
+async function expectNoRendererErrors(
+  page: Page,
+  session: SmokeSession,
+  evidence: SmokeEvidence
+): Promise<void> {
+  const errors = (await page.pageErrors()).map((error) => error.message)
+  for (const message of errors) {
+    recordRendererError(session, evidence, message)
+  }
+  expect(
+    evidence.rendererErrors.filter((entry) =>
+      entry.startsWith(`[${session.launchLabel}:renderer:error]`)
+    ),
+    `${session.launchLabel} renderer must have no uncaught errors`
+  ).toEqual([])
+}
+
+async function stopSmokeSession(
+  session: SmokeSession,
+  evidence: SmokeEvidence
+): Promise<void> {
+  try {
+    await collectBlockedNetworkEvidence(session, evidence)
     await session.app.context().tracing.stop().catch(() => {})
     await session.app.close()
     if (session.pid > 0) {
@@ -257,6 +341,60 @@ async function initialSignature(page: Page): Promise<unknown> {
   }
 }
 
+const NETWORK_PROBE_URLS = {
+  http: 'https://ui-smoke.invalid/http-probe',
+  websocket: 'wss://ui-smoke.invalid/websocket-probe'
+} as const
+
+async function probeNetworkGuard(page: Page): Promise<{
+  readonly http: 'blocked' | 'escaped'
+  readonly websocket: 'blocked' | 'escaped' | 'timeout'
+}> {
+  return page.evaluate(async (urls) => {
+    const http = await fetch(urls.http).then(
+      () => 'escaped' as const,
+      () => 'blocked' as const
+    )
+    const websocket = await new Promise<'blocked' | 'escaped' | 'timeout'>(
+      (resolveResult) => {
+        let settled = false
+        const finish = (result: 'blocked' | 'escaped' | 'timeout') => {
+          if (settled) return
+          settled = true
+          resolveResult(result)
+        }
+        try {
+          const socket = new WebSocket(urls.websocket)
+          const timeout = setTimeout(() => {
+            socket.close()
+            finish('timeout')
+          }, 2_000)
+          socket.addEventListener(
+            'open',
+            () => {
+              clearTimeout(timeout)
+              socket.close()
+              finish('escaped')
+            },
+            { once: true }
+          )
+          socket.addEventListener(
+            'error',
+            () => {
+              clearTimeout(timeout)
+              finish('blocked')
+            },
+            { once: true }
+          )
+        } catch {
+          finish('blocked')
+        }
+      }
+    )
+    return { http, websocket }
+  }, NETWORK_PROBE_URLS)
+}
+
 async function attachTextEvidence(
   testInfo: TestInfo,
   name: string,
@@ -270,7 +408,13 @@ async function attachTextEvidence(
 
 test('1280×800 deterministic Electron smoke covers the core workspace', async ({}, testInfo) => {
   const started = performance.now()
-  const evidence: SmokeEvidence = { console: [], steps: [], externalRequests: [] }
+  const evidence: SmokeEvidence = {
+    blockedNetworkRequests: [],
+    completedExternalRequests: [],
+    console: [],
+    rendererErrors: [],
+    steps: []
+  }
   let activeSession: SmokeSession | undefined
   let firstSignature: unknown
 
@@ -323,6 +467,31 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       return signature
     })
 
+    await recordedStep(
+      evidence,
+      'block HTTP and WebSocket in Electron before renderer traffic',
+      async () => {
+        expect(await probeNetworkGuard(page)).toEqual({
+          http: 'blocked',
+          websocket: 'blocked'
+        })
+        await expect
+          .poll(async () => {
+            const records = await collectBlockedNetworkEvidence(
+              activeSession!,
+              evidence
+            )
+            return records.map((record) => record.url)
+          })
+          .toEqual(
+            expect.arrayContaining([
+              NETWORK_PROBE_URLS.http,
+              NETWORK_PROBE_URLS.websocket
+            ])
+          )
+      }
+    )
+
     await recordedStep(evidence, 'navigate through the Project Shell', async () => {
       const navigation = page.getByRole('navigation', { name: '主导航' })
       await navigation.getByRole('button', { name: 'Agent', exact: true }).click()
@@ -358,8 +527,59 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       await expect(panels).toHaveCount(4)
       await expect(page.getByRole('note')).toContainText('当前打开 4 个 Panel')
       await expect(page.getByRole('note')).toContainText('空间不足时可滚动查看')
+
+      const panelGeometry = await panels.evaluateAll((elements) =>
+        elements.map((element) => {
+          const rect = element.getBoundingClientRect()
+          return { width: rect.width, height: rect.height }
+        })
+      )
+      for (const geometry of panelGeometry) {
+        expect(geometry.width).toBeGreaterThanOrEqual(
+          SCENARIO.minimumPanelSize.width
+        )
+        expect(geometry.height).toBeGreaterThanOrEqual(
+          SCENARIO.minimumPanelSize.height
+        )
+      }
+
+      const workspaceMain = page.getByRole('main')
+      const overflow = await workspaceMain.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        scrollLeft: element.scrollLeft
+      }))
+      expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth)
+      expect(
+        await page.evaluate<{ clientWidth: number; scrollWidth: number }>(
+          '({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth })'
+        )
+      ).toEqual({
+        clientWidth: SCENARIO.viewport.width,
+        scrollWidth: SCENARIO.viewport.width
+      })
+
       await page.getByRole('button', { name: '关闭密度提示' }).click()
       await expect(page.getByRole('note')).toBeHidden()
+
+      const fourthPanel = panels.filter({
+        has: page.getByRole('tab', { name: /^cc_etl\b/ })
+      })
+      await expect(fourthPanel).toHaveCount(1)
+      await workspaceMain.evaluate((element) => {
+        element.scrollTo({ left: element.scrollWidth, behavior: 'instant' })
+      })
+      await expect
+        .poll(() => workspaceMain.evaluate((element) => element.scrollLeft))
+        .toBeGreaterThan(overflow.scrollLeft)
+      await fourthPanel.scrollIntoViewIfNeeded()
+      await expect(fourthPanel).toBeInViewport({ ratio: 0.75 })
+
+      await fourthPanel.getByRole('button', { name: 'Focus 此 Panel' }).click()
+      await expect(panels).toHaveCount(1)
+      await expect(page.getByRole('tab', { name: /^cc_etl\b/ })).toHaveCount(1)
+      await page.keyboard.press('Escape')
+      await expect(panels).toHaveCount(4)
     })
 
     await recordedStep(evidence, 'resize a divider through its ARIA value', async () => {
@@ -386,8 +606,9 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       ).toHaveCount(1)
     })
 
-    expect(evidence.externalRequests).toEqual([])
-    await stopSmokeSession(activeSession)
+    await expectNoRendererErrors(page, activeSession, evidence)
+    expect(evidence.completedExternalRequests).toEqual([])
+    await stopSmokeSession(activeSession, evidence)
     activeSession = undefined
 
     activeSession = await recordedStep(
@@ -399,9 +620,10 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       const secondPage = await connectSmokeWindow(activeSession!, evidence)
       await expect(secondPage.getByRole('region', { name: '项目概览' })).toBeVisible()
       expect(await initialSignature(secondPage)).toEqual(firstSignature)
-      expect(evidence.externalRequests).toEqual([])
+      await expectNoRendererErrors(secondPage, activeSession!, evidence)
+      expect(evidence.completedExternalRequests).toEqual([])
     })
-    await stopSmokeSession(activeSession)
+    await stopSmokeSession(activeSession, evidence)
     activeSession = undefined
 
     const duration = Math.round(performance.now() - started)
@@ -413,13 +635,29 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
     await captureFailure(activeSession, evidence, error, testInfo)
     throw error
   } finally {
-    if (activeSession) await stopSmokeSession(activeSession).catch(() => {})
+    if (activeSession) {
+      await stopSmokeSession(activeSession, evidence).catch(() => {})
+    }
     await attachTextEvidence(testInfo, 'console.log', evidence.console)
+    await attachTextEvidence(
+      testInfo,
+      'renderer-errors.log',
+      evidence.rendererErrors
+    )
     await attachTextEvidence(testInfo, 'steps.log', evidence.steps)
     await testInfo.attach('mock-scenario.json', {
       body: Buffer.from(JSON.stringify(SCENARIO, null, 2)),
       contentType: 'application/json'
     })
-    await attachTextEvidence(testInfo, 'external-requests.log', evidence.externalRequests)
+    await attachTextEvidence(
+      testInfo,
+      'blocked-network-requests.log',
+      evidence.blockedNetworkRequests
+    )
+    await attachTextEvidence(
+      testInfo,
+      'completed-external-requests.log',
+      evidence.completedExternalRequests
+    )
   }
 })

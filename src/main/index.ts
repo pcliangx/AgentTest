@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
 import {
   APP_DISPLAY_NAME,
@@ -6,6 +6,7 @@ import {
   prepareApplicationDataDirectory
 } from './app-identity'
 import { resolveUiSmokeMode } from './ui-smoke-mode'
+import { installUiSmokeNetworkGuard } from './ui-smoke-network-guard'
 
 let mainWindow: BrowserWindow | null = null
 let services: typeof import('./ipc') | undefined
@@ -71,7 +72,15 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  if (!uiSmokeMode.enabled) {
+  if (uiSmokeMode.enabled) {
+    installUiSmokeNetworkGuard(
+      session.defaultSession,
+      join(
+        uiSmokeMode.userDataPath,
+        uiSmokeMode.scenario.networkEvidenceFile
+      )
+    )
+  } else {
     services = await import('./ipc')
     services.initServices(applicationData.path)
     services.registerIpc(ipcMain)
