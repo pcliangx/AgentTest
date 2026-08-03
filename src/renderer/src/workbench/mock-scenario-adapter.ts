@@ -422,12 +422,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
               }
             }
           } else {
-            // merge-changes or discard-changes: clear changes for the agent
-            const agentId =
-              this.pendingAction.type === 'merge-changes'
-                ? this.pendingAction.agentInstanceId
-                : (this.pendingAction as { agentInstanceId: AgentInstanceId })
-                    .agentInstanceId
+            // merge-changes or discard-changes: both carry agentInstanceId
+            const agentId = this.pendingAction.agentInstanceId
             this.snapshot.changes = this.snapshot.changes.filter(
               (c) => c.agentInstanceId !== agentId
             )
