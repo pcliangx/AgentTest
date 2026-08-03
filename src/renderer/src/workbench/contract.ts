@@ -77,6 +77,8 @@ export type AgentRuntimeState =
 export type TerminalState = 'closed' | 'opening' | 'active' | 'failed'
 export type PermissionDecision = 'deny' | 'allow-once' | 'allow-current-run'
 export type GlobalSurface = 'connections' | 'provider-health' | 'global-settings'
+export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
+export type AgentWorktreeMode = 'isolated' | 'read-only-shared'
 
 // ---------------------------------------------------------------------------
 // View models
@@ -138,6 +140,7 @@ export interface AgentInstanceViewModel {
   providerId: AgentProviderId
   runtimeState: AgentRuntimeState
   terminalState: TerminalState
+  worktreeMode: AgentWorktreeMode
   activeRunId?: RunId
   queueDepth: number
   doctor: 'ready' | 'blocked'
@@ -289,6 +292,7 @@ export interface WorkbenchViewModel {
       providerId: AgentProviderId
       displayName: string
       status: 'ready' | 'blocked'
+      models: Array<{ modelId: string; displayName: string }>
     }>
   }
 }
@@ -325,8 +329,6 @@ export type LayoutOperation =
   | { kind: 'apply-analysis-preset'; panelId: PanelId }
   | { kind: 'prune-empty-panels' }
 
-export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
-
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
   | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
@@ -336,7 +338,9 @@ export type WorkbenchCommandBody =
       projectId: ProjectId
       name: string
       providerId: AgentProviderId
+      modelId: string
       open: AgentOpenMode
+      worktreeMode: AgentWorktreeMode
     }
   | {
       kind: 'send-agent-instruction'
