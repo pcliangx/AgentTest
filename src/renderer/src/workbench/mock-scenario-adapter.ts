@@ -833,8 +833,36 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
           pending.push({ owner, draft, applied })
         }
-        // Re-validate against the live snapshot — but publish failures ONLY
-        // through this rejection. A rejected command never mutates the
+        // Agent-name validation must observe the atomic batch's FINAL name
+        // set. Stage-time validation still uses the live snapshot for early
+        // feedback, while Apply projects every pending rename together so a
+        // legal swap/cycle is not rejected as a transient collision.
+        const pendingRenames = new Map<AgentInstanceId, string>()
+        for (const { owner, draft } of pending) {
+          if (owner.kind !== 'agent') continue
+          for (const change of draft.changes) {
+            if (
+              change.fieldPath === 'identity.name' &&
+              typeof change.draft === 'string'
+            ) {
+              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
+            }
+          }
+        }
+        const validationSnapshot: WorkbenchViewModel =
+          pendingRenames.size === 0
+            ? this.snapshot
+            : {
+                ...this.snapshot,
+                agents: this.snapshot.agents.map((agent) => {
+                  const finalName = pendingRenames.get(agent.agentInstanceId)
+                  return finalName === undefined
+                    ? agent
+                    : { ...agent, name: finalName }
+                })
+              }
+        // Re-validate against the projected snapshot — but publish failures
+        // ONLY through this rejection. A rejected command never mutates the
         // snapshot (rejection purity), so freshly discovered errors travel
         // in the message instead of being written into drafts invisibly.
         const discovered: string[] = []
@@ -844,7 +872,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
               owner,
               change.fieldPath,
               change.draft,
-              this.snapshot
+              validationSnapshot
             )
             if (error) {
               discovered.push(
@@ -860,22 +888,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
             `部分字段未通过验证（${discovered.join('；')}），已保留全部草稿`
           )
         }
-        // Batch rename uniqueness: project the FINAL name set after all
-        // pending renames and check case-insensitive duplicates — per-change
-        // validation alone misses collisions between two renames staged in
-        // the same batch (Agent Name is project-unique, ADR-0008).
-        const pendingRenames = new Map<string, string>()
-        for (const { owner, draft } of pending) {
-          if (owner.kind !== 'agent') continue
-          for (const change of draft.changes) {
-            if (
-              change.fieldPath === 'identity.name' &&
-              typeof change.draft === 'string'
-            ) {
-              pendingRenames.set(owner.agentInstanceId, change.draft.trim())
-            }
-          }
-        }
+        // Independently assert the projected FINAL name-set invariant after
+        // all pending renames. This keeps Project-wide, case-insensitive
+        // uniqueness (ADR-0008) explicit even if field validation evolves.
         if (pendingRenames.size > 0) {
           const seen = new Map<string, string>()
           let collision: string | null = null

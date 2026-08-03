@@ -356,6 +356,7 @@ describe('apply-configuration — effect timing', () => {
   it('rejects a rename that collides with another instance, case-insensitively', async () => {
     const adapter = new MockScenarioAdapter()
     await stage(adapter, ccSqlOwner, 'identity.name', 'CC_DATA')
+    const staged = await adapter.getSnapshot()
     const result = await applyAll(adapter, [ccSqlOwner])
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('invariant-violation')
@@ -364,7 +365,8 @@ describe('apply-configuration — effect timing', () => {
     expect(snap.agents.find((a) => a.agentInstanceId === CC_SQL)!.name).toBe(
       'cc_sql'
     )
-    expect(draftOf(snap, ccSqlOwner)).toBeDefined()
+    expect(appliedOf(snap, ccSqlOwner)).toEqual(appliedOf(staged, ccSqlOwner))
+    expect(draftOf(snap, ccSqlOwner)).toEqual(draftOf(staged, ccSqlOwner))
   })
 
   it('applies the project name immediately', async () => {
@@ -473,10 +475,87 @@ describe('apply/discard — single-project batches only', () => {
 })
 
 describe('apply-configuration — batch rename uniqueness', () => {
+  it('accepts a two-agent name swap based on the final Project name set', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccSqlOwner, 'identity.name', 'cc_etl')
+    await stage(adapter, ccEtlOwner, 'identity.name', 'cc_sql')
+    const staged = await adapter.getSnapshot()
+    expect(draftOf(staged, ccSqlOwner)!.validationErrors).toHaveLength(1)
+    expect(draftOf(staged, ccEtlOwner)!.validationErrors).toHaveLength(1)
+
+    const result = await applyAll(adapter, [ccSqlOwner, ccEtlOwner])
+    expect(result.ok).toBe(true)
+
+    const snap = await adapter.getSnapshot()
+    expect(
+      snap.agents.find((agent) => agent.agentInstanceId === CC_SQL)!.name
+    ).toBe('cc_etl')
+    expect(
+      snap.agents.find((agent) => agent.agentInstanceId === CC_ETL)!.name
+    ).toBe('cc_sql')
+    expect(appliedOf(snap, ccSqlOwner).values['identity.name']).toBe('cc_etl')
+    expect(appliedOf(snap, ccEtlOwner).values['identity.name']).toBe('cc_sql')
+    expect(draftOf(snap, ccSqlOwner)).toBeUndefined()
+    expect(draftOf(snap, ccEtlOwner)).toBeUndefined()
+  })
+
+  it('accepts a three-agent name cycle based on the final Project name set', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccDataOwner, 'identity.name', 'cc_sql')
+    await stage(adapter, ccSqlOwner, 'identity.name', 'cc_etl')
+    await stage(adapter, ccEtlOwner, 'identity.name', 'cc_data')
+    const staged = await adapter.getSnapshot()
+
+    const result = await applyAll(adapter, [
+      ccDataOwner,
+      ccSqlOwner,
+      ccEtlOwner
+    ])
+    expect(result.ok).toBe(true)
+
+    const snap = await adapter.getSnapshot()
+    expect(
+      snap.agents.find((agent) => agent.agentInstanceId === CC_DATA)!.name
+    ).toBe('cc_sql')
+    expect(
+      snap.agents.find((agent) => agent.agentInstanceId === CC_SQL)!.name
+    ).toBe('cc_etl')
+    expect(
+      snap.agents.find((agent) => agent.agentInstanceId === CC_ETL)!.name
+    ).toBe('cc_data')
+    expect(appliedOf(snap, ccDataOwner).values['identity.name']).toBe('cc_sql')
+    expect(appliedOf(snap, ccSqlOwner).values['identity.name']).toBe('cc_etl')
+    expect(appliedOf(snap, ccEtlOwner).values['identity.name']).toBe('cc_data')
+    for (const owner of [ccDataOwner, ccSqlOwner, ccEtlOwner]) {
+      expect(appliedOf(snap, owner).appliedVersion).toBe(
+        appliedOf(staged, owner).appliedVersion + 1
+      )
+      expect(draftOf(snap, owner)).toBeUndefined()
+    }
+  })
+
+  it('rejects the batch when final names are exactly equal', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, ccSqlOwner, 'identity.name', 'duplicate')
+    await stage(adapter, ccEtlOwner, 'identity.name', 'duplicate')
+    const staged = await adapter.getSnapshot()
+
+    const result = await applyAll(adapter, [ccSqlOwner, ccEtlOwner])
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invariant-violation')
+
+    const snap = await adapter.getSnapshot()
+    expect(appliedOf(snap, ccSqlOwner)).toEqual(appliedOf(staged, ccSqlOwner))
+    expect(appliedOf(snap, ccEtlOwner)).toEqual(appliedOf(staged, ccEtlOwner))
+    expect(draftOf(snap, ccSqlOwner)).toEqual(draftOf(staged, ccSqlOwner))
+    expect(draftOf(snap, ccEtlOwner)).toEqual(draftOf(staged, ccEtlOwner))
+  })
+
   it('rejects the batch when pending renames collide case-insensitively', async () => {
     const adapter = new MockScenarioAdapter()
     await stage(adapter, ccSqlOwner, 'identity.name', 'duplicate')
     await stage(adapter, ccEtlOwner, 'identity.name', 'DUPLICATE')
+    const staged = await adapter.getSnapshot()
 
     const result = await applyAll(adapter, [ccSqlOwner, ccEtlOwner])
     expect(result.ok).toBe(false)
@@ -490,6 +569,10 @@ describe('apply-configuration — batch rename uniqueness', () => {
     expect(snap.agents.find((a) => a.agentInstanceId === CC_ETL)!.name).toBe(
       'cc_etl'
     )
+    expect(appliedOf(snap, ccSqlOwner)).toEqual(appliedOf(staged, ccSqlOwner))
+    expect(appliedOf(snap, ccEtlOwner)).toEqual(appliedOf(staged, ccEtlOwner))
+    expect(draftOf(snap, ccSqlOwner)).toEqual(draftOf(staged, ccSqlOwner))
+    expect(draftOf(snap, ccEtlOwner)).toEqual(draftOf(staged, ccEtlOwner))
   })
 
   it('accepts renames whose final set is unique', async () => {
