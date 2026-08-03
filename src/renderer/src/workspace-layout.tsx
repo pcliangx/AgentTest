@@ -948,15 +948,15 @@ function ChatState({
               : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
           </p>
         ) : awaitingInput ? (
-          <div className="space-y-1">
-            <p className="text-neutral-500">
+          <fieldset className="space-y-1">
+            <legend className="text-neutral-500">
               当前 Run 正在等待输入。选择回复当前 Run 或加入下一 Run 队列。
-            </p>
+            </legend>
             <div className="flex gap-3 text-xs">
               <label className="flex items-center gap-1">
                 <input
                   type="radio"
-                  name="send-mode"
+                  name={`send-mode-${agent.agentInstanceId}`}
                   checked={sendMode === 'reply'}
                   onChange={() => setSendMode('reply')}
                 />
@@ -965,14 +965,14 @@ function ChatState({
               <label className="flex items-center gap-1">
                 <input
                   type="radio"
-                  name="send-mode"
+                  name={`send-mode-${agent.agentInstanceId}`}
                   checked={sendMode === 'enqueue'}
                   onChange={() => setSendMode('enqueue')}
                 />
                 加入下一队列
               </label>
             </div>
-          </div>
+          </fieldset>
         ) : hasQueuedWork && projectQueueLength > 0 ? (
           <p className="text-neutral-500">
             当前 Project 已有 {projectQueueLength}{' '}
