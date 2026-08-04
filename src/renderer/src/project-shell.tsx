@@ -277,6 +277,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // until the user navigates somewhere else explicitly.
   const [retainedDeepLink, setRetainedDeepLink] =
     useState<AttentionTarget | null>(null)
+  // A Knowledge target becomes authoritative for rendering as soon as its
+  // navigation is issued. The port may publish the accepted Event before its
+  // Result, so waiting for the Result would briefly expose another resource.
+  const [pendingKnowledgeTarget, setPendingKnowledgeTarget] = useState<{
+    attempt: number
+    target: Extract<AttentionTarget, { kind: 'knowledge' }>
+  } | null>(null)
   // Permanent permission policy is managed only in Settings; a request from
   // the Permission Center remounts Settings on its permissions section.
   const [permissionsNavNonce, setPermissionsNavNonce] = useState(0)
@@ -304,6 +311,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     retainedDeepLinkEpochRef.current += 1
     retainedTargetIntentsRef.current.clear()
     activeDeepLinkIntentTokenRef.current = undefined
+    setPendingKnowledgeTarget(null)
     setRetainedDeepLink(target)
   }
   const reconcileRetainedTargetIntents = (): void => {
@@ -378,6 +386,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
   const supersedeActiveDeepLinkIntent = (): number => {
     const attempt = ++deepLinkAttemptRef.current
+    setPendingKnowledgeTarget(null)
     const activeToken = activeDeepLinkIntentTokenRef.current
     activeDeepLinkIntentTokenRef.current = undefined
     settleRetainedTargetIntent(activeToken, { kind: 'rejected' })
@@ -419,12 +428,15 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         (c) => c.connectionId === project.primaryConnectionId
       )
     : undefined
-  const knowledgeTargetId =
-    project &&
-    retainedDeepLink?.kind === 'knowledge' &&
-    retainedDeepLink.projectId === project.projectId
-      ? retainedDeepLink.knowledgeResourceId
-      : undefined
+  const knowledgeTarget =
+    project && pendingKnowledgeTarget?.target.projectId === project.projectId
+      ? pendingKnowledgeTarget.target
+      : project &&
+          retainedDeepLink?.kind === 'knowledge' &&
+          retainedDeepLink.projectId === project.projectId
+        ? retainedDeepLink
+        : undefined
+  const knowledgeTargetId = knowledgeTarget?.knowledgeResourceId
   const projectKnowledge = project
     ? snapshot.knowledge.filter(
         (candidate) => candidate.projectId === project.projectId
@@ -499,10 +511,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     target: AttentionTarget
   ): Promise<void> => {
     const { attempt, retainedIntentToken } = beginDeepLinkIntent()
+    setPendingKnowledgeTarget(
+      target.kind === 'knowledge' ? { attempt, target } : null
+    )
     // A newer deep link is itself a pending target intent. It must block an
     // older accepted layout Result from clearing the retained Run after the
     // new target's Event has landed but before its Result returns.
     const abandonRetainedIntent = () => {
+      setPendingKnowledgeTarget((current) =>
+        current?.attempt === attempt ? null : current
+      )
       if (activeDeepLinkIntentTokenRef.current === retainedIntentToken) {
         activeDeepLinkIntentTokenRef.current = undefined
       }
@@ -518,7 +536,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       abandonRetainedIntent()
       return
     }
-    const navResult = await navigate(target.projectId, deepLinkSurface(target))
+    let navResult: CommandResult
+    try {
+      navResult = await navigate(target.projectId, deepLinkSurface(target))
+    } catch {
+      abandonRetainedIntent()
+      if (isCurrent()) {
+        setDeepLinkNotice('无法打开目标：导航命令传输失败，请重试')
+      }
+      return
+    }
     if (!isCurrent()) {
       abandonRetainedIntent()
       return // superseded by a newer navigation

@@ -733,6 +733,10 @@ describe('apply-configuration — primary connection', () => {
     expect(snap.pendingConfirmation!.action).toContain('集成')
     expect(snap.pendingConfirmation!.impact).toContain('销售团队任务清单')
     expect(snap.pendingConfirmation!.impact).toContain('销售知识库')
+    expect(snap.pendingConfirmation!.impact).toContain('未同步 Knowledge 修改')
+    expect(snap.pendingConfirmation!.impact).toContain(
+      '销售知识库有未同步的修改'
+    )
     // Requesting the transition is side-effect free until confirmation.
     expect(snap.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
     expect(snap.projects[0].resourceBindings).toHaveLength(2)
@@ -741,6 +745,36 @@ describe('apply-configuration — primary connection', () => {
     ).toBe(CONN_PRIMARY)
     expect(appliedOf(snap, projectOwner).appliedVersion).toBe(2)
     expect(draftOf(snap, projectOwner)).toBeDefined()
+  })
+
+  it('expires an integration preview when its Knowledge conflict changes', async () => {
+    const adapter = new MockScenarioAdapter()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    await applyAll(adapter, [projectOwner])
+    const preview = await adapter.getSnapshot()
+    const conflict = preview.attentionItems.find(
+      (item) =>
+        item.state === 'open' &&
+        item.kind === 'connection-conflict' &&
+        item.target.kind === 'knowledge' &&
+        item.target.projectId === PROJECT
+    )!
+
+    const resolved = await send(adapter, {
+      kind: 'resolve-attention',
+      attentionItemId: conflict.attentionItemId
+    })
+    expect(resolved.ok).toBe(true)
+    const confirmed = await send(adapter, {
+      kind: 'confirm-dangerous-action',
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    expect(confirmed.ok).toBe(false)
+    if (!confirmed.ok) expect(confirmed.reason).toBe('invalid-target')
+    const after = await adapter.getSnapshot()
+    expect(after.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
+    expect(after.pendingConfirmation).toBeDefined()
   })
 
   it('requires connection-difference confirmation even with zero bindings', async () => {

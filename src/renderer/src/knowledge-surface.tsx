@@ -28,6 +28,20 @@ const STATE_STYLE: Record<KnowledgeContainerState, string> = {
 
 type KnowledgeFailureReason = CommandRejectionReason | 'transport-error'
 
+type KnowledgeOperationKind = 'recovery' | 'connections' | 'security'
+
+type KnowledgeCommandFailure = {
+  reason: KnowledgeFailureReason
+  message: string
+  retry: () => Promise<CommandResult>
+}
+
+const KNOWLEDGE_OPERATION_ORDER: KnowledgeOperationKind[] = [
+  'recovery',
+  'connections',
+  'security'
+]
+
 const FAILURE_REASON_LABEL: Record<KnowledgeFailureReason, string> = {
   'stale-revision': '状态已更新',
   'invalid-target': '目标不存在',
@@ -102,6 +116,19 @@ function KnowledgeRecoveryButton({
   )
 }
 
+function KnowledgeIndependenceNote({
+  className = 'mt-1 text-neutral-500'
+}: {
+  className?: string
+}) {
+  return (
+    <p className={className}>
+      Knowledge 连接状态不会自行改变 Project 生命周期、Root
+      可用性，以及 Agent、Tasks、Activity 与 worktree 的各自状态。
+    </p>
+  )
+}
+
 function KnowledgeStateFeedback({
   container,
   onOpenConnections,
@@ -117,9 +144,7 @@ function KnowledgeStateFeedback({
       return (
         <div className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200">
           <p>缓存元数据不完整，不能作为有效离线缓存展示。</p>
-          <p className="mt-1 text-red-300">
-            Project 本地能力仍然可用。
-          </p>
+          <KnowledgeIndependenceNote className="mt-1 text-red-300" />
           <KnowledgeRecoveryButton
             resourceId={container.knowledgeResourceId}
             tone="neutral"
@@ -147,9 +172,7 @@ function KnowledgeStateFeedback({
     return (
       <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-3 text-sm text-neutral-300">
         <p>尚未配置 Knowledge 主连接。</p>
-        <p className="mt-1 text-xs text-neutral-500">
-          Project 仍然可用；Agent、Tasks、Activity 与本地 worktree 不受影响。
-        </p>
+        <KnowledgeIndependenceNote className="mt-1 text-xs text-neutral-500" />
         <button
           className="mt-3 rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-100 hover:bg-neutral-600"
           onClick={onOpenConnections}
@@ -163,9 +186,7 @@ function KnowledgeStateFeedback({
     return (
       <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
         <p>Knowledge 容器当前不可用。</p>
-        <p className="mt-1 text-neutral-500">
-          Project 本地能力仍然可用。
-        </p>
+        <KnowledgeIndependenceNote />
         <button
           className="mt-2 rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
           onClick={onOpenConnections}
@@ -179,7 +200,7 @@ function KnowledgeStateFeedback({
   return (
     <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
       <p>实时内容离线，且没有可用缓存。</p>
-      <p className="mt-1 text-neutral-500">Project 本地能力仍然可用。</p>
+      <KnowledgeIndependenceNote />
       <KnowledgeRecoveryButton
         resourceId={container.knowledgeResourceId}
         tone="neutral"
@@ -209,38 +230,55 @@ export function KnowledgeSurface({
     action: KnowledgeSecurityAction
   ) => Promise<CommandResult>
 }) {
-  const commandAttemptRef = useRef(0)
-  const [commandFailure, setCommandFailure] = useState<{
-    reason: KnowledgeFailureReason
-    message: string
-    retry: () => Promise<CommandResult>
-  } | null>(null)
-  const runCommand = (operation: () => Promise<CommandResult>): void => {
-    const attempt = ++commandAttemptRef.current
-    setCommandFailure(null)
+  const operationAttemptRef = useRef<Record<KnowledgeOperationKind, number>>({
+    recovery: 0,
+    connections: 0,
+    security: 0
+  })
+  const [commandFailures, setCommandFailures] = useState<
+    Partial<Record<KnowledgeOperationKind, KnowledgeCommandFailure>>
+  >({})
+  const runCommand = (
+    operationKind: KnowledgeOperationKind,
+    operation: () => Promise<CommandResult>
+  ): void => {
+    const attempt = ++operationAttemptRef.current[operationKind]
+    setCommandFailures((current) => {
+      if (!current[operationKind]) return current
+      const next = { ...current }
+      delete next[operationKind]
+      return next
+    })
     void operation().then(
       (result) => {
-        if (attempt !== commandAttemptRef.current) return
+        if (attempt !== operationAttemptRef.current[operationKind]) return
         if (result.ok) return
-        setCommandFailure({
-          reason: result.reason,
-          message: result.message,
-          retry: operation
-        })
+        setCommandFailures((current) => ({
+          ...current,
+          [operationKind]: {
+            reason: result.reason,
+            message: result.message,
+            retry: operation
+          }
+        }))
       },
       () => {
-        if (attempt !== commandAttemptRef.current) return
-        setCommandFailure({
-          reason: 'transport-error',
-          message: '命令传输失败，请重试',
-          retry: operation
-        })
+        if (attempt !== operationAttemptRef.current[operationKind]) return
+        setCommandFailures((current) => ({
+          ...current,
+          [operationKind]: {
+            reason: 'transport-error',
+            message: '命令传输失败，请重试',
+            retry: operation
+          }
+        }))
       }
     )
   }
-  const openConnections = (): void => runCommand(onOpenConnections)
+  const openConnections = (): void =>
+    runCommand('connections', onOpenConnections)
   const recoverConnection = (resourceId: KnowledgeResourceId): void =>
-    runCommand(() => onRecoverConnection(resourceId))
+    runCommand('recovery', () => onRecoverConnection(resourceId))
   const renderedState = container ? displayState(container) : 'unconnected'
   const binding = project.resourceBindings.find(
     (candidate) => candidate.bindingId === container?.resourceBindingId
@@ -331,32 +369,39 @@ export function KnowledgeSurface({
             onRecoverConnection={recoverConnection}
           />
 
-          {commandFailure && (
-            <div
-              role="alert"
-              aria-label="Knowledge 操作失败"
-              className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200"
-            >
-              <p>
-                操作失败（{FAILURE_REASON_LABEL[commandFailure.reason]}）：
-                {commandFailure.message}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  className="rounded bg-red-900/70 px-2 py-1 hover:bg-red-800"
-                  onClick={() => runCommand(commandFailure.retry)}
-                >
-                  重试上次操作
-                </button>
-                <button
-                  className="rounded bg-neutral-700 px-2 py-1 text-neutral-100 hover:bg-neutral-600"
-                  onClick={openConnections}
-                >
-                  检查全局 Connections
-                </button>
+          {KNOWLEDGE_OPERATION_ORDER.map((operationKind) => {
+            const commandFailure = commandFailures[operationKind]
+            if (!commandFailure) return null
+            return (
+              <div
+                key={operationKind}
+                role="alert"
+                aria-label="Knowledge 操作失败"
+                className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200"
+              >
+                <p>
+                  操作失败（{FAILURE_REASON_LABEL[commandFailure.reason]}）：
+                  {commandFailure.message}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="rounded bg-red-900/70 px-2 py-1 hover:bg-red-800"
+                    onClick={() =>
+                      runCommand(operationKind, commandFailure.retry)
+                    }
+                  >
+                    重试上次操作
+                  </button>
+                  <button
+                    className="rounded bg-neutral-700 px-2 py-1 text-neutral-100 hover:bg-neutral-600"
+                    onClick={openConnections}
+                  >
+                    检查全局 Connections
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })}
 
           <div className="grid gap-3 p-3 text-sm lg:grid-cols-2">
             <div className="rounded bg-neutral-900 p-3 text-neutral-300">
@@ -419,7 +464,7 @@ export function KnowledgeSurface({
                     key={action}
                     className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
                     onClick={() =>
-                      runCommand(() =>
+                      runCommand('security', () =>
                         onPreviewSecurityEvent(
                           container.knowledgeResourceId!,
                           action

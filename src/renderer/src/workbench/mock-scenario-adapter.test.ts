@@ -1132,7 +1132,50 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     expect(conf.action).toBe('删除连接')
     expect(conf.target).toBe(snap.global.connections[0].label)
     expect(conf.impact).toBeTruthy()
+    expect(conf.impact).toContain('未同步 Knowledge 修改')
+    expect(conf.impact).toContain('销售知识库有未同步的修改')
     expect(conf.nonBypassableReason).toBeTruthy()
+  })
+
+  it('expires a connection deletion preview when its Knowledge conflict changes', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const connectionId = snap.global.connections[0].connectionId
+    await adapter.dispatch(
+      requestDeletion(cmdId(1), snap.revision, connectionId)
+    )
+    const preview = await adapter.getSnapshot()
+    const conflict = preview.attentionItems.find(
+      (item) =>
+        item.state === 'open' &&
+        item.kind === 'connection-conflict' &&
+        item.target.kind === 'knowledge' &&
+        item.target.projectId === DEFAULT_PROJECT_ID
+    )!
+    const resolved = await adapter.dispatch({
+      kind: 'resolve-attention',
+      commandId: cmdId(2),
+      expectedRevision: preview.revision,
+      attentionItemId: conflict.attentionItemId
+    })
+    expect(resolved.ok).toBe(true)
+    const drifted = await adapter.getSnapshot()
+    const confirmed = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(3),
+      expectedRevision: drifted.revision,
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    expect(confirmed.ok).toBe(false)
+    if (!confirmed.ok) expect(confirmed.reason).toBe('invalid-target')
+    const after = await adapter.getSnapshot()
+    expect(
+      after.global.connections.some(
+        (connection) => connection.connectionId === connectionId
+      )
+    ).toBe(true)
+    expect(after.pendingConfirmation).toBeDefined()
   })
 
   it('discloses affected project bindings in the impact text', async () => {

@@ -1,5 +1,6 @@
 import type {
   AgentInstanceId,
+  AttentionItemId,
   Brand,
   CommandId,
   CommandRejectionReason,
@@ -9,6 +10,7 @@ import type {
   DispatchPlanResult,
   LayoutTargetEffect,
   KnowledgeContainerState,
+  KnowledgeResourceId,
   PanelId,
   PermissionRequestId,
   ProjectId,
@@ -76,6 +78,31 @@ type ConfigurationDraftEntry =
   WorkbenchViewModel['configurationDrafts'][number]
 type AppliedConfigurationEntry =
   WorkbenchViewModel['appliedConfigurations'][number]
+type KnowledgeContainerEntry = WorkbenchViewModel['knowledge'][number]
+type ResourceBindingEntry =
+  WorkbenchViewModel['projects'][number]['resourceBindings'][number]
+
+type KnowledgeImpactResource = {
+  projectId: ProjectId
+  knowledgeResourceId: KnowledgeResourceId
+}
+
+type KnowledgeConflictPreview = KnowledgeImpactResource & {
+  attentionItemId: AttentionItemId
+  title: string
+}
+
+type KnowledgeImpactPreview = {
+  resources: KnowledgeImpactResource[]
+  conflicts: KnowledgeConflictPreview[]
+}
+
+function knowledgeResourceKey(resource: KnowledgeImpactResource): string {
+  return JSON.stringify([
+    resource.projectId,
+    resource.knowledgeResourceId
+  ])
+}
 
 type ConfigurationApplyPlan = {
   batchProjectId: ProjectId
@@ -89,6 +116,7 @@ type ConfigurationApplyPlan = {
     nextPrimary?: ConnectionId
     nextBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
     removedBindings: WorkbenchViewModel['projects'][number]['resourceBindings']
+    knowledgeImpact: KnowledgeImpactPreview
   }
 }
 
@@ -232,6 +260,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         type: 'connection-deletion'
         connectionId: ConnectionId
         affectedProjectIds: ProjectId[]
+        knowledgeImpact: KnowledgeImpactPreview
         fingerprint: string
       }
     | { type: 'merge-changes'; agentInstanceId: AgentInstanceId }
@@ -567,10 +596,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
         const affectedProjects = this.snapshot.projects.filter((project) =>
           affected.has(project.projectId)
         )
+        const knowledgeImpact = this.previewKnowledgeImpact(
+          this.knowledgeContainersAffectedByConnectionDeletion(
+            command.connectionId
+          )
+        )
         this.pendingAction = {
           type: 'connection-deletion',
           connectionId: command.connectionId,
           affectedProjectIds,
+          knowledgeImpact,
           fingerprint: this.connectionDeletionFingerprint(
             command.connectionId,
             affectedProjectIds
@@ -590,6 +625,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
             impact += `同时解除 Resource Binding：${removedLabels.join('、')}。`
           }
         }
+        impact += this.formatUnsyncedKnowledgeImpact(
+          knowledgeImpact.conflicts
+        )
         this.snapshot.pendingConfirmation = {
           confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
           action: '删除连接',
@@ -707,7 +745,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
           const frozen = pendingAction
           const currentFingerprint = this.configurationApplyFingerprint(
             frozen.plan.batchProjectId,
-            frozen.plan.ownerKeys
+            frozen.plan.ownerKeys,
+            frozen.plan.integration
           )
           if (currentFingerprint !== frozen.fingerprint) {
             return this.reject(
@@ -1419,6 +1458,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
           const removedBindings = project.resourceBindings.filter(
             (binding) => !kept.has(binding.bindingId as string)
           )
+          const knowledgeImpact = this.previewKnowledgeImpact(
+            this.knowledgeContainersAffectedByIntegration(
+              project.projectId,
+              nextPrimary,
+              nextBindings
+            )
+          )
           projectCommit.values['integrations.primaryConnectionId'] =
             nextPrimary ?? null
           projectCommit.values['integrations.resourceScope'] =
@@ -1426,7 +1472,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
           plan.integration = {
             nextPrimary,
             nextBindings: structuredClone(nextBindings),
-            removedBindings: structuredClone(removedBindings)
+            removedBindings: structuredClone(removedBindings),
+            knowledgeImpact
           }
 
           if (primaryChanged || removedBindings.length > 0) {
@@ -1450,16 +1497,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
                   `${binding.label}（${binding.resourceType}；${binding.allowedOperations.join('/')}）`
               )
               .join('、')
-            const impact =
+            let impact =
               removedBindings.length > 0
                 ? `将解除 ${removedBindings.length} 个 Resource Binding：${bindingImpact}。解除后需重新授权才能恢复。`
                 : '将解除 0 个 Resource Binding；当前没有绑定会丢失，但主连接差异仍需确认。'
+            impact += this.formatUnsyncedKnowledgeImpact(
+              knowledgeImpact.conflicts
+            )
             this.pendingAction = {
               type: 'configuration-apply',
               plan,
               fingerprint: this.configurationApplyFingerprint(
                 batchProjectId,
-                keys
+                keys,
+                plan.integration
               )
             }
             this.snapshot.pendingConfirmation = {
@@ -2074,6 +2125,131 @@ export class MockScenarioAdapter implements WorkbenchPort {
       .filter((projectId) => referenced.has(projectId))
   }
 
+  private knowledgeContainerRemainsIntegrated(
+    container: KnowledgeContainerEntry,
+    primaryConnectionId: ConnectionId | undefined,
+    bindings: ResourceBindingEntry[]
+  ): boolean {
+    return (
+      primaryConnectionId !== undefined &&
+      container.connectionId === primaryConnectionId &&
+      bindings.some(
+        (binding) =>
+          binding.bindingId === container.resourceBindingId &&
+          binding.connectionId === primaryConnectionId
+      )
+    )
+  }
+
+  private knowledgeContainersAffectedByIntegration(
+    projectId: ProjectId,
+    nextPrimaryConnectionId: ConnectionId | undefined,
+    nextBindings: ResourceBindingEntry[]
+  ): KnowledgeContainerEntry[] {
+    return this.snapshot.knowledge.filter((container) => {
+      if (container.projectId !== projectId) return false
+      if (
+        this.knowledgeContainerRemainsIntegrated(
+          container,
+          nextPrimaryConnectionId,
+          nextBindings
+        )
+      ) {
+        return false
+      }
+
+      const remainsOnPrimary =
+        nextPrimaryConnectionId !== undefined &&
+        container.connectionId === nextPrimaryConnectionId
+      const nextState = nextPrimaryConnectionId
+        ? 'unavailable'
+        : 'unconnected'
+      return (
+        container.state !== nextState ||
+        container.resourceBindingId !== undefined ||
+        container.securityFeedback !== undefined ||
+        (!remainsOnPrimary &&
+          (container.connectionId !== undefined ||
+            container.humanBrowserIdentity !== undefined ||
+            container.connectorIdentity !== undefined))
+      )
+    })
+  }
+
+  private knowledgeContainersAffectedByConnectionDeletion(
+    connectionId: ConnectionId
+  ): KnowledgeContainerEntry[] {
+    const removedBindingIds = new Set(
+      this.snapshot.projects.flatMap((project) =>
+        project.resourceBindings
+          .filter((binding) => binding.connectionId === connectionId)
+          .map((binding) => binding.bindingId as string)
+      )
+    )
+    return this.snapshot.knowledge.filter(
+      (container) =>
+        container.connectionId === connectionId ||
+        (container.resourceBindingId !== undefined &&
+          removedBindingIds.has(container.resourceBindingId as string))
+    )
+  }
+
+  private previewKnowledgeImpact(
+    containers: KnowledgeContainerEntry[]
+  ): KnowledgeImpactPreview {
+    const resources: KnowledgeImpactResource[] = []
+    const seen = new Set<string>()
+    for (const container of containers) {
+      if (!container.knowledgeResourceId) continue
+      const resource = {
+        projectId: container.projectId,
+        knowledgeResourceId: container.knowledgeResourceId
+      }
+      const key = knowledgeResourceKey(resource)
+      if (seen.has(key)) continue
+      seen.add(key)
+      resources.push(resource)
+    }
+    return {
+      resources,
+      conflicts: this.openKnowledgeConflictsForResources(resources)
+    }
+  }
+
+  private openKnowledgeConflictsForResources(
+    resources: KnowledgeImpactResource[]
+  ): KnowledgeConflictPreview[] {
+    const relevant = new Set(resources.map(knowledgeResourceKey))
+    return this.snapshot.attentionItems.flatMap((item) => {
+      if (
+        item.state !== 'open' ||
+        item.kind !== 'connection-conflict' ||
+        item.target.kind !== 'knowledge'
+      ) {
+        return []
+      }
+      const resource = {
+        projectId: item.target.projectId,
+        knowledgeResourceId: item.target.knowledgeResourceId
+      }
+      if (!relevant.has(knowledgeResourceKey(resource))) return []
+      return [
+        {
+          ...resource,
+          attentionItemId: item.attentionItemId,
+          title: item.title
+        }
+      ]
+    })
+  }
+
+  private formatUnsyncedKnowledgeImpact(
+    conflicts: KnowledgeConflictPreview[]
+  ): string {
+    if (conflicts.length === 0) return ''
+    return `存在 ${conflicts.length} 项未同步 Knowledge 修改：${conflicts.map((conflict) => `「${conflict.title}」`).join('、')}。确认后相关 Knowledge 资源将失去当前连接或绑定入口。`
+  }
+
   /**
    * Freezes deletion impact without coupling it to unrelated Projects. A new
    * reference also changes `currentAffectedProjectIds`, expiring the preview.
@@ -2088,6 +2264,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
       ...expectedProjectIds,
       ...currentAffectedProjectIds
     ])
+    const knowledgeResources = this.previewKnowledgeImpact(
+      this.knowledgeContainersAffectedByConnectionDeletion(connectionId)
+    ).resources
     return JSON.stringify({
       connection: this.snapshot.global.connections.find(
         (candidate) => candidate.connectionId === connectionId
@@ -2109,6 +2288,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
           connectionId: container.connectionId,
           resourceBindingId: container.resourceBindingId
         })),
+      knowledgeConflicts:
+        this.openKnowledgeConflictsForResources(knowledgeResources),
       applied: this.snapshot.appliedConfigurations.filter(
         (config) =>
           config.owner.kind === 'project' &&
@@ -2129,12 +2310,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
    */
   private configurationApplyFingerprint(
     projectId: ProjectId,
-    ownerKeys: string[]
+    ownerKeys: string[],
+    integration: ConfigurationApplyPlan['integration']
   ): string {
     const selected = new Set(ownerKeys)
     const project = this.snapshot.projects.find(
       (candidate) => candidate.projectId === projectId
     )
+    const knowledgeResources = integration
+      ? this.previewKnowledgeImpact(
+          this.knowledgeContainersAffectedByIntegration(
+            projectId,
+            integration.nextPrimary,
+            integration.nextBindings
+          )
+        ).resources
+      : []
     return JSON.stringify({
       project: project
         ? {
@@ -2156,7 +2347,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
       drafts: this.snapshot.configurationDrafts.filter((entry) =>
         selected.has(ownerKey(entry.owner))
       ),
-      connections: this.snapshot.global.connections
+      connections: this.snapshot.global.connections,
+      knowledgeReferences: this.snapshot.knowledge
+        .filter((container) =>
+          knowledgeResources.some(
+            (resource) =>
+              resource.projectId === container.projectId &&
+              resource.knowledgeResourceId === container.knowledgeResourceId
+          )
+        )
+        .map((container) => ({
+          projectId: container.projectId,
+          knowledgeResourceId: container.knowledgeResourceId,
+          state: container.state,
+          connectionId: container.connectionId,
+          resourceBindingId: container.resourceBindingId
+        })),
+      knowledgeConflicts:
+        this.openKnowledgeConflictsForResources(knowledgeResources)
     })
   }
 
@@ -2258,14 +2466,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
       const remainsOnPrimary =
         primaryConnectionId !== undefined &&
         container.connectionId === primaryConnectionId
-      const retainedBinding = remainsOnPrimary
-        ? bindings.find(
-            (binding) =>
-              binding.bindingId === container.resourceBindingId &&
-              binding.connectionId === primaryConnectionId
-          )
-        : undefined
-      if (retainedBinding) continue
+      if (
+        this.knowledgeContainerRemainsIntegrated(
+          container,
+          primaryConnectionId,
+          bindings
+        )
+      ) {
+        continue
+      }
 
       const reconciled = this.setKnowledgeNonCachedState(
         container,
