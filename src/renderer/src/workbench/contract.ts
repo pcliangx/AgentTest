@@ -212,6 +212,13 @@ export interface ProjectViewModel {
   activeRunCount: number
   queuedRunCount: number
   attentionCount: number
+  /**
+   * Project Root display path and current Git branch for the shell
+   * statusbar (#65). Adapter-owned facts — the renderer never derives or
+   * hard-codes them; optional only so older fixtures keep compiling.
+   */
+  rootPath?: string
+  currentBranch?: string
   primaryConnectionId?: ConnectionId
   /** Authoritative resource bindings scoped to the primary connection (#6). */
   resourceBindings: ResourceBindingViewModel[]

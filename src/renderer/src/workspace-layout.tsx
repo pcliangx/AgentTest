@@ -226,7 +226,7 @@ export function WorkspaceArea({
   if (!layout.root || Object.keys(layout.panels).length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-muted">
           尚未打开任何 Agent，请从左侧目录选择。
         </p>
       </div>
@@ -316,15 +316,15 @@ export function WorkspaceArea({
     <div className="relative flex min-h-0 flex-1 flex-col">
       {focusPanelId ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-2 py-1">
-            <span className="flex-1 text-xs text-neutral-500">
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-2 py-1">
+            <span className="flex-1 text-xs text-muted">
               Focus 模式：仅显示当前 Panel，布局保持不变
             </span>
             <button
               ref={exitFocusButtonRef}
               aria-label="退出 Focus"
               aria-keyshortcuts="Escape"
-              className="rounded px-1.5 py-0.5 text-xs text-neutral-300 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-neutral-400"
+              className="rounded px-1.5 py-0.5 text-xs text-ink hover:bg-wash"
               onClick={() => void sendLayout({ kind: 'focus-panel' })}
             >
               退出 Focus
@@ -342,7 +342,7 @@ export function WorkspaceArea({
       {panelCount > DEFAULT_DENSITY_PANELS && !densityHintDismissed && (
         <div
           role="note"
-          className="absolute left-2 top-2 z-20 flex items-center gap-2 rounded border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-300"
+          className="absolute left-2 top-2 z-20 flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-1.5 text-xs text-ink shadow-lift"
         >
           <span>
             当前打开 {panelCount} 个 Panel，超出建议密度（1–3
@@ -350,7 +350,7 @@ export function WorkspaceArea({
           </span>
           <button
             aria-label="关闭密度提示"
-            className="rounded px-1 text-neutral-400 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-neutral-400"
+            className="rounded px-1 text-muted hover:bg-wash hover:text-ink"
             onClick={() => setDensityHintDismissed(true)}
           >
             ×
@@ -682,7 +682,7 @@ function Divider({
       aria-valuemin={10}
       aria-valuemax={90}
       tabIndex={0}
-      className={`shrink-0 bg-neutral-800 hover:bg-neutral-600 focus-visible:bg-neutral-500 focus-visible:outline-2 focus-visible:outline-neutral-400 ${
+      className={`shrink-0 bg-line hover:bg-brand focus-visible:bg-brand ${
         direction === 'horizontal'
           ? 'w-1.5 cursor-col-resize'
           : 'h-1.5 cursor-row-resize'
@@ -808,7 +808,7 @@ const TAB_KEYSHORTCUTS = [
 ].join(' ')
 
 const PANEL_TOOLBAR_BUTTON_CLASS =
-  'rounded px-1.5 py-0.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-neutral-400'
+  'rounded px-1.5 py-0.5 text-xs text-muted hover:bg-wash hover:text-ink'
 
 function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContext }) {
   const { project, snapshot, openAttentionTargets, sendLayout } = ctx
@@ -841,7 +841,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
     <div
       key={zone}
       aria-label={label}
-      className={`pointer-events-auto absolute border border-dashed border-transparent hover:border-neutral-500 hover:bg-neutral-700/30 ${className}`}
+      className={`pointer-events-auto absolute border border-dashed border-transparent hover:border-brand hover:bg-brand-soft/70 ${className}`}
       onDragOver={(e) => {
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
@@ -871,7 +871,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       aria-label="Agent 面板"
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-1.5 py-1">
+      <div className="flex shrink-0 items-center gap-1 border-b border-line px-1.5 py-1">
         {!ctx.temporaryFocusPanelId && (
           <>
             <button
@@ -933,7 +933,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div
         role="tablist"
         aria-label="Agent 标签"
-        className="flex shrink-0 overflow-x-auto border-b border-neutral-800"
+        className="flex shrink-0 overflow-x-auto border-b border-line"
       >
         {panel.tabs.map((tabId) => {
           const agent = snapshot.agents.find(
@@ -950,10 +950,10 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               data-tab-id={tabId}
               tabIndex={selected ? 0 : -1}
               draggable
-              className={`flex cursor-pointer items-center gap-1.5 border-r border-neutral-800 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-neutral-400 ${
+              className={`flex cursor-pointer items-center gap-1.5 border-r border-line px-3 py-1.5 text-sm ${
                 selected
-                  ? 'bg-neutral-900 text-neutral-100'
-                  : 'text-neutral-500 hover:bg-neutral-900/60'
+                  ? 'bg-paper text-ink'
+                  : 'text-muted hover:bg-wash'
               }`}
               onClick={() =>
                 void sendLayout({
@@ -975,18 +975,18 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                 <span
                   role="img"
                   aria-label="有待处理事项"
-                  className="text-amber-400"
+                  className="text-amber"
                 >
                   ●
                 </span>
               )}
-              <span className="text-xs text-neutral-600">
+              <span className="text-xs text-muted">
                 {providerLabel(agent.providerId)} ·{' '}
                 {RUNTIME_STATE_LABEL[agent.runtimeState]}
               </span>
               <button
                 aria-label={`关闭标签 ${agent.name}`}
-                className="ml-1 rounded px-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-neutral-400"
+                className="ml-1 rounded px-1 text-muted hover:bg-wash hover:text-ink"
                 onClick={(e) => {
                   e.stopPropagation()
                   void sendLayout({
@@ -1014,7 +1014,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
         />
       ) : (
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-neutral-500">未选择 Agent</p>
+          <p className="text-sm text-muted">未选择 Agent</p>
         </div>
       )}
 
@@ -1094,18 +1094,18 @@ function ClosePanelDialog({
     <div
       role="dialog"
       aria-label="关闭 Panel"
-      className="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
+      className="absolute inset-0 z-10 flex items-center justify-center bg-backdrop"
     >
-      <div className="w-80 space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4">
-        <h3 className="text-sm font-medium text-neutral-100">关闭 Panel</h3>
-        <p className="text-xs text-neutral-400">
+      <div className="w-80 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+        <h3 className="text-sm font-medium text-ink">关闭 Panel</h3>
+        <p className="text-xs text-muted">
           该 Panel 仍含有 Agent 标签，关闭前请选择迁移目标；标签只改变视图位置，不影响运行状态。
         </p>
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           迁移目标 Panel
           <select
             aria-label="迁移目标 Panel"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={migrateTarget}
             onChange={(e) => onSelectTarget(e.target.value)}
           >
@@ -1118,13 +1118,13 @@ function ClosePanelDialog({
         </label>
         <div className="flex justify-end gap-2">
           <button
-            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+            className="btn btn-ghost"
             onClick={onCancel}
           >
             取消
           </button>
           <button
-            className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+            className="btn btn-primary"
             onClick={onConfirm}
           >
             迁移并关闭
@@ -1174,8 +1174,8 @@ function AgentView({
       className="flex min-h-0 flex-1 flex-col p-4"
     >
       <header className="mb-3">
-        <h3 className="text-base font-medium text-neutral-100">{agent.name}</h3>
-        <p className="mt-0.5 text-xs text-neutral-500">
+        <h3 className="text-base font-medium text-ink">{agent.name}</h3>
+        <p className="mt-0.5 text-xs text-muted">
           {providerLabel(agent.providerId)} ·{' '}
           {RUNTIME_STATE_LABEL[agent.runtimeState]}
         </p>
@@ -1187,13 +1187,13 @@ function AgentView({
       {agent.runtimeState === 'unavailable' && (
         <div
           role="note"
-          className="mb-3 flex items-center gap-2 rounded bg-amber-950/40 px-3 py-2 text-xs text-amber-300"
+          className="mb-3 flex items-center gap-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber"
         >
           <span className="flex-1">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
           </span>
           <button
-            className="rounded bg-amber-950 px-3 py-1 text-amber-300 hover:bg-amber-900"
+            className="mini-button shrink-0"
             onClick={() =>
               void sendCommand({
                 kind: 'navigate-global',
@@ -1206,14 +1206,14 @@ function AgentView({
         </div>
       )}
 
-      <div className="mb-3 flex gap-1 border-b border-neutral-800">
+      <div className="mb-3 flex gap-1 border-b border-line">
         {SUB_VIEWS.map(({ view, label }) => (
           <button
             key={view}
             className={`px-2 py-1 text-sm ${
               subView === view
-                ? 'border-b-2 border-neutral-300 text-neutral-100'
-                : 'text-neutral-500 hover:text-neutral-300'
+                ? 'border-b-2 border-brand text-ink'
+                : 'text-muted hover:text-ink'
             }`}
             onClick={() => setSubView(view)}
           >
@@ -1222,7 +1222,7 @@ function AgentView({
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto text-sm text-neutral-400">
+      <div className="min-h-0 flex-1 overflow-auto text-sm text-muted">
         {subView === 'chat' && (
           <ChatState
             project={project}
@@ -1234,7 +1234,7 @@ function AgentView({
         )}
         {subView === 'activity' &&
           (agentActivity.length === 0 ? (
-            <p className="text-neutral-500">暂无活动记录</p>
+            <p className="text-muted">暂无活动记录</p>
           ) : (
             <ul className="space-y-1.5">
               {agentActivity.map((entry) => {
@@ -1243,9 +1243,9 @@ function AgentView({
                   <li
                     key={entry.activityId}
                     aria-label={`${kindLabel}：${entry.summary}`}
-                    className="text-neutral-300"
+                    className="text-ink"
                   >
-                    <span className="mr-1 text-neutral-500">{kindLabel}</span>
+                    <span className="mr-1 text-muted">{kindLabel}</span>
                     {entry.summary}
                   </li>
                 )
@@ -1374,35 +1374,35 @@ function ChatState({
         className="min-h-0 flex-1 overflow-auto"
       >
         {projectBlockReason === 'project-archived' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             Project 已归档；仅可查看历史记录，不能发送新指令。
           </p>
         ) : projectBlockReason === 'project-root-unavailable' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             Project Root 不可用；仅可查看历史记录，请先恢复或重新定位 Root。
           </p>
         ) : projectBlockReason === 'project-repository-not-ready' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             Project 尚未初始化或绑定 Git 仓库；仅可查看历史记录，请先完成 Git
             初始化或绑定。
           </p>
         ) : agent.runtimeState === 'unavailable' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
           </p>
         ) : agent.runtimeState === 'archived' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             Agent 已归档；仅可查看历史记录，不能发送新指令。
           </p>
         ) : terminalBlocked ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             {agent.terminalState === 'opening'
               ? 'Terminal 正在打开或接管中；结构化 Run 与 PTY 互斥，请等待打开完成并结束接管。'
               : 'Terminal 接管中；结构化 Run 与 PTY 互斥，请先结束接管再发送指令。'}
           </p>
         ) : awaitingInput ? (
           <fieldset className="space-y-1">
-            <legend className="text-neutral-500">
+            <legend className="text-muted">
               当前 Run 正在等待输入。选择回复当前 Run 或加入下一 Run 队列。
             </legend>
             <div className="flex gap-3 text-xs">
@@ -1426,7 +1426,7 @@ function ChatState({
               </label>
             </div>
             {sendMode === 'enqueue' && (
-              <p className="text-neutral-500">
+              <p className="text-muted">
                 {planEntry?.outcome === 'queue'
                   ? `加入下一 Run 将进入第 ${planEntry.position} 位。`
                   : planEntry?.outcome === 'start'
@@ -1436,27 +1436,27 @@ function ChatState({
             )}
           </fieldset>
         ) : planEntry?.outcome === 'queue' ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             当前 Project 已有 {planEntry.position - 1}{' '}
             项排队；新指令将进入第 {planEntry.position} 位。
           </p>
         ) : planning ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             正在计算新指令的启动与队位…
           </p>
         ) : planError ? (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             暂时无法计算新指令的启动与队位。
           </p>
         ) : (
-          <p className="text-neutral-500">
+          <p className="text-muted">
             暂无对话记录；发送首条消息后才会启动 Run。
           </p>
         )}
       </div>
 
       {notice && (
-        <p role="alert" className="mt-2 text-xs text-red-400">
+        <p role="alert" className="mt-2 text-xs text-danger">
           {notice}
         </p>
       )}
@@ -1464,11 +1464,11 @@ function ChatState({
       {planError && (
         <div
           role="alert"
-          className="mt-2 flex items-center gap-2 text-xs text-red-400"
+          className="mt-2 flex items-center gap-2 text-xs text-danger"
         >
           <span>{planError}</span>
           <button
-            className="rounded px-2 py-1 text-neutral-300 hover:bg-neutral-800"
+            className="rounded px-2 py-1 text-ink hover:bg-wash"
             disabled={submitting}
             onClick={retryPlan}
           >
@@ -1477,17 +1477,17 @@ function ChatState({
         </div>
       )}
 
-      <div className="mt-2 flex gap-2 border-t border-neutral-800 pt-2">
+      <div className="mt-2 flex gap-2 border-t border-line pt-2">
         <textarea
           aria-label="发送给当前 Agent"
           placeholder="发送给当前 Agent…"
-          className="min-h-[2.5rem] flex-1 resize-none rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
+          className="min-h-[2.5rem] flex-1 resize-none rounded border border-line bg-paper px-2 py-1 text-sm text-ink placeholder:text-muted"
           value={draft}
           disabled={baseDisabled}
           onChange={(e) => setDraft(e.target.value)}
         />
         <button
-          className="shrink-0 rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600 disabled:opacity-40"
+          className="btn btn-primary shrink-0"
           disabled={disabled || draft.trim().length === 0}
           onClick={() => void submit()}
         >
@@ -1523,7 +1523,7 @@ function ChangesView({
   )
 
   if (!agentChanges) {
-    return <p className="text-neutral-500">暂无改动</p>
+    return <p className="text-muted">暂无改动</p>
   }
 
   const canMerge =
@@ -1537,8 +1537,8 @@ function ChangesView({
         <span
           className={
             agentChanges.drift === 'behind'
-              ? 'text-amber-400'
-              : 'text-emerald-400'
+              ? 'text-amber'
+              : 'text-teal'
           }
         >
           {agentChanges.drift === 'behind'
@@ -1548,10 +1548,10 @@ function ChangesView({
         <span
           className={
             agentChanges.validation.status === 'fail'
-              ? 'text-red-400'
+              ? 'text-danger'
               : agentChanges.validation.status === 'pass'
-                ? 'text-emerald-400'
-                : 'text-neutral-500'
+                ? 'text-teal'
+                : 'text-muted'
           }
         >
           验证：{agentChanges.validation.status === 'pass'
@@ -1560,14 +1560,14 @@ function ChangesView({
               ? `失败${agentChanges.validation.message ? '（' + agentChanges.validation.message + '）' : ''}`
               : '等待中'}
         </span>
-        <span className="text-neutral-600">
+        <span className="text-muted">
           base: {agentChanges.baseCommit}
         </span>
       </div>
 
       {/* Needs rebase notice */}
       {agentChanges.drift === 'behind' && (
-        <div className="rounded bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+        <div className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber">
           主仓库已超前于本 worktree 的 base commit。请先更新 worktree、解冲突并重新验证，再尝试合并。不提供自动 rebase、冲突解决或 force merge。
         </div>
       )}
@@ -1576,12 +1576,12 @@ function ChangesView({
       <ul className="space-y-1 font-mono text-xs">
         {agentChanges.files.map((file) => (
           <li key={file.path} className="flex items-center gap-2">
-            <span className="w-8 text-neutral-500">
+            <span className="w-8 text-muted">
               {FILE_STATUS_LABEL[file.status] ?? file.status}
             </span>
-            <span className="flex-1 text-neutral-300">{file.path}</span>
-            <span className="text-emerald-400">+{file.additions}</span>
-            <span className="text-red-400">-{file.deletions}</span>
+            <span className="flex-1 text-ink">{file.path}</span>
+            <span className="text-teal">+{file.additions}</span>
+            <span className="text-danger">-{file.deletions}</span>
           </li>
         ))}
       </ul>
@@ -1589,7 +1589,7 @@ function ChangesView({
       {/* Actions */}
       <div className="flex gap-2 pt-1">
         <button
-          className="rounded bg-blue-700 px-3 py-1 text-xs text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-30"
+          className="btn btn-primary"
           disabled={!canMerge}
           title={
             canMerge
@@ -1608,7 +1608,7 @@ function ChangesView({
           ff-only 合并
         </button>
         <button
-          className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+          className="btn btn-danger"
           onClick={() =>
             void sendCommand({
               kind: 'discard-agent-changes',
@@ -1774,7 +1774,7 @@ function TerminalStateView({
         role="status"
         aria-label="Terminal 状态"
         aria-live="polite"
-        className="text-neutral-400"
+        className="text-muted"
       >
         {pendingOperation === 'open'
           ? '正在打开 Terminal…'
@@ -1782,9 +1782,9 @@ function TerminalStateView({
             ? '正在结束 Terminal 接管…'
             : statusText}
       </p>
-      <p className="text-xs text-neutral-600">{terminalDescription()}</p>
+      <p className="text-xs text-muted">{terminalDescription()}</p>
       {notice && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-danger">
           {notice.message}
         </p>
       )}
@@ -1797,7 +1797,7 @@ function TerminalStateView({
         {projectBlock && (
           <button
             ref={recoveryButtonRef}
-            className="rounded bg-amber-950 px-3 py-1 text-xs text-amber-300 hover:bg-amber-900"
+            className="mini-button"
             disabled={submitting}
             onClick={() =>
               void sendCommand({
@@ -1813,7 +1813,7 @@ function TerminalStateView({
         {(isTakeover || isFailed) && (
           <button
             ref={closeButtonRef}
-            className="rounded bg-red-950 px-3 py-1 text-xs text-red-400 hover:bg-red-900"
+            className="mini-button mini-button-danger"
             disabled={submitting}
             onClick={() => void changeTerminalState('close')}
           >
@@ -1823,7 +1823,7 @@ function TerminalStateView({
         {!isTakeover && !isOpening && (
           <button
             ref={openButtonRef}
-            className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-30"
+            className="mini-button mini-button-primary disabled:cursor-not-allowed"
             disabled={!canOpen}
             title={terminalOpenTitle()}
             onClick={() => void changeTerminalState('open')}
@@ -1892,9 +1892,9 @@ function QueuePanel({
     <div
       role="region"
       aria-label="队列"
-      className="mt-3 space-y-1.5 border-t border-neutral-800 pt-2"
+      className="mt-3 space-y-1.5 border-t border-line pt-2"
     >
-      <div className="text-xs text-neutral-500">
+      <div className="text-xs text-muted">
         队列深度：{queueItems.length}
       </div>
       {queueItems.map((item) => {
@@ -1911,16 +1911,16 @@ function QueuePanel({
             key={item.queueItemId}
             role="group"
             aria-label={`队列项 ${item.position}：${agentName}`}
-            className="flex items-center gap-2 rounded bg-neutral-900 px-2 py-1 text-xs"
+            className="flex items-center gap-2 rounded border border-line bg-paper px-2 py-1 text-xs"
           >
-            <span className="w-5 text-neutral-600">{item.position}</span>
-            <span className="flex-1 text-neutral-300">{agentName}</span>
-            <span className="text-neutral-500">
+            <span className="w-5 text-muted">{item.position}</span>
+            <span className="flex-1 text-ink">{agentName}</span>
+            <span className="text-muted">
               {PRIORITY_LABEL[item.priority] ?? item.priority}
             </span>
             <button
               aria-label="上移"
-              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              className="text-muted hover:text-ink disabled:opacity-20"
               disabled={item.position <= 1}
               onClick={() => manage(item.queueItemId, 'move-earlier')}
             >
@@ -1928,7 +1928,7 @@ function QueuePanel({
             </button>
             <button
               aria-label="下移"
-              className="text-neutral-500 hover:text-neutral-200 disabled:opacity-20"
+              className="text-muted hover:text-ink disabled:opacity-20"
               disabled={item.position >= queueItems.length}
               onClick={() => manage(item.queueItemId, 'move-later')}
             >
@@ -1938,7 +1938,7 @@ function QueuePanel({
               aria-label={
                 canRaise ? '提高优先级' : '提高优先级（已是最高优先级）'
               }
-              className="text-neutral-500 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
               disabled={!canRaise}
               onClick={() => manage(item.queueItemId, 'raise-priority')}
             >
@@ -1948,7 +1948,7 @@ function QueuePanel({
               aria-label={
                 canLower ? '降低优先级' : '降低优先级（已是最低优先级）'
               }
-              className="text-neutral-500 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-20"
+              className="text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
               disabled={!canLower}
               onClick={() => manage(item.queueItemId, 'lower-priority')}
             >
@@ -1956,7 +1956,7 @@ function QueuePanel({
             </button>
             <button
               aria-label="取消排队"
-              className="text-red-400 hover:text-red-300"
+              className="text-danger hover:underline"
               onClick={() => manage(item.queueItemId, 'cancel')}
             >
               取消排队
@@ -1969,7 +1969,7 @@ function QueuePanel({
         aria-label="队列取消结果"
         aria-live="polite"
         aria-atomic="true"
-        className="text-xs text-neutral-400"
+        className="text-xs text-muted"
       >
         {latestCancellation && (
           <>

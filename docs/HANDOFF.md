@@ -58,6 +58,7 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | Phase 1 #2 全局 Connections/Provider Health/确认宿主 | ✅ [PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19) |
 | Phase 1 #9 Permission Center 与 Global Attention | ✅ 已合入 main |
 | Phase 1 #14 策略矩阵、Readiness 与降级安全状态 | ✅ 见 [Issue #14](https://github.com/pcliangx/agent-squad-hq/issues/14)；其余 #3–#16 按 frontier 推进 |
+| UI 视觉对齐 #65 设计令牌与应用壳 | ✅ issue-65 分支已交付（PR 评审中）：@theme 亮色令牌、`@layer components` 共享类、全局 StatusDot、38px 自定义 titlebar、82px 图标导航与 statusbar；context pane 属 #66 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |

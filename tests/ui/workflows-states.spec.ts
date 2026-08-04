@@ -117,7 +117,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       const list = page.getByRole('list', { name: 'Agent 列表' })
       await expect(list.getByText('cc_data')).toBeVisible()
       // Verify the active Run produces a permission request in the drawer.
-      await header().getByRole('button', { name: 'Global Attention' }).click()
+      await page.getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer.getByText('写入文件').first()).toBeVisible()
       await page.keyboard.press('Escape')
@@ -125,7 +125,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     })
 
     await recordedStep(evidence, 'visual: interrupted (Attention item)', async () => {
-      await header().getByRole('button', { name: 'Global Attention' }).click()
+      await page.getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()
       // "中断" attention kind badge for cc_etl's interrupted Run.
@@ -221,7 +221,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: Permission deny through Attention drawer', async () => {
-      await header().getByRole('button', { name: 'Global Attention' }).click()
+      await page.getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
 
       // The actionable permission request for cc_data has decision buttons.
@@ -247,7 +247,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: Attention item resolve (unconditional)', async () => {
-      await header().getByRole('button', { name: 'Global Attention' }).click()
+      await page.getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()
 

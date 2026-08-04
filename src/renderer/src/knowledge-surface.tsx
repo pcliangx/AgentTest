@@ -18,11 +18,11 @@ const STATE_LABEL: Record<KnowledgeContainerState, string> = {
 }
 
 const STATE_STYLE: Record<KnowledgeContainerState, string> = {
-  online: 'text-emerald-300',
-  offline: 'text-neutral-400',
-  cached: 'text-amber-300',
-  unavailable: 'text-red-300',
-  unconnected: 'text-neutral-400'
+  online: 'text-teal',
+  offline: 'text-muted',
+  cached: 'text-amber',
+  unavailable: 'text-danger',
+  unconnected: 'text-muted'
 }
 
 type KnowledgeFailureReason = CommandRejectionReason | 'transport-error'
@@ -120,8 +120,8 @@ function KnowledgeRecoveryButton({
     <button
       className={
         tone === 'warning'
-          ? 'mt-2 rounded bg-amber-900/70 px-2 py-1 text-xs text-amber-100 hover:bg-amber-800'
-          : 'mt-2 rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600'
+          ? 'mt-2 mini-button text-amber'
+          : 'mt-2 mini-button'
       }
       onClick={() => onRecover(resourceId)}
     >
@@ -132,7 +132,7 @@ function KnowledgeRecoveryButton({
 
 function KnowledgeIndependenceNote({
   project,
-  className = 'mt-1 text-neutral-500'
+  className = 'mt-1 text-muted'
 }: {
   project: ProjectViewModel
   className?: string
@@ -165,11 +165,11 @@ function KnowledgeStateFeedback({
   if (container.state === 'cached') {
     if (!hasValidKnowledgeCache(container)) {
       return (
-        <div className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200">
+        <div className="border-b border-line bg-danger-soft px-3 py-2 text-xs text-danger">
           <p>缓存元数据不完整，不能作为有效离线缓存展示。</p>
           <KnowledgeIndependenceNote
             project={project}
-            className="mt-1 text-red-300"
+            className="mt-1 text-danger"
           />
           <KnowledgeRecoveryButton
             resourceId={container.knowledgeResourceId}
@@ -180,9 +180,9 @@ function KnowledgeStateFeedback({
       )
     }
     return (
-      <div className="border-b border-amber-900/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+      <div className="border-b border-line bg-amber-soft px-3 py-2 text-xs text-amber">
         <p className="font-medium">离线缓存仅供只读，禁止编辑与写入。</p>
-        <p className="mt-1 text-amber-300">
+        <p className="mt-1 text-amber">
           缓存版本：{container.cache.version} · 缓存时间：
           {formatCachedAt(container.cache.cachedAt)}
         </p>
@@ -196,14 +196,14 @@ function KnowledgeStateFeedback({
   }
   if (container.state === 'unconnected') {
     return (
-      <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-3 text-sm text-neutral-300">
+      <div className="border-b border-line bg-raised px-3 py-3 text-sm text-ink">
         <p>尚未配置 Knowledge 主连接。</p>
         <KnowledgeIndependenceNote
           project={project}
-          className="mt-1 text-xs text-neutral-500"
+          className="mt-1 text-xs text-muted"
         />
         <button
-          className="mt-3 rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-100 hover:bg-neutral-600"
+          className="btn btn-primary mt-3"
           onClick={onOpenConnections}
         >
           前往全局 Connections
@@ -213,11 +213,11 @@ function KnowledgeStateFeedback({
   }
   if (container.state === 'unavailable') {
     return (
-      <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
+      <div className="border-b border-line bg-raised px-3 py-2 text-xs text-ink">
         <p>Knowledge 容器当前不可用。</p>
         <KnowledgeIndependenceNote project={project} />
         <button
-          className="mt-2 rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+          className="mini-button mt-2"
           onClick={onOpenConnections}
         >
           检查全局 Connections
@@ -227,7 +227,7 @@ function KnowledgeStateFeedback({
   }
 
   return (
-    <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
+    <div className="border-b border-line bg-raised px-3 py-2 text-xs text-ink">
       <p>实时内容离线，且没有可用缓存。</p>
       <KnowledgeIndependenceNote project={project} />
       <KnowledgeRecoveryButton
@@ -316,8 +316,8 @@ export function KnowledgeSurface({
   return (
     <section role="region" aria-label="Knowledge" className="space-y-4">
       <header>
-        <h2 className="text-lg font-medium text-neutral-100">Knowledge</h2>
-        <p className="text-xs text-neutral-500">
+        <h2 className="text-lg font-medium text-ink">Knowledge</h2>
+        <p className="text-xs text-muted">
           受控浏览器 chrome 与身份边界预览
         </p>
       </header>
@@ -325,25 +325,25 @@ export function KnowledgeSurface({
       {missingTargetId ? (
         <div
           role="alert"
-          className="rounded border border-red-900/70 bg-red-950/30 p-3 text-sm text-red-200"
+          className="rounded-lg border border-danger bg-danger-soft p-3 text-sm text-danger"
         >
           无法打开 Knowledge 目标：{missingTargetId} 不存在或已解除绑定。
         </div>
       ) : container ? (
         <article
           aria-label={`当前知识资源：${container.label ?? '未命名资源'}`}
-          className="overflow-hidden rounded border border-neutral-800 bg-neutral-950"
+          className="overflow-hidden rounded-[11px] border border-line bg-paper"
         >
-          <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-900 px-3 py-2">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
             <div>
-              <h3 className="text-sm font-medium text-neutral-100">
+              <h3 className="text-sm font-medium text-ink">
                 {container.label ?? 'Knowledge 连接状态'}
               </h3>
-              <span className="text-xs text-neutral-500">
+              <span className="text-xs text-muted">
                 受控浏览器容器
               </span>
               {container.knowledgeResourceId && (
-                <p className="text-[11px] text-neutral-600">
+                <p className="text-[11px] text-muted">
                   KnowledgeResourceId：{container.knowledgeResourceId}
                 </p>
               )}
@@ -358,13 +358,13 @@ export function KnowledgeSurface({
           <div
             role="toolbar"
             aria-label="Knowledge 浏览器 chrome"
-            className="flex items-center gap-2 border-b border-neutral-800 bg-neutral-900/70 px-3 py-2"
+            className="flex items-center gap-2 border-b border-line bg-raised px-3 py-2"
           >
             <button
               type="button"
               aria-label="后退"
               disabled
-              className="rounded border border-neutral-800 px-2 py-1 text-xs text-neutral-600"
+              className="rounded border border-line px-2 py-1 text-xs text-muted"
             >
               ←
             </button>
@@ -372,7 +372,7 @@ export function KnowledgeSurface({
               type="button"
               aria-label="前进"
               disabled
-              className="rounded border border-neutral-800 px-2 py-1 text-xs text-neutral-600"
+              className="rounded border border-line px-2 py-1 text-xs text-muted"
             >
               →
             </button>
@@ -380,7 +380,7 @@ export function KnowledgeSurface({
               type="button"
               aria-label="刷新"
               disabled
-              className="rounded border border-neutral-800 px-2 py-1 text-xs text-neutral-600"
+              className="rounded border border-line px-2 py-1 text-xs text-muted"
             >
               ↻
             </button>
@@ -388,7 +388,7 @@ export function KnowledgeSurface({
               aria-label="当前受控位置"
               readOnly
               value={`${container.label ?? '未命名知识资源'}（契约化 Mock）`}
-              className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs text-neutral-400 outline-none"
+              className="min-w-0 flex-1 rounded border border-line bg-paper px-2 py-1 text-xs text-muted"
             />
           </div>
 
@@ -408,7 +408,7 @@ export function KnowledgeSurface({
                 key={operationKind}
                 role="alert"
                 aria-label={`Knowledge ${operationCopy.failure}`}
-                className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200"
+                className="border-b border-line bg-danger-soft px-3 py-2 text-xs text-danger"
               >
                 <p>
                   {operationCopy.action}失败（
@@ -417,7 +417,7 @@ export function KnowledgeSurface({
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
-                    className="rounded bg-red-900/70 px-2 py-1 hover:bg-red-800"
+                    className="mini-button mini-button-danger"
                     onClick={() =>
                       runCommand(operationKind, commandFailure.retry)
                     }
@@ -425,7 +425,7 @@ export function KnowledgeSurface({
                     重试{operationCopy.action}
                   </button>
                   <button
-                    className="rounded bg-neutral-700 px-2 py-1 text-neutral-100 hover:bg-neutral-600"
+                    className="mini-button"
                     onClick={openConnections}
                   >
                     检查全局 Connections
@@ -436,8 +436,8 @@ export function KnowledgeSurface({
           })}
 
           <div className="grid gap-3 p-3 text-sm lg:grid-cols-2">
-            <div className="rounded bg-neutral-900 p-3 text-neutral-300">
-              <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
+            <div className="rounded-lg border border-line bg-paper p-3 text-ink">
+              <h4 className="section-label mb-2">
                 身份与连接
               </h4>
               <div className="space-y-1">
@@ -467,7 +467,7 @@ export function KnowledgeSurface({
               </div>
             </div>
 
-            <div className="rounded border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-200">
+            <div className="rounded-lg border border-line bg-amber-soft p-3 text-xs text-amber">
               <p>人工浏览器身份与 Connector 执行身份严格隔离。</p>
               <p className="mt-1">
                 两者不共享 Cookie、Token、浏览器 profile 或鉴权材料。
@@ -476,11 +476,11 @@ export function KnowledgeSurface({
           </div>
 
           {container.knowledgeResourceId && (
-            <div className="border-t border-neutral-800 p-3">
-              <h4 className="text-sm font-medium text-neutral-200">
+            <div className="border-t border-line p-3">
+              <h4 className="text-sm font-medium text-ink">
                 浏览器安全边界演练
               </h4>
-              <p className="mt-1 text-xs text-neutral-500">
+              <p className="mt-1 text-xs text-muted">
                 Phase 1 安全演练不创建 BrowserView、partition，不发起真实导航或网络请求。
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -494,7 +494,7 @@ export function KnowledgeSurface({
                 ).map(([action, label]) => (
                   <button
                     key={action}
-                    className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+                    className="mini-button"
                     onClick={() =>
                       runCommand('security', () =>
                         onPreviewSecurityEvent(
@@ -512,7 +512,7 @@ export function KnowledgeSurface({
                 <p
                   role="status"
                   aria-label="浏览器安全反馈"
-                  className="mt-3 rounded bg-neutral-900 px-3 py-2 text-xs text-neutral-300"
+                  className="mt-3 rounded-lg bg-raised px-3 py-2 text-xs text-ink"
                 >
                   {container.securityFeedback.message}
                 </p>
@@ -521,7 +521,7 @@ export function KnowledgeSurface({
           )}
         </article>
       ) : (
-        <p className="text-sm text-neutral-500">暂无 Knowledge 容器状态</p>
+        <p className="text-sm text-muted">暂无 Knowledge 容器状态</p>
       )}
     </section>
   )

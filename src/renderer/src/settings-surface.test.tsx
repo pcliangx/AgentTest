@@ -738,10 +738,9 @@ describe('Settings A — atomic apply', () => {
     await user.click(screen.getByRole('button', { name: '常规' }))
     expect(screen.getByText('当前：销售分析 v2（v3）')).toBeDefined()
     // Project name takes effect immediately — the switcher shows it.
+    // (#65: the switcher now lives in the shell header, not the nav rail.)
     expect(
-      within(
-        screen.getByRole('navigation', { name: '主导航' })
-      ).getByRole('combobox', { name: '切换项目' })
+      screen.getByRole('combobox', { name: '切换项目' })
     ).toHaveTextContent('销售分析 v2')
   })
 
@@ -896,9 +895,8 @@ describe('Settings A — project scoping', () => {
 
     // Switch to the other project: another project's drafts must not leak
     // into this summary, and there is nothing to apply here.
-    const nav = screen.getByRole('navigation', { name: '主导航' })
     await user.selectOptions(
-      within(nav).getByRole('combobox', { name: '切换项目' }),
+      screen.getByRole('combobox', { name: '切换项目' }),
       '用户研究'
     )
     await user.click(screen.getByRole('button', { name: '设置' }))
@@ -916,16 +914,15 @@ describe('Settings A — project scoping', () => {
 
     // Put BOTH projects on the Settings surface, so switching projects
     // reuses the mounted SettingsSurface instead of unmounting it.
-    const nav = screen.getByRole('navigation', { name: '主导航' })
     await user.selectOptions(
-      within(nav).getByRole('combobox', { name: '切换项目' }),
+      screen.getByRole('combobox', { name: '切换项目' }),
       '用户研究'
     )
     await user.click(screen.getByRole('button', { name: '设置' }))
 
     // Back to sales (still on Settings) and pick cc_sql again.
     await user.selectOptions(
-      within(nav).getByRole('combobox', { name: '切换项目' }),
+      screen.getByRole('combobox', { name: '切换项目' }),
       '销售数据分析'
     )
     await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
@@ -937,7 +934,7 @@ describe('Settings A — project scoping', () => {
     // Switch to research while both stay on Settings: the selection must
     // be rebuilt for the research project, never left dangling on cc_sql.
     await user.selectOptions(
-      within(nav).getByRole('combobox', { name: '切换项目' }),
+      screen.getByRole('combobox', { name: '切换项目' }),
       '用户研究'
     )
     await user.click(screen.getByRole('button', { name: 'Agent 实例' }))

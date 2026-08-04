@@ -262,7 +262,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     // Attention drawer dialog
     // ------------------------------------------------------------------
     await recordedStep(evidence, 'Attention drawer with permission requests and items', async () => {
-      const attentionBtn = header().getByRole('button', { name: 'Global Attention' })
+      const attentionBtn = page.getByRole('button', { name: 'Global Attention' })
       await attentionBtn.click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()

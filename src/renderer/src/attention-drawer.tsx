@@ -34,20 +34,17 @@ const DECISION_ACTIONS: Array<{
   {
     decision: 'deny',
     label: '拒绝',
-    className:
-      'rounded bg-red-950 px-2 py-0.5 text-xs text-red-300 hover:bg-red-900'
+    className: 'mini-button mini-button-danger'
   },
   {
     decision: 'allow-once',
     label: '允许一次',
-    className:
-      'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700'
+    className: 'mini-button'
   },
   {
     decision: 'allow-current-run',
     label: '允许当前 Run',
-    className:
-      'rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700'
+    className: 'mini-button'
   }
 ]
 
@@ -156,15 +153,15 @@ export function AttentionDrawer({
   return (
     <aside
       aria-label="Global Attention"
-      className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l border-neutral-800 bg-neutral-950"
+      className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l border-line bg-paper shadow-overlay"
     >
-      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
-        <h2 className="text-sm font-medium text-neutral-100">
+      <div className="flex items-center justify-between border-b border-line px-3 py-2">
+        <h2 className="text-sm font-medium text-ink">
           Global Attention
         </h2>
         <button
           ref={closeRef}
-          className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+          className="mini-button"
           onClick={onClose}
         >
           关闭
@@ -173,39 +170,39 @@ export function AttentionDrawer({
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
         <section aria-label="权限请求" className="space-y-2">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <h3 className="section-label">
             权限请求
           </h3>
           {policyError && (
-            <p role="alert" className="text-xs text-red-300">
+            <p role="alert" className="text-xs text-danger">
               {policyError}
             </p>
           )}
           {snapshot.permissionRequests.length === 0 ? (
-            <p className="text-xs text-neutral-600">暂无待处理的权限请求</p>
+            <p className="text-xs text-muted">暂无待处理的权限请求</p>
           ) : (
             <ul className="space-y-2">
               {snapshot.permissionRequests.map((request) => (
                 <li key={request.requestId}>
                   <section
                     aria-label={`权限请求：${agentName(request.agentInstanceId)} ${request.action}`}
-                    className="space-y-1.5 rounded bg-neutral-900 px-3 py-2"
+                    className="space-y-1.5 rounded-lg border border-line bg-paper px-3 py-2"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-neutral-100">
+                      <span className="text-sm text-ink">
                         {agentName(request.agentInstanceId)} · {request.action}
                       </span>
-                      <span className="text-[10px] text-neutral-500">
+                      <span className="text-[10px] text-muted">
                         {projectName(request.projectId)}
                       </span>
                     </div>
-                    <p className="text-xs text-neutral-400">
+                    <p className="text-xs text-muted">
                       范围：{request.scope}
                     </p>
-                    <p className="text-xs text-neutral-400">
+                    <p className="text-xs text-muted">
                       原因：{request.reason}
                     </p>
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-xs text-muted">
                       默认拒绝截止：
                       {new Date(request.expiresAt).toLocaleString()}
                     </p>
@@ -223,12 +220,12 @@ export function AttentionDrawer({
                       ))}
                     </div>
                     {answerError?.requestId === request.requestId && (
-                      <p role="alert" className="text-xs text-red-300">
+                      <p role="alert" className="text-xs text-danger">
                         {answerError.message}
                       </p>
                     )}
                     <button
-                      className="block text-left text-xs text-blue-400 hover:text-blue-300"
+                      className="block text-left text-xs text-brand hover:underline"
                       onClick={() => void managePolicy(request.projectId)}
                     >
                       在 Settings 中管理永久策略
@@ -238,42 +235,42 @@ export function AttentionDrawer({
               ))}
             </ul>
           )}
-          <p className="text-[11px] text-neutral-600">
+          <p className="text-[11px] text-muted">
             演示模式：决定仅更新 mock 状态，未连接真实 PermissionBroker。
           </p>
         </section>
 
         <section aria-label="关注事项" className="space-y-2">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <h3 className="section-label">
             关注事项
           </h3>
           {resolveError && (
-            <p role="alert" className="text-xs text-red-300">
+            <p role="alert" className="text-xs text-danger">
               {resolveError}
             </p>
           )}
           {openItems.length === 0 ? (
-            <p className="text-xs text-neutral-600">暂无待处理的关注项</p>
+            <p className="text-xs text-muted">暂无待处理的关注项</p>
           ) : (
             <ul className="space-y-2">
               {openItems.map((item) => (
                 <li
                   key={item.attentionItemId}
-                  className="space-y-1 rounded bg-neutral-900 px-3 py-2"
+                  className="space-y-1 rounded-lg border border-line bg-paper px-3 py-2"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
+                    <span className="chip">
                       {ATTENTION_KIND_LABEL[item.kind]}
                     </span>
-                    <span className="text-[10px] text-neutral-500">
+                    <span className="text-[10px] text-muted">
                       {projectName(item.target.projectId)}
                     </span>
                   </div>
-                  <p className="text-sm text-neutral-200">{item.title}</p>
+                  <p className="text-sm text-ink">{item.title}</p>
                   <div className="flex gap-1.5">
                     <button
                       aria-label={`打开：${item.title}`}
-                      className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+                      className="mini-button"
                       onClick={() => onOpenTarget(item.target)}
                     >
                       打开
@@ -284,7 +281,7 @@ export function AttentionDrawer({
                     {item.kind !== 'permission-requested' && (
                       <button
                         aria-label={`标记已处理：${item.title}`}
-                        className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
+                        className="mini-button"
                         onClick={() => void resolveItem(item.attentionItemId)}
                       >
                         标记已处理

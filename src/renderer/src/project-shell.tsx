@@ -202,11 +202,36 @@ const SURFACES: Array<{ surface: ProjectSurface; label: string }> = [
   { surface: 'settings', label: '设置' }
 ]
 
+/**
+ * Icon-nav order of the frozen A command-center shell (#65): six workspace
+ * surfaces in the rail body; Attention and Settings sit at the rail bottom.
+ * Glyphs are decorative only — accessible names stay the Chinese labels.
+ */
+const NAV_ITEMS: Array<{
+  surface: ProjectSurface
+  label: string
+  glyph: string
+}> = [
+  { surface: 'overview', label: '概览', glyph: '⌂' },
+  { surface: 'agents', label: 'Agent', glyph: '⌘' },
+  { surface: 'tasks', label: '任务', glyph: '✓' },
+  { surface: 'knowledge', label: '知识', glyph: '◇' },
+  { surface: 'handoffs', label: '交接', glyph: '⇄' },
+  { surface: 'activity', label: '活动', glyph: '≋' }
+]
+
 const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
   { surface: 'connections', label: '连接' },
   { surface: 'provider-health', label: 'Provider 健康' },
   { surface: 'global-settings', label: '全局设置' }
 ]
+
+/**
+ * The frameless titlebar leaves room for the macOS traffic lights only on
+ * macOS (main uses `titleBarStyle: 'hiddenInset'` there and keeps the
+ * native frame elsewhere). jsdom and non-mac builds get no spacer.
+ */
+const RESERVE_TRAFFIC_LIGHT_AREA = navigator.userAgent.includes('Mac OS X')
 
 const ROOT_LABEL: Record<string, string> = {
   available: '可用',
@@ -424,7 +449,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   if (!snapshot) {
     return (
-      <div className="flex h-full items-center justify-center bg-neutral-950 text-neutral-500">
+      <div className="flex h-full items-center justify-center bg-wash text-muted">
         加载中…
       </div>
     )
@@ -714,14 +739,109 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     return result
   }
 
+  /**
+   * Icon-rail item of the frozen A shell (#65). Glyphs are decorative; the
+   * accessible name stays the Chinese label so existing queries keep
+   * matching. Disabled only when no Project exists at all.
+   */
+  const renderNavItem = (
+    surface: ProjectSurface,
+    label: string,
+    glyph: string
+  ) => {
+    const isActive = !inGlobalView && project?.currentSurface === surface
+    return (
+      <button
+        key={surface}
+        aria-current={isActive ? 'page' : undefined}
+        disabled={!project}
+        className={`grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
+          isActive
+            ? 'bg-nav-active text-nav'
+            : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
+        }`}
+        onClick={() => {
+          if (!project) return
+          // The permissions deep link is one-shot: manual surface navigation
+          // consumes it so later Settings visits open on the default section.
+          void sendExplicitNavigation(
+            () => navigate(project.projectId, surface),
+            () => setPermissionsNavNonce(0)
+          )
+        }}
+      >
+        <span
+          aria-hidden="true"
+          className="grid h-[22px] w-[22px] place-items-center text-[15px] font-bold"
+        >
+          {glyph}
+        </span>
+        <span>{label}</span>
+      </button>
+    )
+  }
+
   return (
-    <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
+    <div className="flex h-full flex-col bg-paper text-ink">
+      {/* Custom 38px titlebar (#65): drag region, window title, global run
+          status and the ⌘K placeholder (visual only until the command
+          palette ships). `Agent Squad HQ` stays its own text node. */}
+      <header className="titlebar flex h-[38px] shrink-0 items-center border-b border-line bg-raised">
+        {RESERVE_TRAFFIC_LIGHT_AREA && (
+          <div aria-hidden="true" className="h-full w-[72px] shrink-0" />
+        )}
+        <div className="ml-[18px] flex min-w-0 items-baseline gap-1.5 text-[11px] text-muted">
+          <strong className="shrink-0 font-semibold text-ink">
+            Agent Squad HQ
+          </strong>
+          {project && <span className="truncate">/ {project.name}</span>}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-3 pr-3 text-[11px] text-muted">
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden="true" className="live-dot" />
+            后台 {snapshot.global.concurrency.activeGlobal} 个 Run
+          </span>
+          <span
+            className="rounded-md border border-line bg-paper px-1.5 py-0.5 text-[10px] text-muted"
+            title="命令面板即将推出"
+          >
+            ⌘K 命令
+          </span>
+        </div>
+      </header>
+
+      {/* Window-level entries keep their pre-#65 positions and accessible
+          names (连接 / Provider 健康 / 全局设置 / Global Attention /
+          派发给 Agent / 关闭窗口 / 退出). */}
       <header
         inert={showPicker ? true : undefined}
-        className="flex items-center justify-between border-b border-neutral-800 px-4 py-2 text-sm"
+        className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-paper px-3"
       >
-        <div className="flex items-center gap-3">
-          <span className="font-medium">Agent Squad HQ</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <select
+            aria-label="切换项目"
+            className="h-[29px] max-w-44 rounded-lg border border-line bg-paper px-2 text-[11px] text-ink"
+            value={project?.projectId ?? ''}
+            disabled={!project}
+            onChange={(e) => {
+              const targetId = id(e.target.value, 'ProjectId')
+              const target = snapshot.projects.find(
+                (p) => p.projectId === targetId
+              )
+              if (!target) return
+              void sendExplicitNavigation(
+                () => navigate(targetId, target.currentSurface),
+                () => setPermissionsNavNonce(0)
+              )
+            }}
+          >
+            {snapshot.projects.length === 0 && <option value="" />}
+            {snapshot.projects.map((p) => (
+              <option key={p.projectId} value={p.projectId}>
+                {p.name}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1">
             {GLOBAL_ENTRIES.map(({ surface, label }) => {
               const isActive =
@@ -730,10 +850,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 <button
                   key={surface}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                  className={`h-[29px] rounded-lg px-2 text-[11px] transition-colors ${
                     isActive
-                      ? 'bg-neutral-700 text-neutral-100'
-                      : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                      ? 'bg-wash font-semibold text-ink'
+                      : 'text-muted hover:bg-wash hover:text-ink'
                   }`}
                   onClick={() => {
                     void sendExplicitNavigation(() => navigateGlobal(surface))
@@ -746,7 +866,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           </div>
           {inGlobalView && project && (
             <button
-              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+              className="mini-button"
               onClick={() => {
                 void sendExplicitNavigation(() =>
                   navigate(project.projectId, project.currentSurface)
@@ -757,17 +877,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            aria-label="Global Attention"
-            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
-            onClick={() => setShowAttention(true)}
-          >
-            关注 {snapshot.global.attentionCount}
-          </button>
+        <div className="flex shrink-0 items-center gap-2">
           {project && (
             <button
-              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+              className="btn btn-primary min-h-[29px]"
               onClick={() => {
                 setPickerTask(null)
                 setShowPicker(true)
@@ -777,18 +890,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </button>
           )}
           {!inGlobalView && connection && (
-            <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-              {connection.label}
-            </span>
+            <span className="chip">{connection.label}</span>
           )}
           <button
-            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
+            className="mini-button"
             onClick={() => setShowCloseNotice(true)}
           >
             关闭窗口
           </button>
           <button
-            className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300 hover:bg-red-800"
+            className="btn btn-danger min-h-[29px]"
             onClick={() => {
               void sendCommand({ kind: 'request-quit-preview' })
             }}
@@ -798,11 +909,49 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         </div>
       </header>
 
-      {inGlobalView ? (
-        <main
-          inert={showPicker ? true : undefined}
-          className="min-h-0 flex-1 overflow-auto p-4"
+      <div
+        inert={showPicker ? true : undefined}
+        className="flex min-h-0 flex-1"
+      >
+        {/* 82px icon rail of the frozen A shell (#65): brand mark, six
+            workspace surfaces, then Attention and Settings at the bottom. */}
+        <nav
+          aria-label="主导航"
+          className="flex w-[82px] shrink-0 flex-col items-center gap-[5px] overflow-y-auto overflow-x-hidden bg-nav px-2 pb-2.5 pt-3"
         >
+          <div
+            aria-hidden="true"
+            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[11px] bg-brand text-[11px] font-extrabold tracking-[0.06em] text-paper"
+          >
+            HQ
+          </div>
+          <div
+            aria-hidden="true"
+            className="my-1 h-px w-[30px] shrink-0 bg-nav-line"
+          />
+          {NAV_ITEMS.map((item) =>
+            renderNavItem(item.surface, item.label, item.glyph)
+          )}
+          <div aria-hidden="true" className="flex-1" />
+          <button
+            aria-label="Global Attention"
+            className={`grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
+              showAttention
+                ? 'bg-nav-active text-nav'
+                : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
+            }`}
+            onClick={() => setShowAttention(true)}
+          >
+            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[9px] font-bold text-paper">
+              {snapshot.global.attentionCount}
+            </span>
+            <span>关注</span>
+          </button>
+          {renderNavItem('settings', '设置', '⚙')}
+        </nav>
+
+        {inGlobalView ? (
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
           {snapshot.activeGlobalSurface === 'connections' && (
             <ConnectionsSurface
               connections={snapshot.global.connections}
@@ -822,77 +971,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {snapshot.activeGlobalSurface === 'global-settings' && (
             <GlobalSettingsSurface />
           )}
-        </main>
-      ) : project ? (
-        <div
-          inert={showPicker ? true : undefined}
-          className="flex min-h-0 flex-1"
-        >
-          <nav
-            className="w-48 shrink-0 border-r border-neutral-800 p-2"
-            aria-label="主导航"
-          >
-            <div className="mb-3">
-              <div className="text-[10px] uppercase tracking-wide text-neutral-600">
-                当前项目
-              </div>
-              <select
-                aria-label="切换项目"
-                className="mt-0.5 w-full rounded bg-neutral-900 px-1.5 py-1 text-sm text-neutral-200 outline-none"
-                value={project.projectId}
-                onChange={(e) => {
-                  const targetId = id(e.target.value, 'ProjectId')
-                  const target = snapshot.projects.find(
-                    (p) => p.projectId === targetId
-                  )
-                  void sendExplicitNavigation(
-                    () =>
-                      navigate(
-                        targetId,
-                        target?.currentSurface ?? 'overview'
-                      ),
-                    () => setPermissionsNavNonce(0)
-                  )
-                }}
-              >
-                {snapshot.projects.map((p) => (
-                  <option key={p.projectId} value={p.projectId}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-0.5">
-              {SURFACES.map(({ surface, label }) => (
-                <button
-                  key={surface}
-                  className={`block w-full rounded px-2 py-1 text-left text-sm transition-colors ${
-                    project.currentSurface === surface
-                      ? 'bg-neutral-800 text-neutral-100'
-                      : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
-                  }`}
-                  onClick={() => {
-                    // The permissions deep link is one-shot: manual surface
-                    // navigation consumes it so later Settings visits open
-                    // on the default section again.
-                    void sendExplicitNavigation(
-                      () => navigate(project.projectId, surface),
-                      () => setPermissionsNavNonce(0)
-                    )
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </nav>
-
-          <main className="min-h-0 min-w-0 flex-1 overflow-auto p-4">
+          </main>
+        ) : project ? (
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
             {deepLinkNotice && (
               <div
                 role="alert"
-                className="mb-3 rounded bg-red-950/60 px-3 py-1.5 text-xs text-red-300"
+                className="mb-3 rounded-lg border border-danger bg-danger-soft px-3 py-1.5 text-xs text-danger"
               >
                 {deepLinkNotice}
               </div>
@@ -902,7 +987,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               retainedDeepLink.projectId === project.projectId && (
                 <div
                   role="status"
-                  className="mb-3 rounded bg-neutral-900 px-3 py-1.5 text-xs text-neutral-400"
+                  className="mb-3 rounded-lg border border-line bg-raised px-3 py-1.5 text-xs text-muted"
                 >
                   已保留目标：{describeAttentionTarget(retainedDeepLink)}
                   （Run 详情尚未交付，已打开所属 Agent 工作区）
@@ -1024,15 +1109,27 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 />
               )}
           </main>
-        </div>
-      ) : (
-        <div
-          inert={showPicker ? true : undefined}
-          className="flex min-h-0 flex-1 items-center justify-center bg-neutral-950 text-neutral-500"
-        >
-          没有可用的 Project
-        </div>
-      )}
+        ) : (
+          <main className="flex min-h-0 flex-1 items-center justify-center bg-wash text-muted">
+            没有可用的 Project
+          </main>
+        )}
+      </div>
+
+      {/* Shell footer of the frozen baseline (#65): root, branch, layout
+          auto-save note and the Project/Global run capacity line. Capacity
+          and counts come from the contract ViewModel — never hard-coded. */}
+      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[9px] text-muted">
+        <span className="max-w-[38%] truncate">{project?.rootPath ?? '—'}</span>
+        <span>{project?.currentBranch ?? '—'}</span>
+        <span>布局自动保存</span>
+        <span className="ml-auto shrink-0">
+          Project {project?.activeRunCount ?? 0} /{' '}
+          {snapshot.global.concurrency.projectLimit} · Global{' '}
+          {snapshot.global.concurrency.activeGlobal} /{' '}
+          {snapshot.global.concurrency.globalLimit}
+        </span>
+      </footer>
 
       {showPicker && project && (
         <DispatchPicker
@@ -1121,26 +1218,26 @@ function OverviewSurface({
 }) {
   return (
     <section role="region" aria-label="项目概览" className="space-y-4">
-      <h2 className="text-lg font-medium text-neutral-100">{project.name}</h2>
+      <h2 className="text-lg font-medium text-ink">{project.name}</h2>
 
       <div className="flex gap-6 text-sm">
         <div>
-          <span className="text-neutral-500">根目录</span>
-          <span className="ml-1.5 text-neutral-200">
+          <span className="text-muted">根目录</span>
+          <span className="ml-1.5 text-ink">
             {ROOT_LABEL[project.rootAvailability]}
           </span>
         </div>
         <div>
-          <span className="text-neutral-500">Git</span>
-          <span className="ml-1.5 text-neutral-200">
+          <span className="text-muted">Git</span>
+          <span className="ml-1.5 text-ink">
             {GIT_LABEL[project.repositoryReadiness]}
           </span>
         </div>
       </div>
 
       <div className="text-sm">
-        <span className="text-neutral-500">连接</span>
-        <span className="ml-1.5 text-neutral-200">
+        <span className="text-muted">连接</span>
+        <span className="ml-1.5 text-ink">
           {connectionLabel ?? '未连接'}
         </span>
       </div>
@@ -1153,19 +1250,16 @@ function OverviewSurface({
       </div>
 
       <div className="flex gap-2">
-        <button
-          className="rounded bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700"
-          onClick={onDispatch}
-        >
+        <button className="btn" onClick={onDispatch}>
           派发给 Agent
         </button>
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm text-neutral-400">最近活动</h3>
+        <h3 className="mb-2 text-sm text-muted">最近活动</h3>
         <ul className="space-y-1">
           {activity.map((entry) => (
-            <li key={entry.activityId} className="text-xs text-neutral-400">
+            <li key={entry.activityId} className="text-xs text-muted">
               {entry.summary}
             </li>
           ))}
@@ -1177,9 +1271,9 @@ function OverviewSurface({
 
 function StatCard({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded bg-neutral-900 px-3 py-2">
-      <span className="text-xl text-neutral-100">{value}</span>
-      <span className="ml-1 text-xs text-neutral-500">{label}</span>
+    <div className="rounded-lg border border-line bg-paper px-3 py-2">
+      <span className="text-xl text-ink">{value}</span>
+      <span className="ml-1 text-xs text-muted">{label}</span>
     </div>
   )
 }
@@ -1187,18 +1281,18 @@ function StatCard({ value, label }: { value: number; label: string }) {
 function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
   return (
     <section role="region" aria-label="活动" className="space-y-2">
-      <h2 className="mb-3 text-lg text-neutral-200">活动</h2>
+      <h2 className="mb-3 text-lg text-ink">活动</h2>
       {activity.length === 0 ? (
-        <p className="text-sm text-neutral-500">暂无活动记录</p>
+        <p className="text-sm text-muted">暂无活动记录</p>
       ) : (
         <ul className="space-y-2">
           {activity.map((entry) => (
             <li
               key={entry.activityId}
-              className="border-b border-neutral-800 pb-2 text-sm"
+              className="border-b border-line pb-2 text-sm"
             >
-              <div className="text-neutral-300">{entry.summary}</div>
-              <div className="mt-0.5 text-xs text-neutral-600">
+              <div className="text-ink">{entry.summary}</div>
+              <div className="mt-0.5 text-xs text-muted">
                 {activityKindLabel(entry.kind)}
               </div>
             </li>
@@ -1219,9 +1313,9 @@ function PlaceholderSurface({
   const label = SURFACES.find((s) => s.surface === surface)?.label ?? surface
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2">
-      <p className="text-sm text-neutral-500">{label} 工作面尚未实现</p>
+      <p className="text-sm text-muted">{label} 工作面尚未实现</p>
       {retainedTarget && (
-        <p className="text-xs text-neutral-600">
+        <p className="text-xs text-muted">
           已保留目标：{describeAttentionTarget(retainedTarget)}
           （详情尚未交付）
         </p>
@@ -1261,24 +1355,24 @@ function ConnectionsSurface({
 }) {
   return (
     <section role="region" aria-label="全局连接" tabIndex={-1} className="space-y-3">
-      <h2 className="text-lg font-medium text-neutral-100">连接</h2>
+      <h2 className="text-lg font-medium text-ink">连接</h2>
       {connections.length === 0 ? (
-        <p className="text-sm text-neutral-500">暂无连接</p>
+        <p className="text-sm text-muted">暂无连接</p>
       ) : (
         <ul className="space-y-2">
           {connections.map((conn) => (
             <li
               key={conn.connectionId}
-              className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
+              className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"
             >
               <div className="flex items-center gap-3">
-                <span className="text-sm text-neutral-200">{conn.label}</span>
-                <span className="text-xs text-neutral-500">
+                <span className="text-sm text-ink">{conn.label}</span>
+                <span className="text-xs text-muted">
                   {CONNECTION_STATUS_LABEL[conn.status] ?? conn.status}
                 </span>
               </div>
               <button
-                className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
+                className="mini-button mini-button-danger"
                 onClick={() => onDelete(conn.connectionId)}
               >
                 删除
@@ -1300,25 +1394,25 @@ function ProviderHealthSurface({
 }) {
   return (
     <section role="region" aria-label="Provider 健康" className="space-y-3">
-      <h2 className="text-lg font-medium text-neutral-100">Provider 健康</h2>
+      <h2 className="text-lg font-medium text-ink">Provider 健康</h2>
       <ul className="space-y-2">
         {providers.map((p) => (
           <li
             key={p.providerId}
-            className="flex items-center justify-between rounded bg-neutral-900 px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"
           >
-            <span className="text-sm text-neutral-200">{p.displayName}</span>
+            <span className="text-sm text-ink">{p.displayName}</span>
             <div className="flex items-center gap-2">
               <span
                 className={`text-xs ${
-                  p.status === 'ready' ? 'text-emerald-400' : 'text-amber-400'
+                  p.status === 'ready' ? 'text-teal' : 'text-amber'
                 }`}
               >
                 {p.status === 'ready' ? '可用' : '已阻断'}
               </span>
               {p.status === 'blocked' && (
                 <button
-                  className="text-xs text-blue-400 hover:text-blue-300"
+                  className="text-xs text-brand hover:text-brand-ink"
                   onClick={() => onRecovery(p.providerId)}
                 >
                   恢复
@@ -1335,8 +1429,8 @@ function ProviderHealthSurface({
 function GlobalSettingsSurface() {
   return (
     <section role="region" aria-label="全局设置" className="space-y-3">
-      <h2 className="text-lg font-medium text-neutral-100">全局设置</h2>
-      <p className="text-sm text-neutral-500">全局设置工作面尚未实现</p>
+      <h2 className="text-lg font-medium text-ink">全局设置</h2>
+      <p className="text-sm text-muted">全局设置工作面尚未实现</p>
     </section>
   )
 }
@@ -1395,15 +1489,15 @@ function HandoffsSurface({
   if (handoffs.length === 0) {
     return (
       <section role="region" aria-label="交接" className="space-y-3">
-        <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
-        <p className="text-sm text-neutral-500">暂无交接记录</p>
+        <h2 className="mb-3 text-lg text-ink">交接</h2>
+        <p className="text-sm text-muted">暂无交接记录</p>
       </section>
     )
   }
 
   return (
     <section role="region" aria-label="交接" className="space-y-3">
-      <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
+      <h2 className="mb-3 text-lg text-ink">交接</h2>
       <ul className="space-y-3">
         {handoffs.map((h) => {
           const isFocused = focusHandoffId === h.handoffId
@@ -1411,77 +1505,77 @@ function HandoffsSurface({
             <li
               key={h.handoffId}
               ref={isFocused ? focusRef : undefined}
-              className={`rounded-lg p-4 ${
+              className={`rounded-[11px] border p-4 ${
                 isFocused
-                  ? 'bg-neutral-800 ring-2 ring-blue-600'
-                  : 'bg-neutral-900'
+                  ? 'border-brand bg-brand-soft ring-2 ring-brand'
+                  : 'border-line bg-paper'
               }`}
             >
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span
                   className={`rounded px-1.5 py-0.5 text-xs ${
                     h.completeness === 'complete'
-                      ? 'bg-emerald-950 text-emerald-400'
-                      : 'bg-amber-950 text-amber-400'
+                      ? 'bg-teal-soft text-teal'
+                      : 'bg-amber-soft text-amber'
                   }`}
                 >
                   {COMPLETENESS_LABEL[h.completeness]}
                 </span>
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-muted">
                   {IMPORT_STATE_LABEL[h.importState]}
                 </span>
                 {h.provenance.origin === 'cross-project' && (
-                  <span className="rounded bg-blue-950 px-1.5 py-0.5 text-xs text-blue-400">
+                  <span className="rounded bg-brand-soft px-1.5 py-0.5 text-xs text-brand-ink">
                     跨项目（来自 {h.provenance.sourceProjectName}）
                   </span>
                 )}
                 {h.provenance.origin === 'quit-snapshot' && (
-                  <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
+                  <span className="rounded bg-danger-soft px-1.5 py-0.5 text-xs text-danger">
                     退出快照
                   </span>
                 )}
                 {h.provenance.origin === 'imported' && (
-                  <span className="rounded bg-purple-950 px-1.5 py-0.5 text-xs text-purple-400">
+                  <span className="rounded bg-brand-soft px-1.5 py-0.5 text-xs text-brand-ink">
                     导入
                   </span>
                 )}
-                <span className="font-mono text-[10px] text-neutral-600">
+                <span className="font-mono text-[10px] text-muted">
                   {h.handoffId}
                 </span>
-                <span className="text-[10px] text-neutral-600">
+                <span className="text-[10px] text-muted">
                   {PROVENANCE_ORIGIN_LABEL[h.provenance.origin]}
                   {new Date(h.provenance.createdAt).toLocaleString()}
                 </span>
               </div>
-              <p className="text-sm text-neutral-200">{h.goal}</p>
-              <p className="mt-1 text-xs text-neutral-500">{h.summary}</p>
-              <dl className="mt-2 space-y-1 text-xs text-neutral-400">
+              <p className="text-sm text-ink">{h.goal}</p>
+              <p className="mt-1 text-xs text-muted">{h.summary}</p>
+              <dl className="mt-2 space-y-1 text-xs text-ink">
                 <div>
-                  <dt className="inline text-neutral-600">来源：</dt>
+                  <dt className="inline text-muted">来源：</dt>
                   <dd className="inline">{h.source.agentName}</dd>
                   {h.target && (
                     <>
-                      <dt className="ml-2 inline text-neutral-600">目标：</dt>
+                      <dt className="ml-2 inline text-muted">目标：</dt>
                       <dd className="inline">{h.target.agentName}</dd>
                     </>
                   )}
                 </div>
                 <div>
-                  <dt className="inline text-neutral-600">基线：</dt>
+                  <dt className="inline text-muted">基线：</dt>
                   <dd className="inline font-mono">{h.baseCommit}</dd>
-                  <dt className="ml-3 text-neutral-600">验证：</dt>
+                  <dt className="ml-3 inline text-muted">验证：</dt>
                   <dd className="inline">
                     {VALIDATION_LABEL[h.validation.status]}
                     {h.validation.message ? `（${h.validation.message}）` : ''}
                   </dd>
                 </div>
                 <div>
-                  <dt className="inline text-neutral-600">改动：</dt>
+                  <dt className="inline text-muted">改动：</dt>
                   <dd className="inline">{h.changeSummary}</dd>
                 </div>
                 {h.artifacts.length > 0 && (
                   <div>
-                    <dt className="inline text-neutral-600">产物：</dt>
+                    <dt className="inline text-muted">产物：</dt>
                     <dd className="inline">
                       {h.artifacts
                         .map(
@@ -1493,14 +1587,14 @@ function HandoffsSurface({
                   </div>
                 )}
                 {h.incompleteReason && (
-                  <div className="text-amber-400">
-                    <dt className="inline text-amber-600">不完整原因：</dt>
+                  <div className="text-amber">
+                    <dt className="inline text-amber">不完整原因：</dt>
                     <dd className="inline">{h.incompleteReason}</dd>
                   </div>
                 )}
                 {h.recoveryActions.length > 0 && (
                   <div>
-                    <dt className="inline text-neutral-600">恢复动作：</dt>
+                    <dt className="inline text-muted">恢复动作：</dt>
                     <dd className="inline">{h.recoveryActions.join('；')}</dd>
                   </div>
                 )}
@@ -1555,10 +1649,10 @@ function HandoffImportActions({
     (a) => a.runtimeState !== 'unavailable' && a.runtimeState !== 'archived'
   )
   return (
-    <div className="mt-3 flex items-center gap-2 border-t border-neutral-800 pt-2">
+    <div className="mt-3 flex items-center gap-2 border-t border-line pt-2">
       <select
         aria-label={`导入目标 Agent ${handoffId}`}
-        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
+        className="rounded-lg border border-line bg-paper px-2 py-1 text-xs text-ink"
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
       >
@@ -1570,7 +1664,7 @@ function HandoffImportActions({
         ))}
       </select>
       <button
-        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        className="mini-button"
         disabled={!targetId}
         onClick={() =>
           onImport(id(targetId, 'AgentInstanceId'), 'inspect-only')
@@ -1579,7 +1673,7 @@ function HandoffImportActions({
         仅导入检查
       </button>
       <button
-        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        className="mini-button"
         disabled={!targetId}
         onClick={() =>
           onImport(id(targetId, 'AgentInstanceId'), 'request-execute')
@@ -1602,26 +1696,22 @@ function CloseWindowNotice({ onClose }: { onClose: () => void }) {
   }, [])
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-backdrop"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="关闭窗口"
-        className="w-full max-w-sm space-y-3 rounded-lg bg-neutral-900 p-5"
+        className="w-full max-w-sm space-y-3 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-medium text-neutral-100">关闭窗口</h3>
-        <p className="text-sm text-neutral-400">
+        <h3 className="text-base font-medium text-ink">关闭窗口</h3>
+        <p className="text-sm text-muted">
           关闭窗口不会停止后台 Run、Terminal 或 Agent。后台工作将继续运行。
         </p>
         <div className="flex justify-end pt-2">
-          <button
-            ref={noticeRef}
-            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
-            onClick={onClose}
-          >
+          <button ref={noticeRef} className="btn" onClick={onClose}>
             知道了
           </button>
         </div>
@@ -1665,33 +1755,33 @@ function QuitPreviewDialog({
   }, [onAction])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop">
       <div
         role="dialog"
         aria-modal="true"
         aria-label="退出 Agent Squad HQ"
-        className="w-full max-w-lg space-y-4 rounded-lg bg-neutral-900 p-5"
+        className="w-full max-w-lg space-y-4 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
       >
-        <h3 className="text-base font-medium text-neutral-100">
+        <h3 className="text-base font-medium text-ink">
           退出 Agent Squad HQ
         </h3>
 
         {preview!.phase === 'resolve-active-work' ? (
-          <p className="text-sm text-neutral-400">
+          <p className="text-sm text-muted">
             请先等待或停止活动 Run 与 Terminal，再生成最终 Handoff。
           </p>
         ) : (
-          <p className="text-sm text-neutral-400">
+          <p className="text-sm text-muted">
             活动执行已处理。请为 handoff-dirty Agent 生成最终 Handoff。
           </p>
         )}
 
         {preview!.activeRuns.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">
+            <h4 className="mb-1 text-sm text-muted">
               活动 Run（{preview!.activeRuns.length}）
             </h4>
-            <ul className="space-y-1 text-xs text-neutral-500">
+            <ul className="space-y-1 text-xs text-muted">
               {preview!.activeRuns.map((run) => (
                 <li key={run.runId}>
                   {run.agentName}（{run.runtimeState}）
@@ -1703,10 +1793,10 @@ function QuitPreviewDialog({
 
         {preview!.activeTerminals.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">
+            <h4 className="mb-1 text-sm text-muted">
               活动 Terminal（{preview!.activeTerminals.length}）
             </h4>
-            <ul className="space-y-1 text-xs text-neutral-500">
+            <ul className="space-y-1 text-xs text-muted">
               {preview!.activeTerminals.map((term) => (
                 <li key={term.agentInstanceId}>{term.agentName}</li>
               ))}
@@ -1716,10 +1806,10 @@ function QuitPreviewDialog({
 
         {preview!.handoffDirtyAgents.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">
+            <h4 className="mb-1 text-sm text-muted">
               需最终 Handoff 的 Agent（{preview!.handoffDirtyAgents.length}）
             </h4>
-            <ul className="space-y-1 text-xs text-neutral-500">
+            <ul className="space-y-1 text-xs text-muted">
               {preview!.handoffDirtyAgents.map((agent) => (
                 <li key={agent.agentInstanceId}>
                   {agent.agentName}：{agent.changeSummary}
@@ -1732,7 +1822,7 @@ function QuitPreviewDialog({
         {preview!.activeRuns.length === 0 &&
           preview!.activeTerminals.length === 0 &&
           preview!.handoffDirtyAgents.length === 0 && (
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-muted">
               没有活动 Run、Terminal 或待交接状态，可以安全退出。
             </p>
           )}
@@ -1740,7 +1830,7 @@ function QuitPreviewDialog({
         <div className="flex flex-wrap justify-end gap-2 pt-2">
           <button
             ref={quitRef}
-            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            className="btn"
             onClick={() => onAction('wait-for-runs')}
           >
             {preview!.phase === 'resolve-active-work'
@@ -1748,22 +1838,19 @@ function QuitPreviewDialog({
               : '取消退出'}
           </button>
           {preview!.phase === 'resolve-active-work' ? (
-            <button
-              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
-              onClick={() => onAction('stop-runs')}
-            >
+            <button className="btn" onClick={() => onAction('stop-runs')}>
               停止 Run
             </button>
           ) : (
             <button
-              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+              className="btn"
               onClick={() => onAction('request-final-handoff')}
             >
               生成最终 Handoff
             </button>
           )}
           <button
-            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
+            className="btn btn-danger-solid"
             onClick={() => onAction('force-quit')}
           >
             强制退出
@@ -1826,50 +1913,47 @@ function ConfirmationModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop"
       onClick={onCancel}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={confirmation!.action}
-        className="w-full max-w-md space-y-3 rounded-lg bg-neutral-900 p-5"
+        className="w-full max-w-md space-y-3 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-medium text-neutral-100">
+        <h3 className="text-base font-medium text-ink">
           {confirmation!.action}
         </h3>
         <dl className="space-y-1.5 text-sm">
           <div>
-            <dt className="inline text-neutral-500">目标：</dt>
-            <dd className="inline text-neutral-200">{confirmation!.target}</dd>
+            <dt className="inline text-muted">目标：</dt>
+            <dd className="inline text-ink">{confirmation!.target}</dd>
           </div>
           <div>
-            <dt className="inline text-neutral-500">影响：</dt>
-            <dd className="inline text-neutral-200">{confirmation!.impact}</dd>
+            <dt className="inline text-muted">影响：</dt>
+            <dd className="inline text-ink">{confirmation!.impact}</dd>
           </div>
           <div>
-            <dt className="inline text-neutral-500">不可跳过：</dt>
-            <dd className="inline text-neutral-200">
+            <dt className="inline text-muted">不可跳过：</dt>
+            <dd className="inline text-ink">
               {confirmation!.nonBypassableReason}
             </dd>
           </div>
         </dl>
         {error && (
-          <div className="rounded bg-red-950/60 px-3 py-1.5 text-xs text-red-300">
+          <div className="rounded-lg border border-danger bg-danger-soft px-3 py-1.5 text-xs text-danger">
             {error}
           </div>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
-            onClick={onCancel}
-          >
+          <button className="btn" onClick={onCancel}>
             取消
           </button>
           <button
             ref={confirmRef}
-            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
+            className="btn btn-danger-solid"
             onClick={onConfirm}
           >
             确认

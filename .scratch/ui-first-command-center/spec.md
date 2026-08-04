@@ -304,6 +304,10 @@ interface ProjectViewModel {
   activeRunCount: number
   queuedRunCount: number
   attentionCount: number
+  // #65：statusbar 展示用的 Project Root 路径与当前分支（adapter 事实，
+  // renderer 不推导、不硬编码；可选仅为兼容旧 fixture）
+  rootPath?: string
+  currentBranch?: string
   primaryConnectionId?: ConnectionId
   currentSurface: ProjectSurface
   layout: WorkspaceLayoutViewModel
