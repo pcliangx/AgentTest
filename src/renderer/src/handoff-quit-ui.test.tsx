@@ -87,6 +87,40 @@ describe('ProjectShell — Handoffs surface (#12 AC1)', () => {
     const region = await screen.findByRole('region', { name: '交接' })
     expect(region).toHaveTextContent('暂无交接记录')
   })
+
+  it('shows stable HandoffId, provenance origin and creation time', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '交接' }))
+
+    const region = await screen.findByRole('region', { name: '交接' })
+    // HandoffId is displayed in monospace
+    expect(region).toHaveTextContent('handoff-complete-001')
+    // Provenance origin label
+    expect(region).toHaveTextContent('本地')
+  })
+
+  it('provides target picker and inspect-only / import-and-execute buttons for not-imported handoffs', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '交接' }))
+
+    const region = await screen.findByRole('region', { name: '交接' })
+    // Target picker exists for the un-imported handoff
+    const picker = within(region).getByRole('combobox', {
+      name: /导入目标 Agent/
+    })
+    expect(picker).toBeVisible()
+    // Action buttons exist
+    expect(
+      within(region).getByRole('button', { name: '仅导入检查' })
+    ).toBeVisible()
+    expect(
+      within(region).getByRole('button', { name: '导入并执行' })
+    ).toBeVisible()
+  })
 })
 
 // ---------------------------------------------------------------------------

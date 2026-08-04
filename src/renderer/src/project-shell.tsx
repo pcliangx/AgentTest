@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   AgentInstanceId,
+  AgentInstanceViewModel,
   AgentProviderId,
   AttentionItemId,
   AttentionTarget,
@@ -9,6 +10,7 @@ import type {
   ConfirmationId,
   ConnectionId,
   GlobalSurface,
+  HandoffId,
   LayoutTargetEffect,
   PanelId,
   PermissionDecision,
@@ -866,6 +868,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 snapshot={snapshot}
                 project={project}
                 sendCommand={sendCommand}
+                focusHandoffId={
+                  retainedDeepLink?.kind === 'handoff' &&
+                  retainedDeepLink.projectId === project.projectId
+                    ? retainedDeepLink.handoffId
+                    : undefined
+                }
               />
             )}
             {project.currentSurface !== 'overview' &&
@@ -1212,7 +1220,8 @@ const IMPORT_STATE_LABEL: Record<string, string> = {
 function HandoffsSurface({
   snapshot,
   project,
-  sendCommand
+  sendCommand,
+  focusHandoffId
 }: {
   snapshot: WorkbenchViewModel
   project: ProjectViewModel
@@ -1220,10 +1229,23 @@ function HandoffsSurface({
     body: WorkbenchCommandBody,
     expectedRevision?: number
   ) => Promise<CommandResult>
+  focusHandoffId?: HandoffId
 }) {
   const handoffs = snapshot.handoffs.filter(
     (h) => h.projectId === project.projectId
   )
+  const projectAgents = snapshot.agents.filter(
+    (a) => a.projectId === project.projectId
+  )
+  const focusRef = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (focusHandoffId && focusRef.current) {
+      focusRef.current.scrollIntoView?.({
+        behavior: 'smooth',
+        block: 'center'
+      })
+    }
+  }, [focusHandoffId])
 
   if (handoffs.length === 0) {
     return (
@@ -1238,91 +1260,186 @@ function HandoffsSurface({
     <section role="region" aria-label="交接" className="space-y-3">
       <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
       <ul className="space-y-3">
-        {handoffs.map((h) => (
-          <li
-            key={h.handoffId}
-            className="rounded-lg bg-neutral-900 p-4"
-          >
-            <div className="mb-2 flex items-center gap-2">
-              <span
-                className={`rounded px-1.5 py-0.5 text-xs ${
-                  h.completeness === 'complete'
-                    ? 'bg-emerald-950 text-emerald-400'
-                    : 'bg-amber-950 text-amber-400'
-                }`}
-              >
-                {COMPLETENESS_LABEL[h.completeness]}
-              </span>
-              <span className="text-xs text-neutral-500">
-                {IMPORT_STATE_LABEL[h.importState]}
-              </span>
-              {h.provenance.origin === 'cross-project' && (
-                <span className="rounded bg-blue-950 px-1.5 py-0.5 text-xs text-blue-400">
-                  跨项目（来自 {h.provenance.sourceProjectName}）
+        {handoffs.map((h) => {
+          const isFocused = focusHandoffId === h.handoffId
+          return (
+            <li
+              key={h.handoffId}
+              ref={isFocused ? focusRef : undefined}
+              className={`rounded-lg p-4 ${
+                isFocused
+                  ? 'bg-neutral-800 ring-2 ring-blue-600'
+                  : 'bg-neutral-900'
+              }`}
+            >
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded px-1.5 py-0.5 text-xs ${
+                    h.completeness === 'complete'
+                      ? 'bg-emerald-950 text-emerald-400'
+                      : 'bg-amber-950 text-amber-400'
+                  }`}
+                >
+                  {COMPLETENESS_LABEL[h.completeness]}
                 </span>
-              )}
-              {h.provenance.origin === 'quit-snapshot' && (
-                <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
-                  退出快照
+                <span className="text-xs text-neutral-500">
+                  {IMPORT_STATE_LABEL[h.importState]}
                 </span>
-              )}
-            </div>
-            <p className="text-sm text-neutral-200">{h.goal}</p>
-            <p className="mt-1 text-xs text-neutral-500">{h.summary}</p>
-            <dl className="mt-2 space-y-1 text-xs text-neutral-400">
-              <div>
-                <dt className="inline text-neutral-600">来源：</dt>
-                <dd className="inline">{h.source.agentName}</dd>
-                {h.target && (
-                  <>
-                    <dt className="ml-2 inline text-neutral-600">目标：</dt>
-                    <dd className="inline">{h.target.agentName}</dd>
-                  </>
+                {h.provenance.origin === 'cross-project' && (
+                  <span className="rounded bg-blue-950 px-1.5 py-0.5 text-xs text-blue-400">
+                    跨项目（来自 {h.provenance.sourceProjectName}）
+                  </span>
                 )}
+                {h.provenance.origin === 'quit-snapshot' && (
+                  <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
+                    退出快照
+                  </span>
+                )}
+                {h.provenance.origin === 'imported' && (
+                  <span className="rounded bg-purple-950 px-1.5 py-0.5 text-xs text-purple-400">
+                    导入
+                  </span>
+                )}
+                <span className="font-mono text-[10px] text-neutral-600">
+                  {h.handoffId}
+                </span>
+                <span className="text-[10px] text-neutral-600">
+                  {PROVENANCE_ORIGIN_LABEL[h.provenance.origin]}
+                  {new Date(h.provenance.createdAt).toLocaleString()}
+                </span>
               </div>
-              <div>
-                <dt className="inline text-neutral-600">基线：</dt>
-                <dd className="inline font-mono">{h.baseCommit}</dd>
-                <dt className="ml-3 text-neutral-600">验证：</dt>
-                <dd className="inline">
-                  {VALIDATION_LABEL[h.validation.status]}
-                  {h.validation.message ? `（${h.validation.message}）` : ''}
-                </dd>
-              </div>
-              <div>
-                <dt className="inline text-neutral-600">改动：</dt>
-                <dd className="inline">{h.changeSummary}</dd>
-              </div>
-              {h.artifacts.length > 0 && (
+              <p className="text-sm text-neutral-200">{h.goal}</p>
+              <p className="mt-1 text-xs text-neutral-500">{h.summary}</p>
+              <dl className="mt-2 space-y-1 text-xs text-neutral-400">
                 <div>
-                  <dt className="inline text-neutral-600">产物：</dt>
+                  <dt className="inline text-neutral-600">来源：</dt>
+                  <dd className="inline">{h.source.agentName}</dd>
+                  {h.target && (
+                    <>
+                      <dt className="ml-2 inline text-neutral-600">目标：</dt>
+                      <dd className="inline">{h.target.agentName}</dd>
+                    </>
+                  )}
+                </div>
+                <div>
+                  <dt className="inline text-neutral-600">基线：</dt>
+                  <dd className="inline font-mono">{h.baseCommit}</dd>
+                  <dt className="ml-3 text-neutral-600">验证：</dt>
                   <dd className="inline">
-                    {h.artifacts
-                      .map(
-                        (a) =>
-                          `${a.path}${a.status === 'missing' ? '（缺失）' : ''}`
-                      )
-                      .join('、')}
+                    {VALIDATION_LABEL[h.validation.status]}
+                    {h.validation.message ? `（${h.validation.message}）` : ''}
                   </dd>
                 </div>
-              )}
-              {h.incompleteReason && (
-                <div className="text-amber-400">
-                  <dt className="inline text-amber-600">不完整原因：</dt>
-                  <dd className="inline">{h.incompleteReason}</dd>
-                </div>
-              )}
-              {h.recoveryActions.length > 0 && (
                 <div>
-                  <dt className="inline text-neutral-600">恢复动作：</dt>
-                  <dd className="inline">{h.recoveryActions.join('；')}</dd>
+                  <dt className="inline text-neutral-600">改动：</dt>
+                  <dd className="inline">{h.changeSummary}</dd>
                 </div>
+                {h.artifacts.length > 0 && (
+                  <div>
+                    <dt className="inline text-neutral-600">产物：</dt>
+                    <dd className="inline">
+                      {h.artifacts
+                        .map(
+                          (a) =>
+                            `${a.path}${a.status === 'missing' ? '（缺失）' : ''}`
+                        )
+                        .join('、')}
+                    </dd>
+                  </div>
+                )}
+                {h.incompleteReason && (
+                  <div className="text-amber-400">
+                    <dt className="inline text-amber-600">不完整原因：</dt>
+                    <dd className="inline">{h.incompleteReason}</dd>
+                  </div>
+                )}
+                {h.recoveryActions.length > 0 && (
+                  <div>
+                    <dt className="inline text-neutral-600">恢复动作：</dt>
+                    <dd className="inline">{h.recoveryActions.join('；')}</dd>
+                  </div>
+                )}
+              </dl>
+              {h.importState === 'not-imported' && (
+                <HandoffImportActions
+                  handoffId={h.handoffId}
+                  agents={projectAgents}
+                  onImport={(targetAgentInstanceId, mode) =>
+                    void sendCommand({
+                      kind: 'import-handoff',
+                      projectId: project.projectId,
+                      handoffId: h.handoffId,
+                      targetAgentInstanceId,
+                      mode
+                    })
+                  }
+                />
               )}
-            </dl>
-          </li>
-        ))}
+            </li>
+          )
+        })}
       </ul>
     </section>
+  )
+}
+
+const PROVENANCE_ORIGIN_LABEL: Record<string, string> = {
+  local: '本地 · ',
+  imported: '导入 · ',
+  'cross-project': '跨项目 · ',
+  'quit-snapshot': '退出快照 · '
+}
+
+function HandoffImportActions({
+  handoffId,
+  agents,
+  onImport
+}: {
+  handoffId: HandoffId
+  agents: AgentInstanceViewModel[]
+  onImport: (
+    targetAgentInstanceId: AgentInstanceId,
+    mode: 'inspect-only' | 'request-execute'
+  ) => void
+}) {
+  const [targetId, setTargetId] = useState<string>('')
+  const available = agents.filter(
+    (a) => a.runtimeState !== 'unavailable' && a.runtimeState !== 'archived'
+  )
+  return (
+    <div className="mt-3 flex items-center gap-2 border-t border-neutral-800 pt-2">
+      <select
+        aria-label={`导入目标 Agent ${handoffId}`}
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+      >
+        <option value="">选择目标 Agent…</option>
+        {available.map((a) => (
+          <option key={a.agentInstanceId} value={a.agentInstanceId}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      <button
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        disabled={!targetId}
+        onClick={() =>
+          onImport(id(targetId, 'AgentInstanceId'), 'inspect-only')
+        }
+      >
+        仅导入检查
+      </button>
+      <button
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        disabled={!targetId}
+        onClick={() =>
+          onImport(id(targetId, 'AgentInstanceId'), 'request-execute')
+        }
+      >
+        导入并执行
+      </button>
+    </div>
   )
 }
 

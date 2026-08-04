@@ -238,7 +238,7 @@ describe('Global Attention — deep links (#9)', () => {
     }
   )
 
-  it('navigates to the Handoffs surface for an incomplete handoff attention item', async () => {
+  it('navigates to the Handoffs surface and highlights the specific handoff from attention', async () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)
     await user.click(
@@ -254,6 +254,9 @@ describe('Global Attention — deep links (#9)', () => {
     const region = await screen.findByRole('region', { name: '交接' })
     expect(region).toHaveTextContent('不完整')
     expect(region).toHaveTextContent('缺少验证结果')
+    // The specific handoff-001 card is highlighted via focus ring (#9 deep link)
+    const focusedCard = within(region).getByText('handoff-001')
+    expect(focusedCard.closest('li')).toHaveClass('ring-2')
   })
 })
 

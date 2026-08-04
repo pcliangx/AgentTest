@@ -1,5 +1,6 @@
 import type {
   AgentInstanceId,
+  AgentRuntimeState,
   Brand,
   CommandId,
   CommandRejectionReason,
@@ -256,6 +257,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         targetAgentInstanceId: AgentInstanceId
       }
     | null = null
+  /** Revision at which the quit preview was generated; null when no preview (#12). */
+  private quitPreviewRevision: number | null = null
 
   constructor(
     snapshot: WorkbenchViewModel = createStandardScenario(),
@@ -1726,9 +1729,38 @@ export class MockScenarioAdapter implements WorkbenchPort {
           )
         }
         if (command.mode === 'inspect-only') {
-          // Passive import: only creates an inspectable record. No Run, no
-          // runtime state change (US-090).
-          handoff.importState = 'inspect-only'
+          // Passive import: creates a NEW canonical Handoff record in the
+          // target Project with the chosen target agent and imported
+          // provenance. No Run, no runtime state change (US-090).
+          const importedId = this.freshId('HandoffId')
+          this.snapshot.handoffs.push({
+            handoffId: importedId,
+            projectId: command.projectId,
+            source: { ...handoff.source },
+            target: {
+              agentInstanceId: targetAgent.agentInstanceId,
+              agentName: targetAgent.name
+            },
+            provenance: {
+              origin: 'imported',
+              createdAt: this.clock(),
+              ...(handoff.provenance.origin === 'cross-project'
+                ? { sourceProjectName: handoff.provenance.sourceProjectName }
+                : {})
+            },
+            goal: handoff.goal,
+            summary: handoff.summary,
+            baseCommit: handoff.baseCommit,
+            changeSummary: handoff.changeSummary,
+            artifacts: handoff.artifacts.map((a) => ({ ...a })),
+            validation: { ...handoff.validation },
+            completeness: handoff.completeness,
+            ...(handoff.incompleteReason
+              ? { incompleteReason: handoff.incompleteReason }
+              : {}),
+            recoveryActions: [...handoff.recoveryActions],
+            importState: 'inspect-only'
+          })
           this.snapshot.activity = [
             {
               activityId: this.freshId('ActivityId'),
@@ -1743,7 +1775,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           postEvents.push({
             kind: 'handoff-imported',
             correlationId: command.commandId,
-            handoffId: command.handoffId,
+            handoffId: importedId,
             mode: 'inspect-only'
           })
           return null
@@ -1753,6 +1785,17 @@ export class MockScenarioAdapter implements WorkbenchPort {
           // confirmation before producing a single execution Command.
           const busy = this.rejectIfConfirmationPending(command)
           if (busy) return busy
+          // Target must be available to execute
+          if (
+            targetAgent.runtimeState === 'unavailable' ||
+            targetAgent.runtimeState === 'archived'
+          ) {
+            return this.reject(
+              command,
+              'unavailable',
+              '目标 Agent 当前不可用，无法执行导入'
+            )
+          }
           this.pendingAction = {
             type: 'handoff-execute',
             projectId: command.projectId,
@@ -1781,17 +1824,21 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
           return null
         }
-        // execute-confirmed: validate the confirmationId against the pending
-        // handoff-execute action, then commit the import state.
+        // execute-confirmed: validate the confirmationId AND the full frozen
+        // target (projectId + handoffId + targetAgentInstanceId) against the
+        // pending handoff-execute action.
         if (
           !this.pendingAction ||
           this.pendingAction.type !== 'handoff-execute' ||
-          this.pendingAction.handoffId !== command.handoffId
+          this.pendingAction.handoffId !== command.handoffId ||
+          this.pendingAction.targetAgentInstanceId !==
+            command.targetAgentInstanceId ||
+          this.pendingAction.projectId !== command.projectId
         ) {
           return this.reject(
             command,
             'invalid-target',
-            '没有待确认的 Handoff 执行请求'
+            '没有待确认的 Handoff 执行请求，或目标与预览不一致'
           )
         }
         const pending = this.snapshot.pendingConfirmation
@@ -1815,39 +1862,56 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // handoff-dirty Agents. Close window preserves background state;
         // quit is the explicit flow that surfaces these for user decision.
         this.snapshot.quitPreview = this.buildQuitPreview()
+        // tryApply runs before the revision bump; the post-bump revision
+        // is the one the renderer will observe, so bind to that.
+        this.quitPreviewRevision = this.snapshot.revision + 1
         return null
       }
       case 'execute-quit': {
-        // AC4: quit actions require a prior request-quit-preview.
-        if (!this.snapshot.quitPreview) {
+        // AC4: quit actions require a prior request-quit-preview at the
+        // current revision. Truth drift invalidates the preview.
+        if (!this.snapshot.quitPreview || this.quitPreviewRevision === null) {
           return this.reject(
             command,
             'invalid-target',
             '请先请求退出预览'
           )
         }
+        if (this.quitPreviewRevision !== this.snapshot.revision) {
+          this.snapshot.quitPreview = undefined
+          this.quitPreviewRevision = null
+          return this.reject(
+            command,
+            'stale-revision',
+            '退出预览已过期，请重新预览'
+          )
+        }
         switch (command.action) {
           case 'wait-for-runs': {
             // Close-window semantics: background state preserved (AC3).
             this.snapshot.quitPreview = undefined
+            this.quitPreviewRevision = null
             return null
           }
           case 'stop-runs': {
             this.stopActiveRunsForQuit()
             this.snapshot.quitPreview = undefined
+            this.quitPreviewRevision = null
             return null
           }
           case 'request-final-handoff': {
             this.generateQuitFallbackSnapshots()
             this.snapshot.quitPreview = undefined
+            this.quitPreviewRevision = null
             return null
           }
           case 'force-quit': {
-            // Unblockable entry: stop everything and create fallback
+            // Unblockable entry: stop everything and create handoff
             // snapshots in one step (AC4).
             this.stopActiveRunsForQuit()
             this.generateQuitFallbackSnapshots()
             this.snapshot.quitPreview = undefined
+            this.quitPreviewRevision = null
             return null
           }
         }
@@ -1931,8 +1995,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
   /**
    * Builds the quit preview from authoritative Agent states and changes.
    * Active Runs are agents with an active structured Run state; active
-   * Terminals have terminalState 'active'; handoff-dirty agents have
-   * uncommitted worktree changes (#12 AC3/AC4).
+   * Terminals have terminalState 'active' or 'opening'; handoff-dirty agents
+   * have uncommitted worktree changes, or failed/interrupted runtime states
+   * that carry unsaved context (#12 AC3/AC4, ADR-0009 dirty criteria).
    */
   private buildQuitPreview(): QuitPreviewViewModel {
     const activeRuns = this.snapshot.agents
@@ -1945,38 +2010,91 @@ export class MockScenarioAdapter implements WorkbenchPort {
         runtimeState: agent.runtimeState
       }))
     const activeTerminals = this.snapshot.agents
-      .filter((agent) => agent.terminalState === 'active')
+      .filter((agent) => isTerminalExecutionSlotOccupied(agent.terminalState))
       .map((agent) => ({
         projectId: agent.projectId,
         agentInstanceId: agent.agentInstanceId,
         agentName: agent.name
       }))
-    const handoffDirtyAgents = this.snapshot.changes.map((change) => {
-      const agent = this.snapshot.agents.find(
-        (a) => a.agentInstanceId === change.agentInstanceId
-      )!
-      return {
-        projectId: agent.projectId,
-        agentInstanceId: change.agentInstanceId,
-        agentName: agent.name,
-        changeSummary: `${change.files.length} 个文件变更（${change.drift === 'behind' ? 'base 已落后' : 'base 最新'}，验证：${change.validation.status}）`
-      }
-    })
+    const changeAgentIds = new Set(
+      this.snapshot.changes.map((c) => c.agentInstanceId)
+    )
+    const dirtyRuntimeStates: AgentRuntimeState[] = [
+      'failed',
+      'interrupted'
+    ]
+    const handoffDirtyAgents = this.snapshot.agents
+      .filter(
+        (agent) =>
+          changeAgentIds.has(agent.agentInstanceId) ||
+          dirtyRuntimeStates.includes(agent.runtimeState)
+      )
+      .map((agent) => {
+        const change = this.snapshot.changes.find(
+          (c) => c.agentInstanceId === agent.agentInstanceId
+        )
+        const reasons: string[] = []
+        if (change) {
+          reasons.push(
+            `${change.files.length} 个文件变更（${change.drift === 'behind' ? 'base 已落后' : 'base 最新'}，验证：${change.validation.status}）`
+          )
+        }
+        if (dirtyRuntimeStates.includes(agent.runtimeState)) {
+          reasons.push(`运行状态：${agent.runtimeState}`)
+        }
+        return {
+          projectId: agent.projectId,
+          agentInstanceId: agent.agentInstanceId,
+          agentName: agent.name,
+          changeSummary: reasons.join('；')
+        }
+      })
     return { activeRuns, activeTerminals, handoffDirtyAgents }
   }
 
   /**
-   * Transitions all active structured Runs to `interrupted` and closes all
-   * active Terminals. Phase 1 has no real process — this only changes mock
-   * state and re-projects the summaries (#12 AC4).
+   * Transitions all active structured Runs to `interrupted`, closes all
+   * occupied Terminals, resolves linked permission attention items, records
+   * interrupted audit entries, and recomputes all projections (#12 AC4,
+   * ADR-0009 dirty criteria).
    */
   private stopActiveRunsForQuit(): void {
+    const stoppedAgents: WorkbenchViewModel['agents'][number][] = []
     for (const agent of this.snapshot.agents) {
       if (isActiveStructuredRunState(agent.runtimeState)) {
+        const runId = agent.activeRunId
         agent.runtimeState = 'interrupted'
         agent.activeRunId = undefined
+        agent.lastActivityAt = this.clock()
+        stoppedAgents.push(agent)
+        // Record interrupted audit for each stopped Run.
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: agent.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            timestamp: this.clock(),
+            kind: 'run-interrupted',
+            summary: `${agent.name} 的 Run 在退出流程中被中断`
+          },
+          ...this.snapshot.activity
+        ]
+        // Resolve permission-requested attention items linked to this agent.
+        if (runId) {
+          for (const item of this.snapshot.attentionItems) {
+            if (
+              item.state === 'open' &&
+              item.kind === 'permission-requested' &&
+              item.target.kind === 'run' &&
+              item.target.agentInstanceId === agent.agentInstanceId
+            ) {
+              item.state = 'resolved'
+            }
+          }
+        }
       }
-      if (agent.terminalState === 'active') {
+      // Close all occupied terminals (active or opening).
+      if (isTerminalExecutionSlotOccupied(agent.terminalState)) {
         agent.terminalState = 'closed'
       }
     }
@@ -1985,25 +2103,55 @@ export class MockScenarioAdapter implements WorkbenchPort {
       this.cancelPermissionTimer(request.requestId)
     }
     this.snapshot.permissionRequests = []
+    // Recompute all projections from authoritative state.
     this.recomputeActiveRunCounts()
     this.recomputeAttentionCounts()
+    this.recomputeProjectActivity()
+  }
+
+  /** Recomputes project activity from authoritative agent states. */
+  private recomputeProjectActivity(): void {
+    for (const project of this.snapshot.projects) {
+      const hasActive = this.snapshot.agents.some(
+        (agent) =>
+          agent.projectId === project.projectId &&
+          isActiveStructuredRunState(agent.runtimeState)
+      )
+      project.activity = hasActive ? 'active' : 'idle'
+    }
   }
 
   /**
-   * Creates a deterministic fallback snapshot (incomplete Handoff) for each
-   * agent with uncommitted worktree changes. These are marked as
-   * `quit-snapshot` provenance with an explicit incomplete reason and
-   * recovery actions, so they are never mistaken for complete handoffs
-   * (#12 AC4, US-060).
+   * Creates structured handoff records for handoff-dirty agents. Agents with
+   * passing validation get COMPLETE handoffs; agents with failing/pending
+   * validation or failed/interrupted runtime get INCOMPLETE fallback
+   * snapshots with explicit reasons and recovery actions (#12 AC4,
+   * US-060). Only failure/timeout produces an incomplete snapshot.
    */
   private generateQuitFallbackSnapshots(): void {
     const now = this.clock()
-    for (const change of this.snapshot.changes) {
-      const agent = this.snapshot.agents.find(
-        (a) => a.agentInstanceId === change.agentInstanceId
+    const dirtyRuntimeStates: AgentRuntimeState[] = ['failed', 'interrupted']
+    const changeAgentIds = new Set(
+      this.snapshot.changes.map((c) => c.agentInstanceId)
+    )
+    const dirtyAgents = this.snapshot.agents.filter(
+      (agent) =>
+        changeAgentIds.has(agent.agentInstanceId) ||
+        dirtyRuntimeStates.includes(agent.runtimeState)
+    )
+    for (const agent of dirtyAgents) {
+      const change = this.snapshot.changes.find(
+        (c) => c.agentInstanceId === agent.agentInstanceId
       )
-      if (!agent) continue
-      const fileList = change.files.map((f) => f.path).join('、')
+      const fileList = change
+        ? change.files.map((f) => f.path).join('、')
+        : '无文件改动记录'
+      // Complete if validation passes and no failed/interrupted state;
+      // incomplete otherwise (fallback for failure/timeout).
+      const isComplete =
+        change != null &&
+        change.validation.status === 'pass' &&
+        !dirtyRuntimeStates.includes(agent.runtimeState)
       this.snapshot.handoffs.push({
         handoffId: this.freshId('HandoffId'),
         projectId: agent.projectId,
@@ -2015,28 +2163,37 @@ export class MockScenarioAdapter implements WorkbenchPort {
           origin: 'quit-snapshot',
           createdAt: now
         },
-        goal: `退出 Agent Squad HQ 时为 ${agent.name} 生成的 fallback 快照`,
-        summary: `Agent ${agent.name} 在退出时有 ${change.files.length} 个未提交改动（${fileList}）。验证状态：${change.validation.status}。`,
-        baseCommit: change.baseCommit,
-        changeSummary: `${change.files.length} 个文件变更（${change.drift === 'behind' ? 'base 已落后' : 'base 最新'}）`,
-        artifacts: change.files.map((f) => ({
+        goal: `退出 Agent Squad HQ 时为 ${agent.name} 生成的最终 handoff`,
+        summary: `Agent ${agent.name} 在退出时有 ${change?.files.length ?? 0} 个未提交改动（${fileList}）。验证状态：${change?.validation.status ?? '未知'}。`,
+        baseCommit: change?.baseCommit ?? 'unknown',
+        changeSummary: `${change?.files.length ?? 0} 个文件变更（${change?.drift === 'behind' ? 'base 已落后' : 'base 最新'}）`,
+        artifacts: (change?.files ?? []).map((f) => ({
           path: f.path,
           status: 'included' as const
         })),
         validation: {
-          status: change.validation.status,
-          ...(change.validation.message
+          status: change?.validation.status ?? 'pending',
+          ...(change?.validation.message
             ? { message: change.validation.message }
             : {})
         },
-        completeness: 'incomplete',
-        incompleteReason:
-          '退出时自动生成的 fallback 快照，未经完整 handoff 流程；可能缺少验证结果或最新改动',
-        recoveryActions: [
-          `重新打开 ${agent.name} 并检查 worktree 改动`,
-          `对 ${agent.name} 发起验证 Run 后标记为 complete`,
-          '手动检查改动文件后合并或丢弃'
-        ],
+        completeness: isComplete ? 'complete' : 'incomplete',
+        ...(isComplete
+          ? {}
+          : {
+              incompleteReason: dirtyRuntimeStates.includes(
+                agent.runtimeState
+              )
+                ? `${agent.name} 运行状态为 ${agent.runtimeState}，退出时无法完成结构化 handoff`
+                : `验证未通过：${change?.validation.message ?? '验证失败'}，退出时自动生成 fallback 快照`
+            }),
+        recoveryActions: isComplete
+          ? []
+          : [
+              `重新打开 ${agent.name} 并检查 worktree 改动`,
+              `对 ${agent.name} 发起验证 Run 后标记为 complete`,
+              '手动检查改动文件后合并或丢弃'
+            ],
         importState: 'not-imported'
       })
     }
@@ -2364,20 +2521,67 @@ export class MockScenarioAdapter implements WorkbenchPort {
   }
 
   /**
-   * Commits a confirmed handoff execute: sets importState, clears the
-   * confirmation, records activity and queues the handoff-imported event.
-   * Phase 1 does NOT create a real Run — the user may explicitly start one
-   * after the import (US-090).
+   * Commits a confirmed handoff execute: creates a target-side canonical
+   * Handoff record with execute-confirmed state, then produces a single mock
+   * Run via the same dispatchability/planner path as confirm-dispatch.
+   * inspect-only never reaches this path (US-090).
    */
   private commitHandoffExecute(
-    handoff: WorkbenchViewModel['handoffs'][number],
+    sourceHandoff: WorkbenchViewModel['handoffs'][number],
     targetAgent: WorkbenchViewModel['agents'][number],
     postEvents: PostDispatchEvent[],
     correlationId: CommandId
   ): void {
-    handoff.importState = 'execute-confirmed'
+    // Create the target-side canonical Handoff record.
+    const importedId = this.freshId('HandoffId')
+    this.snapshot.handoffs.push({
+      handoffId: importedId,
+      projectId: targetAgent.projectId,
+      source: { ...sourceHandoff.source },
+      target: {
+        agentInstanceId: targetAgent.agentInstanceId,
+        agentName: targetAgent.name
+      },
+      provenance: {
+        origin: 'imported',
+        createdAt: this.clock(),
+        ...(sourceHandoff.provenance.origin === 'cross-project'
+          ? { sourceProjectName: sourceHandoff.provenance.sourceProjectName }
+          : {})
+      },
+      goal: sourceHandoff.goal,
+      summary: sourceHandoff.summary,
+      baseCommit: sourceHandoff.baseCommit,
+      changeSummary: sourceHandoff.changeSummary,
+      artifacts: sourceHandoff.artifacts.map((a) => ({ ...a })),
+      validation: { ...sourceHandoff.validation },
+      completeness: sourceHandoff.completeness,
+      ...(sourceHandoff.incompleteReason
+        ? { incompleteReason: sourceHandoff.incompleteReason }
+        : {}),
+      recoveryActions: [...sourceHandoff.recoveryActions],
+      importState: 'execute-confirmed'
+    })
     this.snapshot.pendingConfirmation = undefined
     this.pendingAction = null
+    // Produce exactly one mock execution via the same dispatchability/planner
+    // path as confirm-dispatch. The CommandId idempotency guard already
+    // ensures this executes exactly once.
+    const project = this.snapshot.projects.find(
+      (p) => p.projectId === targetAgent.projectId
+    )
+    const planResult = buildDispatchPlan(this.snapshot, {
+      expectedRevision: this.snapshot.revision,
+      projectId: targetAgent.projectId,
+      targets: [targetAgent.agentInstanceId]
+    })
+    if (planResult.ok && project) {
+      if (planResult.plan.entries[0].outcome === 'queue') {
+        this.enqueue(targetAgent)
+      } else {
+        this.startMockRun(targetAgent, project.projectId)
+      }
+    }
     this.snapshot.activity = [
       {
         activityId: this.freshId('ActivityId'),
@@ -2385,14 +2589,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
         agentInstanceId: targetAgent.agentInstanceId,
         timestamp: this.clock(),
         kind: 'dangerous-action-confirmed',
-        summary: `${targetAgent.name} 已确认导入并执行 Handoff：${handoff.goal}`
+        summary: `${targetAgent.name} 已确认导入并执行 Handoff：${sourceHandoff.goal}`
       },
       ...this.snapshot.activity
     ]
     postEvents.push({
       kind: 'handoff-imported',
       correlationId,
-      handoffId: handoff.handoffId,
+      handoffId: importedId,
       mode: 'execute-confirmed'
     })
   }
