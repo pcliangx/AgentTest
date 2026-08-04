@@ -167,6 +167,14 @@ export interface AgentInstanceViewModel {
   activeRunConfigVersion?: number
 }
 
+/** Settings sections — the single edit locations readiness links back to. */
+export type ConfigurationSectionKey =
+  | 'general'
+  | 'defaults'
+  | 'instances'
+  | 'integrations'
+  | 'permissions'
+
 export type ConfigurationOwner =
   | { kind: 'project'; projectId: ProjectId }
   | { kind: 'agent'; agentInstanceId: AgentInstanceId }
@@ -190,6 +198,57 @@ export interface AppliedConfigurationViewModel {
   appliedVersion: number
   /** fieldPath -> applied value for every configurable field of this owner. */
   values: Record<string, unknown>
+}
+
+/** Whether an applied value currently takes effect, as judged by the adapter. */
+export type EffectiveValueStatus = 'effective' | 'blocked'
+
+export interface EffectiveConfigurationEntry {
+  fieldPath: string
+  /** Pass-through of the applied truth value (may be undefined). */
+  applied: unknown
+  status: EffectiveValueStatus
+  /** Chinese, user-facing — present iff status is 'blocked'. */
+  blockedReason?: string
+}
+
+/** Per-owner applied/effective comparison for Settings B (#14). */
+export interface EffectiveConfigurationViewModel {
+  owner: ConfigurationOwner
+  entries: EffectiveConfigurationEntry[]
+}
+
+export type RunReadinessBlockerCode =
+  | 'provider-blocked'
+  | 'agent-unavailable'
+  | 'agent-archived'
+  | 'model-unavailable'
+  | 'project-archived'
+  | 'project-root-unavailable'
+  | 'project-repository-not-ready'
+
+/** Deep link from a blocker to the single place that can clear it. */
+export type RunReadinessBlockerTarget =
+  | {
+      kind: 'settings-section'
+      section: ConfigurationSectionKey
+      agentInstanceId?: AgentInstanceId
+    }
+  | { kind: 'provider-health' }
+
+export interface RunReadinessBlocker {
+  code: RunReadinessBlockerCode
+  /** Chinese, user-facing. */
+  message: string
+  target?: RunReadinessBlockerTarget
+}
+
+/** Next-Run readiness summary for Settings C (#14). */
+export interface RunReadinessViewModel {
+  agentInstanceId: AgentInstanceId
+  projectId: ProjectId
+  status: 'ready' | 'blocked'
+  blockers: RunReadinessBlocker[]
 }
 
 export interface QueueItemViewModel {
@@ -323,6 +382,18 @@ export interface WorkbenchViewModel {
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
   appliedConfigurations: AppliedConfigurationViewModel[]
+  /**
+   * Adapter-computed applied/effective truth per owner (#14 Settings B).
+   * Derived facts, recomputed on every emitted revision — never
+   * renderer-derived, never independently mutable truth.
+   */
+  effectiveConfigurations: EffectiveConfigurationViewModel[]
+  /**
+   * Adapter-computed next-Run readiness per Agent (#14 Settings C). Derived
+   * facts, recomputed on every emitted revision; blockers link back to the
+   * single edit location that can clear them.
+   */
+  runReadiness: RunReadinessViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
   global: {

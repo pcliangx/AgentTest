@@ -55,7 +55,9 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | Phase 1 spec 与 GitHub Issues #1–#16 | ✅ 已迁移；GitHub 是 ticket 唯一 truth |
 | 生产 UI-first + contract mock 交付顺序 | ✅ 用户已确认 |
 | Phase 1 #1 Project Shell + WorkbenchPort + MockScenarioAdapter | ✅ [PR #18](https://github.com/pcliangx/agent-squad-hq/pull/18) |
-| Phase 1 #2 全局 Connections/Provider Health/确认宿主 | ✅ [PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19)；#3–#16 尚未启动 |
+| Phase 1 #2 全局 Connections/Provider Health/确认宿主 | ✅ [PR #19](https://github.com/pcliangx/agent-squad-hq/pull/19) |
+| Phase 1 #9 Permission Center 与 Global Attention | ✅ 已合入 main |
+| Phase 1 #14 策略矩阵、Readiness 与降级安全状态 | ✅ 见 [Issue #14](https://github.com/pcliangx/agent-squad-hq/issues/14)；其余 #3–#16 按 frontier 推进 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
@@ -286,6 +288,7 @@ src/renderer/src/
     contract.ts                WorkbenchPort 合同（品牌化 ID、ViewModel、Command、Event）
     dispatch-planner.ts        revision 绑定的容量与 Project 队位规划
     mock-scenario-adapter.ts   MockScenarioAdapter（in-memory port 实现）
+    run-readiness.ts           派生 effective 配置与下一 Run readiness（#14）
     standard-scenario.ts       标准场景数据
   chat-state.ts                纯事件 reducer（v0.1 保留，Phase 1 不再渲染）
 docs/

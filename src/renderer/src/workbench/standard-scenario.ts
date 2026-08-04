@@ -403,6 +403,11 @@ export function createStandardScenario(
         agentConfig(a, a.agentInstanceId === ccData ? 3 : 1)
       )
     ],
+    // Derived facts (#14): MockScenarioAdapter recomputes these on every
+    // emitted revision, so scenarios carry empty placeholders and never act
+    // as their source of truth.
+    effectiveConfigurations: [],
+    runReadiness: [],
     changes: [
       {
         agentInstanceId: ccData,

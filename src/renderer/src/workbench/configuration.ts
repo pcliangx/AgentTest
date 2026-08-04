@@ -1,6 +1,7 @@
 import { validateAgentName } from './agent-name'
 import type {
   ConfigurationOwner,
+  ConfigurationSectionKey,
   ProjectViewModel,
   WorkbenchViewModel
 } from './contract'
@@ -15,12 +16,9 @@ import type {
  * live snapshot.
  */
 
-export type ConfigurationSectionKey =
-  | 'general'
-  | 'defaults'
-  | 'instances'
-  | 'integrations'
-  | 'permissions'
+// The section key type lives in the contract (readiness targets reference
+// it); re-exported here so existing catalogue consumers keep one import site.
+export type { ConfigurationSectionKey }
 
 export type ConfigurationFieldTiming = 'immediate' | 'next-run' | 'new-agent'
 
