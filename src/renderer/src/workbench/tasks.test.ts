@@ -11,11 +11,11 @@ import type {
 } from './contract'
 
 /**
- * Tasks domain contract tests (#10): Project Task / External Task
- * projections, per-target Dispatch + Execution Result records, user review
- * and acceptance, explicit external business writes through the shared
- * confirmation host, and external updates that only ever refresh
- * projections or create Attention — never start an Agent.
+ * Tasks domain contract tests (#10, review-hardened): Project Task /
+ * External Task projections, planner-bound task dispatch, Execution Result
+ * only via the explicit mock completion transition, conflict-safe external
+ * writes, tombstoned deletions that keep local audit, and external updates
+ * that only refresh projections or create Attention — never start an Agent.
  */
 
 function cmdId(n: number): CommandId {
@@ -26,6 +26,10 @@ const PROJECT = id('proj-sales', 'ProjectId')
 const EXT_TASK: TaskRef = {
   kind: 'external-task',
   externalTaskId: id('ext-task-001', 'ExternalTaskId')
+}
+const SYNCED_TASK: TaskRef = {
+  kind: 'external-task',
+  externalTaskId: id('ext-task-003', 'ExternalTaskId')
 }
 const LOCAL_TASK: TaskRef = {
   kind: 'project-task',
@@ -42,6 +46,15 @@ function externalTask(
   )
   if (!task) throw new Error(`scenario external task ${externalTaskId} missing`)
   return task
+}
+
+function agentByName(
+  snap: WorkbenchViewModel,
+  name: string
+): WorkbenchViewModel['agents'][number] {
+  const agent = snap.agents.find((candidate) => candidate.name === name)
+  if (!agent) throw new Error(`scenario agent ${name} missing`)
+  return agent
 }
 
 function dispatchTask(
@@ -62,51 +75,75 @@ function dispatchTask(
   }
 }
 
-function agentByName(
+function dispatchesForTask(
   snap: WorkbenchViewModel,
-  name: string
-): WorkbenchViewModel['agents'][number] {
-  const agent = snap.agents.find((candidate) => candidate.name === name)
-  if (!agent) throw new Error(`scenario agent ${name} missing`)
-  return agent
+  task: WorkbenchViewModel['externalTasks'][number]
+): WorkbenchViewModel['dispatches'] {
+  return snap.dispatches.filter((dispatch) =>
+    task.dispatchIds.includes(dispatch.dispatchId)
+  )
 }
 
-describe('MockScenarioAdapter — dispatch-task (#10)', () => {
-  it('creates an independent Dispatch and pending-review Execution Result per target', async () => {
+describe('MockScenarioAdapter — dispatch-task planner binding (#10)', () => {
+  it('executes the confirmed planner atomically: start or enqueue with task linkage', async () => {
     const adapter = new MockScenarioAdapter()
     const events: WorkbenchEvent[] = []
     adapter.subscribe((event) => events.push(event))
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
     const before = task.dispatchIds.length
+    // 2 active runs in the project (limit 3): the first ready target starts,
+    // the second takes the projected queue position behind the 2 existing
+    // queue items.
     const targets = [
       agentByName(snap, 'cx_review').agentInstanceId,
       agentByName(snap, 'kimi_visual').agentInstanceId
     ]
 
     const result = await adapter.dispatch(
-      dispatchTask(cmdId(1), snap.revision, EXT_TASK, targets, '并行调研 Q2 口径')
+      dispatchTask(cmdId(1), snap.revision, SYNCED_TASK, targets, '并行复核 Q2 口径')
     )
     expect(result.ok).toBe(true)
 
     const after = await adapter.getSnapshot()
-    const updated = externalTask(after)
+    const updated = externalTask(after, 'ext-task-003')
     expect(updated.dispatchIds).toHaveLength(before + 2)
-    const created = after.dispatches.filter((dispatch) =>
-      updated.dispatchIds.slice(before).includes(dispatch.dispatchId)
-    )
-    expect(created).toHaveLength(2)
-    // One independent result per target, both awaiting user review.
-    for (const dispatch of created) {
-      const resultForDispatch = after.executionResults.find(
-        (candidate) => candidate.dispatchId === dispatch.dispatchId
+    const created = dispatchesForTask(after, updated).slice(-2)
+
+    const started = created.find(
+      (dispatch) => dispatch.agentInstanceId === targets[0]
+    )!
+    expect(started.status).toBe('active')
+    expect(started.taskRef).toEqual(SYNCED_TASK)
+    expect(started.agentNameSnapshot).toBe('cx_review')
+    const startedAgent = agentByName(after, 'cx_review')
+    expect(startedAgent.runtimeState).toBe('running')
+    expect(startedAgent.activeRunId).toBeDefined()
+
+    const queued = created.find(
+      (dispatch) => dispatch.agentInstanceId === targets[1]
+    )!
+    expect(queued.status).toBe('queued')
+    const queuedAgent = agentByName(after, 'kimi_visual')
+    expect(queuedAgent.runtimeState).toBe('queued')
+    expect(queuedAgent.queueDepth).toBe(1)
+    expect(
+      after.queue.some(
+        (item) =>
+          item.agentInstanceId === queuedAgent.agentInstanceId &&
+          item.position === 3
       )
-      expect(resultForDispatch).toBeDefined()
-      expect(resultForDispatch!.reviewState).toBe('pending-review')
-      expect(resultForDispatch!.taskRef).toEqual(EXT_TASK)
+    ).toBe(true)
+
+    // No Execution Result exists before the completion transition.
+    for (const dispatch of created) {
+      expect(
+        after.executionResults.some(
+          (candidate) => candidate.dispatchId === dispatch.dispatchId
+        )
+      ).toBe(false)
     }
-    // A Run completing never marks the External Task business-complete.
-    expect(updated.businessStatus).toBe('open')
+    expect(externalTask(after, 'ext-task-003').businessStatus).toBe('open')
     const event = events.find(
       (
         candidate
@@ -117,25 +154,92 @@ describe('MockScenarioAdapter — dispatch-task (#10)', () => {
     expect(event!.dispatchIds).toHaveLength(2)
   })
 
-  it('also dispatches a local Project Task to a single Agent', async () => {
+  it('produces an Execution Result only through the explicit mock completion transition', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const target = agentByName(snap, 'cx_review').agentInstanceId
-    const result = await adapter.dispatch(
+    await adapter.dispatch(
       dispatchTask(cmdId(1), snap.revision, LOCAL_TASK, [target], '生成本月报表')
     )
-    expect(result.ok).toBe(true)
-    const after = await adapter.getSnapshot()
+    let after = await adapter.getSnapshot()
     const task = after.projectTasks.find(
-      (candidate) =>
-        candidate.projectTaskId === id('ptask-001', 'ProjectTaskId')
+      (candidate) => candidate.projectTaskId === id('ptask-001', 'ProjectTaskId')
     )!
-    expect(task.dispatchIds.length).toBeGreaterThan(0)
     const dispatch = after.dispatches.find(
       (candidate) =>
         candidate.dispatchId === task.dispatchIds[task.dispatchIds.length - 1]
     )!
-    expect(dispatch.taskRef).toEqual(LOCAL_TASK)
+    expect(dispatch.status).toBe('active')
+    expect(
+      after.executionResults.some(
+        (candidate) => candidate.dispatchId === dispatch.dispatchId
+      )
+    ).toBe(false)
+
+    const completed = await adapter.dispatch({
+      kind: 'complete-dispatch',
+      commandId: cmdId(2),
+      expectedRevision: after.revision,
+      projectId: PROJECT,
+      dispatchId: dispatch.dispatchId
+    })
+    expect(completed.ok).toBe(true)
+
+    after = await adapter.getSnapshot()
+    const finished = after.dispatches.find(
+      (candidate) => candidate.dispatchId === dispatch.dispatchId
+    )!
+    expect(finished.status).toBe('completed')
+    const result = after.executionResults.find(
+      (candidate) => candidate.dispatchId === dispatch.dispatchId
+    )!
+    expect(result.reviewState).toBe('pending-review')
+    expect(result.taskRef).toEqual(LOCAL_TASK)
+    // The mock Run is finished: the execution slot frees up again.
+    const agent = agentByName(after, 'cx_review')
+    expect(agent.runtimeState).toBe('ready')
+    expect(agent.activeRunId).toBeUndefined()
+    expect(
+      after.activity.some((entry) => entry.kind === 'run-completed')
+    ).toBe(true)
+
+    // A second completion is a duplicate response.
+    const duplicate = await adapter.dispatch({
+      kind: 'complete-dispatch',
+      commandId: cmdId(3),
+      expectedRevision: after.revision,
+      projectId: PROJECT,
+      dispatchId: dispatch.dispatchId
+    })
+    expect(duplicate.ok).toBe(false)
+    if (!duplicate.ok) expect(duplicate.reason).toBe('invalid-target')
+  })
+
+  it('rejects completion of a queued dispatch', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    // cx_forecast already holds queue pressure; a fresh ready target behind
+    // full capacity queues.
+    const targets = [
+      agentByName(snap, 'cx_review').agentInstanceId,
+      agentByName(snap, 'kimi_visual').agentInstanceId
+    ]
+    await adapter.dispatch(
+      dispatchTask(cmdId(1), snap.revision, SYNCED_TASK, targets)
+    )
+    const after = await adapter.getSnapshot()
+    const queued = dispatchesForTask(after, externalTask(after, 'ext-task-003')).find(
+      (dispatch) => dispatch.status === 'queued'
+    )!
+    const result = await adapter.dispatch({
+      kind: 'complete-dispatch',
+      commandId: cmdId(2),
+      expectedRevision: after.revision,
+      projectId: PROJECT,
+      dispatchId: queued.dispatchId
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
   })
 
   it('rejects unknown tasks, unknown or unavailable targets and empty input', async () => {
@@ -158,7 +262,7 @@ describe('MockScenarioAdapter — dispatch-task (#10)', () => {
     if (!unknownTask.ok) expect(unknownTask.reason).toBe('invalid-target')
 
     const unknownTarget = await adapter.dispatch(
-      dispatchTask(cmdId(2), snap.revision, EXT_TASK, [
+      dispatchTask(cmdId(2), snap.revision, SYNCED_TASK, [
         id('inst-ghost', 'AgentInstanceId')
       ])
     )
@@ -166,7 +270,7 @@ describe('MockScenarioAdapter — dispatch-task (#10)', () => {
     if (!unknownTarget.ok) expect(unknownTarget.reason).toBe('invalid-target')
 
     const unavailable = await adapter.dispatch(
-      dispatchTask(cmdId(3), snap.revision, EXT_TASK, [
+      dispatchTask(cmdId(3), snap.revision, SYNCED_TASK, [
         agentByName(snap, 'kimi_docs').agentInstanceId
       ])
     )
@@ -174,41 +278,15 @@ describe('MockScenarioAdapter — dispatch-task (#10)', () => {
     if (!unavailable.ok) expect(unavailable.reason).toBe('unavailable')
 
     const empty = await adapter.dispatch(
-      dispatchTask(cmdId(4), snap.revision, EXT_TASK, [target], '   ')
+      dispatchTask(cmdId(4), snap.revision, SYNCED_TASK, [target], '   ')
     )
     expect(empty.ok).toBe(false)
     if (!empty.ok) expect(empty.reason).toBe('invalid-target')
 
-    // Rejection purity: nothing was created.
+    // Rejection purity: nothing was created and no run started.
     const after = await adapter.getSnapshot()
     expect(after.dispatches).toHaveLength(snap.dispatches.length)
-  })
-
-  it('never starts an Agent as a side effect of a task dispatch', async () => {
-    const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const runActivityBefore = snap.activity.filter(
-      (entry) => entry.kind === 'run-started'
-    ).length
-    const statesBefore = new Map(
-      snap.agents.map((agent) => [agent.agentInstanceId, agent.runtimeState])
-    )
-    const target = agentByName(snap, 'cx_review').agentInstanceId
-
-    await adapter.dispatch(
-      dispatchTask(cmdId(1), snap.revision, EXT_TASK, [target])
-    )
-
-    const after = await adapter.getSnapshot()
-    expect(
-      after.activity.filter((entry) => entry.kind === 'run-started')
-    ).toHaveLength(runActivityBefore)
-    for (const agent of after.agents) {
-      expect(agent.runtimeState).toBe(statesBefore.get(agent.agentInstanceId))
-    }
-    expect(after.global.concurrency.activeGlobal).toBe(
-      snap.global.concurrency.activeGlobal
-    )
+    expect(agentByName(after, 'cx_review').runtimeState).toBe('ready')
   })
 })
 
@@ -296,7 +374,7 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
   it('requires the shared confirmation host for the explicit business write', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
 
     const request = await adapter.dispatch({
       kind: 'update-external-task-status',
@@ -313,7 +391,7 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
     expect(pending!.action).toContain('飞书任务')
     expect(pending!.nonBypassableReason).toBeTruthy()
     // Nothing changed yet — the business write waits for confirmation.
-    expect(externalTask(await adapter.getSnapshot()).businessStatus).toBe(
+    expect(externalTask(await adapter.getSnapshot(), 'ext-task-003').businessStatus).toBe(
       'open'
     )
 
@@ -325,7 +403,7 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
     })
     expect(confirmed.ok).toBe(true)
     const after = await adapter.getSnapshot()
-    const updated = externalTask(after)
+    const updated = externalTask(after, 'ext-task-003')
     expect(updated.businessStatus).toBe('completed')
     expect(updated.version).toBe(task.version + 1)
     expect(
@@ -338,7 +416,7 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
   it('rejects a stale projection version before any confirmation', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
     const result = await adapter.dispatch({
       kind: 'update-external-task-status',
       commandId: cmdId(1),
@@ -350,6 +428,56 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('stale-revision')
+    expect((await adapter.getSnapshot()).pendingConfirmation).toBeUndefined()
+  })
+
+  it('refuses the normal flow on a conflicted task and keeps its proposal', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Drive ext-task-002 into conflict: failed offline write, then a
+    // colliding external update.
+    const offline = externalTask(snap, 'ext-task-002')
+    await adapter.dispatch({
+      kind: 'update-external-task-status',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: offline.externalTaskId,
+      status: 'completed',
+      expectedVersion: offline.version
+    })
+    snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'apply-external-task-update',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: offline.externalTaskId,
+      version: offline.version + 1,
+      summary: '飞书端已将该任务标记完成'
+    })
+    snap = await adapter.getSnapshot()
+    const conflicted = externalTask(snap, 'ext-task-002')
+    expect(conflicted.syncState).toBe('conflict')
+    expect(conflicted.proposedChange).toBeDefined()
+
+    // The normal status flow must not silently overwrite a conflict.
+    const result = await adapter.dispatch({
+      kind: 'update-external-task-status',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: conflicted.externalTaskId,
+      status: 'completed',
+      expectedVersion: conflicted.version
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('unavailable')
+    const after = await adapter.getSnapshot()
+    const kept = externalTask(after, 'ext-task-002')
+    expect(kept.businessStatus).toBe('open')
+    expect(kept.syncState).toBe('conflict')
+    expect(kept.proposedChange).toBeDefined()
     expect((await adapter.getSnapshot()).pendingConfirmation).toBeUndefined()
   })
 
@@ -387,7 +515,7 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
   it('expires the status preview when the task version moves before confirmation', async () => {
     const adapter = new MockScenarioAdapter()
     let snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
     await adapter.dispatch({
       kind: 'update-external-task-status',
       commandId: cmdId(1),
@@ -419,17 +547,165 @@ describe('MockScenarioAdapter — update-external-task-status (#10)', () => {
     })
     expect(confirmed.ok).toBe(false)
     if (!confirmed.ok) expect(confirmed.reason).toBe('invalid-target')
-    expect(externalTask(await adapter.getSnapshot()).businessStatus).toBe(
+    expect(externalTask(await adapter.getSnapshot(), 'ext-task-003').businessStatus).toBe(
       'open'
     )
   })
 })
 
-describe('MockScenarioAdapter — request-external-task-operation (#10)', () => {
-  it('routes deletion through the shared confirmation host and removes linked records', async () => {
+describe('MockScenarioAdapter — resolve-external-task-conflict (#10)', () => {
+  async function driveIntoConflict(adapter: MockScenarioAdapter) {
+    let snap = await adapter.getSnapshot()
+    const offline = externalTask(snap, 'ext-task-002')
+    await adapter.dispatch({
+      kind: 'update-external-task-status',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: offline.externalTaskId,
+      status: 'completed',
+      expectedVersion: offline.version
+    })
+    snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'apply-external-task-update',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: offline.externalTaskId,
+      version: offline.version + 1,
+      summary: '飞书端已将该任务标记完成'
+    })
+    return adapter.getSnapshot()
+  }
+
+  it('discards the proposal and atomically resolves the conflict attention', async () => {
+    const adapter = new MockScenarioAdapter()
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await driveIntoConflict(adapter)
+    const task = externalTask(snap, 'ext-task-002')
+    expect(task.syncState).toBe('conflict')
+    const attention = snap.attentionItems.find(
+      (item) =>
+        item.state === 'open' &&
+        item.target.kind === 'external-task' &&
+        item.target.externalTaskId === task.externalTaskId
+    )!
+    expect(attention).toBeDefined()
+
+    const result = await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'discard'
+    })
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    expect(updated.syncState).toBe('synced')
+    expect(updated.proposedChange).toBeUndefined()
+    expect(updated.businessStatus).toBe('open')
+    const resolved = after.attentionItems.find(
+      (item) => item.attentionItemId === attention.attentionItemId
+    )!
+    expect(resolved.state).toBe('resolved')
+    expect(
+      events.some(
+        (event) =>
+          event.kind === 'attention-changed' &&
+          event.attentionItemId === attention.attentionItemId
+      )
+    ).toBe(true)
+  })
+
+  it('overwrites through the confirmation host and applies the proposal atomically', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await driveIntoConflict(adapter)
+    const task = externalTask(snap, 'ext-task-002')
+
+    const request = await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'overwrite'
+    })
+    expect(request.ok).toBe(true)
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    expect(pending.action).toContain('覆盖')
+    expect(pending.nonBypassableReason).toBeTruthy()
+
+    const confirmed = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(4),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    expect(confirmed.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    expect(updated.businessStatus).toBe('completed')
+    expect(updated.syncState).toBe('synced')
+    expect(updated.proposedChange).toBeUndefined()
+    expect(updated.version).toBe(task.version + 1)
+    // The conflict attention resolves in the same transition.
+    expect(
+      after.attentionItems.some(
+        (item) =>
+          item.state === 'open' &&
+          item.target.kind === 'external-task' &&
+          item.target.externalTaskId === task.externalTaskId
+      )
+    ).toBe(false)
+    expect(
+      after.activity.some(
+        (candidate) => candidate.kind === 'external-task-write'
+      )
+    ).toBe(true)
+  })
+
+  it('fails closed when the task is not conflicted or the version moved', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const synced = externalTask(snap, 'ext-task-003')
+    const notConflicted = await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: synced.externalTaskId,
+      expectedVersion: synced.version,
+      resolution: 'discard'
+    })
+    expect(notConflicted.ok).toBe(false)
+    if (!notConflicted.ok) expect(notConflicted.reason).toBe('invalid-target')
+
+    const stale = await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: synced.externalTaskId,
+      expectedVersion: synced.version - 1,
+      resolution: 'discard'
+    })
+    expect(stale.ok).toBe(false)
+    if (!stale.ok) expect(stale.reason).toBe('stale-revision')
+  })
+})
+
+describe('MockScenarioAdapter — request-external-task-operation (#10)', () => {
+  it('tombstones the projection but keeps local Dispatch/Result audit', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const task = externalTask(snap, 'ext-task-003')
 
     const request = await adapter.dispatch({
       kind: 'request-external-task-operation',
@@ -442,9 +718,6 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
     expect(request.ok).toBe(true)
     const pending = (await adapter.getSnapshot()).pendingConfirmation!
     expect(pending.action).toContain('删除')
-    expect(pending.target).toContain(task.title)
-    expect(pending.impact).toBeTruthy()
-    expect(pending.nonBypassableReason).toBeTruthy()
 
     const confirmed = await adapter.dispatch({
       kind: 'confirm-dangerous-action',
@@ -454,42 +727,89 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
     })
     expect(confirmed.ok).toBe(true)
     const after = await adapter.getSnapshot()
-    expect(
-      after.externalTasks.some(
-        (candidate) => candidate.externalTaskId === task.externalTaskId
-      )
-    ).toBe(false)
-    // Linked Dispatch/Result records die with the projection.
+    const tombstoned = externalTask(after, 'ext-task-003')
+    expect(tombstoned.lifecycle).toBe('deleted')
+    // Local Dispatch/Result truth survives the external deletion.
     expect(
       after.dispatches.some(
         (candidate) =>
           candidate.taskRef.kind === 'external-task' &&
           candidate.taskRef.externalTaskId === task.externalTaskId
       )
-    ).toBe(false)
+    ).toBe(true)
     expect(
       after.executionResults.some(
         (candidate) =>
           candidate.taskRef.kind === 'external-task' &&
           candidate.taskRef.externalTaskId === task.externalTaskId
       )
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it('batch-deletes multiple tasks through one confirmation', async () => {
+  it('atomically resolves attention items that targeted the deleted task', async () => {
+    const scenario = createStandardScenario()
+    scenario.attentionItems.push({
+      attentionItemId: id('att-ext-003', 'AttentionItemId'),
+      kind: 'connection-conflict',
+      target: {
+        kind: 'external-task',
+        projectId: PROJECT,
+        externalTaskId: id('ext-task-003', 'ExternalTaskId')
+      },
+      state: 'open',
+      title: '飞书任务「渠道拓展计划」存在版本冲突'
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    const events: WorkbenchEvent[] = []
+    adapter.subscribe((event) => events.push(event))
+    const snap = await adapter.getSnapshot()
+    const task = externalTask(snap, 'ext-task-003')
+    const globalBefore = snap.global.attentionCount
+
+    await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'delete',
+      externalTaskIds: [task.externalTaskId]
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    const resolved = after.attentionItems.find(
+      (item) => item.attentionItemId === id('att-ext-003', 'AttentionItemId')
+    )!
+    expect(resolved.state).toBe('resolved')
+    expect(after.global.attentionCount).toBe(globalBefore - 1)
+    expect(
+      events.some(
+        (event) =>
+          event.kind === 'attention-changed' &&
+          event.attentionItemId === id('att-ext-003', 'AttentionItemId')
+      )
+    ).toBe(true)
+  })
+
+  it('batch-deletes through one confirmation as tombstones', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const ids = [
-      id('ext-task-001', 'ExternalTaskId'),
-      id('ext-task-002', 'ExternalTaskId')
-    ] as const
     const request = await adapter.dispatch({
       kind: 'request-external-task-operation',
       commandId: cmdId(1),
       expectedRevision: snap.revision,
       projectId: PROJECT,
       operation: 'batch-delete',
-      externalTaskIds: [...ids]
+      externalTaskIds: [
+        id('ext-task-003', 'ExternalTaskId'),
+        id('ext-task-004', 'ExternalTaskId')
+      ]
     })
     expect(request.ok).toBe(true)
     const pending = (await adapter.getSnapshot()).pendingConfirmation!
@@ -502,15 +822,104 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
     })
     expect(confirmed.ok).toBe(true)
     const after = await adapter.getSnapshot()
-    expect(after.externalTasks).toHaveLength(0)
+    expect(externalTask(after, 'ext-task-003').lifecycle).toBe('deleted')
+    expect(externalTask(after, 'ext-task-004').lifecycle).toBe('deleted')
   })
 
-  it('records member and permission changes as confirmed external writes without deleting the task', async () => {
+  it('fails an offline write as a kept proposal instead of a fake success', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const offline = externalTask(snap, 'ext-task-002')
+
+    const result = await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'delete',
+      externalTaskIds: [offline.externalTaskId]
+    })
+    expect(result.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    // No confirmation was offered and nothing was deleted: the failed write
+    // keeps its proposal and reason instead.
+    expect((await adapter.getSnapshot()).pendingConfirmation).toBeUndefined()
+    expect(updated.lifecycle).toBe('active')
+    expect(updated.proposedChange).toBeDefined()
+    expect(updated.proposedChange!.failureReason).toBeTruthy()
+    expect(
+      after.activity.some(
+        (candidate) => candidate.kind === 'external-task-write-failed'
+      )
+    ).toBe(true)
+  })
+
+  it('fails closed on conflicted tasks before any preview', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const conflicted = externalTask(snap, 'ext-task-001')
+    expect(conflicted.syncState).toBe('conflict')
+    const result = await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'delete',
+      externalTaskIds: [conflicted.externalTaskId]
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('unavailable')
+    expect((await adapter.getSnapshot()).pendingConfirmation).toBeUndefined()
+  })
+
+  it('freezes the preview and fails closed when version or sync state drifts', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    const task = externalTask(snap, 'ext-task-003')
+    await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'change-members',
+      externalTaskIds: [task.externalTaskId]
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+
+    // The projection moves between preview and confirmation.
+    snap = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'apply-external-task-update',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      version: task.version + 1,
+      summary: '飞书端更新了任务'
+    })
+
+    const confirmed = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(3),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    expect(confirmed.ok).toBe(false)
+    if (!confirmed.ok) expect(confirmed.reason).toBe('invalid-target')
+    // The drifted write never executed.
+    expect(externalTask(await adapter.getSnapshot(), 'ext-task-003').version).toBe(
+      task.version + 1
+    )
+  })
+
+  it('records member and permission changes as confirmed external writes', async () => {
     for (const operation of ['change-members', 'change-permissions'] as const) {
       const adapter = new MockScenarioAdapter()
       const snap = await adapter.getSnapshot()
-      const task = externalTask(snap)
-      const request = await adapter.dispatch({
+      const task = externalTask(snap, 'ext-task-003')
+      await adapter.dispatch({
         kind: 'request-external-task-operation',
         commandId: cmdId(1),
         expectedRevision: snap.revision,
@@ -518,7 +927,6 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
         operation,
         externalTaskIds: [task.externalTaskId]
       })
-      expect(request.ok).toBe(true)
       const pending = (await adapter.getSnapshot()).pendingConfirmation!
       const confirmed = await adapter.dispatch({
         kind: 'confirm-dangerous-action',
@@ -528,7 +936,7 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
       })
       expect(confirmed.ok).toBe(true)
       const after = await adapter.getSnapshot()
-      const updated = externalTask(after)
+      const updated = externalTask(after, 'ext-task-003')
       expect(updated.version).toBe(task.version + 1)
       expect(
         after.activity.some(
@@ -538,13 +946,41 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
     }
   })
 
-  it('rejects unknown tasks and a second operation while confirmation is pending', async () => {
+  it('rejects operations on tombstoned or unknown tasks and while busy', async () => {
     const adapter = new MockScenarioAdapter()
-    const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
-    const ghost = await adapter.dispatch({
+    let snap = await adapter.getSnapshot()
+    // Tombstone ext-task-003 first.
+    await adapter.dispatch({
       kind: 'request-external-task-operation',
       commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'delete',
+      externalTaskIds: [id('ext-task-003', 'ExternalTaskId')]
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+
+    snap = await adapter.getSnapshot()
+    const onTombstone = await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'change-members',
+      externalTaskIds: [id('ext-task-003', 'ExternalTaskId')]
+    })
+    expect(onTombstone.ok).toBe(false)
+    if (!onTombstone.ok) expect(onTombstone.reason).toBe('invalid-target')
+
+    const ghost = await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(4),
       expectedRevision: snap.revision,
       projectId: PROJECT,
       operation: 'delete',
@@ -552,23 +988,22 @@ describe('MockScenarioAdapter — request-external-task-operation (#10)', () => 
     })
     expect(ghost.ok).toBe(false)
     if (!ghost.ok) expect(ghost.reason).toBe('invalid-target')
-    expect((await adapter.getSnapshot()).pendingConfirmation).toBeUndefined()
 
     await adapter.dispatch({
       kind: 'request-external-task-operation',
-      commandId: cmdId(2),
+      commandId: cmdId(5),
       expectedRevision: snap.revision,
       projectId: PROJECT,
       operation: 'delete',
-      externalTaskIds: [task.externalTaskId]
+      externalTaskIds: [id('ext-task-004', 'ExternalTaskId')]
     })
     const busy = await adapter.dispatch({
       kind: 'request-external-task-operation',
-      commandId: cmdId(3),
+      commandId: cmdId(6),
       expectedRevision: (await adapter.getSnapshot()).revision,
       projectId: PROJECT,
       operation: 'change-members',
-      externalTaskIds: [task.externalTaskId]
+      externalTaskIds: [id('ext-task-004', 'ExternalTaskId')]
     })
     expect(busy.ok).toBe(false)
     if (!busy.ok) expect(busy.reason).toBe('busy')
@@ -579,7 +1014,7 @@ describe('MockScenarioAdapter — apply-external-task-update (#10)', () => {
   it('refreshes only the projection and never starts an Agent', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
     const runActivityBefore = snap.activity.filter(
       (entry) => entry.kind === 'run-started'
     ).length
@@ -599,7 +1034,7 @@ describe('MockScenarioAdapter — apply-external-task-update (#10)', () => {
     expect(result.ok).toBe(true)
 
     const after = await adapter.getSnapshot()
-    expect(externalTask(after).version).toBe(task.version + 1)
+    expect(externalTask(after, 'ext-task-003').version).toBe(task.version + 1)
     expect(
       after.activity.filter((entry) => entry.kind === 'run-started')
     ).toHaveLength(runActivityBefore)
@@ -608,68 +1043,10 @@ describe('MockScenarioAdapter — apply-external-task-update (#10)', () => {
     }
   })
 
-  it('turns a colliding update into conflict plus an Attention item', async () => {
-    const adapter = new MockScenarioAdapter()
-    let snap = await adapter.getSnapshot()
-    // Give the task a pending local proposal first: the offline write failed.
-    const offline = externalTask(snap, 'ext-task-002')
-    await adapter.dispatch({
-      kind: 'update-external-task-status',
-      commandId: cmdId(1),
-      expectedRevision: snap.revision,
-      projectId: PROJECT,
-      externalTaskId: offline.externalTaskId,
-      status: 'completed',
-      expectedVersion: offline.version
-    })
-    snap = await adapter.getSnapshot()
-    expect(externalTask(snap, 'ext-task-002').proposedChange).toBeDefined()
-    const events: WorkbenchEvent[] = []
-    adapter.subscribe((event) => events.push(event))
-    const attentionBefore = snap.attentionItems.filter(
-      (item) => item.state === 'open'
-    ).length
-
-    const result = await adapter.dispatch({
-      kind: 'apply-external-task-update',
-      commandId: cmdId(2),
-      expectedRevision: snap.revision,
-      projectId: PROJECT,
-      externalTaskId: offline.externalTaskId,
-      version: offline.version + 1,
-      summary: '飞书端已将该任务标记完成'
-    })
-    expect(result.ok).toBe(true)
-
-    const after = await adapter.getSnapshot()
-    const updated = externalTask(after, 'ext-task-002')
-    expect(updated.syncState).toBe('conflict')
-    // The proposal is still kept for the user to resolve.
-    expect(updated.proposedChange).toBeDefined()
-    const attention = after.attentionItems.find(
-      (item) =>
-        item.state === 'open' &&
-        item.kind === 'connection-conflict' &&
-        item.target.kind === 'external-task' &&
-        item.target.externalTaskId === offline.externalTaskId
-    )
-    expect(attention).toBeDefined()
-    expect(
-      after.attentionItems.filter((item) => item.state === 'open')
-    ).toHaveLength(attentionBefore + 1)
-    expect(
-      events.some(
-        (event) =>
-          event.kind === 'attention-changed' &&
-          event.attentionItemId === attention!.attentionItemId
-      )
-    ).toBe(true)
-  })
-
-  it('rejects a non-forward external version', async () => {
+  it('rejects a non-forward external version and updates on tombstones', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const task = externalTask(snap)
+    const task = externalTask(snap, 'ext-task-003')
     const result = await adapter.dispatch({
       kind: 'apply-external-task-update',
       commandId: cmdId(1),
@@ -685,7 +1062,7 @@ describe('MockScenarioAdapter — apply-external-task-update (#10)', () => {
 })
 
 describe('MockScenarioAdapter — tasks scenario data (#10)', () => {
-  it('seeds distinguishable local and external tasks with projection facts', async () => {
+  it('seeds distinguishable tasks with projection facts and name snapshots', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
     const local = snap.projectTasks.find(
@@ -698,15 +1075,19 @@ describe('MockScenarioAdapter — tasks scenario data (#10)', () => {
     const task = externalTask(snap)
     expect(task.externalId).toBeTruthy()
     expect(task.version).toBeGreaterThan(0)
+    expect(task.lifecycle).toBe('active')
     expect(task.dispatchIds.length).toBeGreaterThan(0)
-    // Seeded dispatches expose independent results in distinct review states.
+    // Every dispatch carries an immutable snapshot of the Agent's name.
+    for (const dispatch of snap.dispatches) {
+      expect(dispatch.agentNameSnapshot).toBeTruthy()
+    }
     const states = new Set(
       snap.executionResults.map((candidate) => candidate.reviewState)
     )
     expect(states.has('pending-review')).toBe(true)
     expect(states.has('accepted')).toBe(true)
-    // Offline and conflict projections both exist for degradation display.
     expect(externalTask(snap, 'ext-task-002').syncState).toBe('offline')
-    expect(['conflict', 'synced']).toContain(task.syncState)
+    expect(externalTask(snap, 'ext-task-003').syncState).toBe('synced')
+    expect(externalTask(snap).syncState).toBe('conflict')
   })
 })

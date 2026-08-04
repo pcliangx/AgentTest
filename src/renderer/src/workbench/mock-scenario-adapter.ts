@@ -256,7 +256,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
     | {
         type: 'external-task-operation'
         operation: ExternalTaskOperation
-        externalTaskIds: ExternalTaskId[]
+        targets: Array<{
+          externalTaskId: ExternalTaskId
+          expectedVersion: number
+          expectedSyncState: string
+        }>
+      }
+    | {
+        type: 'external-task-conflict-overwrite'
+        externalTaskId: ExternalTaskId
+        expectedVersion: number
       }
     | null = null
 
@@ -678,27 +687,39 @@ export class MockScenarioAdapter implements WorkbenchPort {
 
         if (pendingAction.type === 'external-task-operation') {
           const operation = pendingAction.operation
-          const ids = new Set(pendingAction.externalTaskIds)
-          const affected = this.snapshot.externalTasks.filter((candidate) =>
-            ids.has(candidate.externalTaskId)
+          // Re-validate every frozen target before execution (ADR-0010):
+          // any drift in version, sync state or lifecycle fails closed and
+          // demands a fresh preview.
+          const frozenTargets = pendingAction.targets.map((frozen) => ({
+            frozen,
+            task: this.snapshot.externalTasks.find(
+              (candidate) => candidate.externalTaskId === frozen.externalTaskId
+            )
+          }))
+          const drifted = frozenTargets.some(
+            ({ frozen, task }) =>
+              !task ||
+              task.lifecycle !== 'active' ||
+              task.version !== frozen.expectedVersion ||
+              task.syncState !== frozen.expectedSyncState
           )
+          if (drifted) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '任务预览已过期：版本或同步状态已变化，请重新预览'
+            )
+          }
+          const affected = frozenTargets.map(({ task }) => task!)
           const activityProjectId = affected[0]?.projectId
           if (operation === 'delete' || operation === 'batch-delete') {
-            this.snapshot.externalTasks = this.snapshot.externalTasks.filter(
-              (candidate) => !ids.has(candidate.externalTaskId)
-            )
-            // Linked Dispatch/Result records die with the projection.
-            this.snapshot.dispatches = this.snapshot.dispatches.filter(
-              (candidate) =>
-                candidate.taskRef.kind !== 'external-task' ||
-                !ids.has(candidate.taskRef.externalTaskId)
-            )
-            this.snapshot.executionResults =
-              this.snapshot.executionResults.filter(
-                (candidate) =>
-                  candidate.taskRef.kind !== 'external-task' ||
-                  !ids.has(candidate.taskRef.externalTaskId)
-              )
+            // External deletion is a tombstone: the projection stays so
+            // local Dispatch/Result audit and Attention deep links remain
+            // reachable, while related Attention resolves atomically.
+            for (const task of affected) {
+              task.lifecycle = 'deleted'
+              this.resolveTaskConflictAttention(task, postEvents)
+            }
           } else {
             // change-members / change-permissions: mock records the external
             // write and bumps the projection version — no real Feishu CRUD.
@@ -725,6 +746,52 @@ export class MockScenarioAdapter implements WorkbenchPort {
             kind: 'dangerous-action-confirmed',
             summary: `已确认: ${action}（${target}）`
           })
+          return null
+        }
+
+        if (pendingAction.type === 'external-task-conflict-overwrite') {
+          const task = this.snapshot.externalTasks.find(
+            (candidate) =>
+              candidate.externalTaskId === pendingAction.externalTaskId
+          )
+          if (
+            !task ||
+            task.lifecycle !== 'active' ||
+            task.syncState !== 'conflict' ||
+            task.version !== pendingAction.expectedVersion
+          ) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '冲突预览已过期：版本或状态已变化，请重新预览'
+            )
+          }
+          // Apply the frozen proposal atomically with the conflict's
+          // settlement: sync state, proposal and Attention move together.
+          task.businessStatus = 'completed'
+          task.version += 1
+          task.syncState = 'synced'
+          task.proposedChange = undefined
+          this.resolveTaskConflictAttention(task, postEvents)
+          this.snapshot.pendingConfirmation = undefined
+          this.pendingAction = null
+          this.snapshot.activity = [
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write',
+              summary: `飞书任务「${task.title}」冲突已由本地拟议修改覆盖（v${task.version}）`
+            },
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'dangerous-action-confirmed',
+              summary: `已确认: ${action}（${target}）`
+            },
+            ...this.snapshot.activity
+          ]
           return null
         }
 
@@ -1723,18 +1790,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'dispatch-task': {
-        const project = this.snapshot.projects.find(
-          (candidate) => candidate.projectId === command.projectId
-        )
-        if (!project) {
-          return this.reject(command, 'invalid-target', 'Project 不存在')
-        }
         const task = this.findTaskByRef(command.taskRef, command.projectId)
         if (!task) {
           return this.reject(command, 'invalid-target', '任务不存在')
-        }
-        if (command.targets.length === 0) {
-          return this.reject(command, 'invalid-target', '派发目标不能为空')
         }
         if (
           command.instruction === undefined ||
@@ -1742,67 +1800,59 @@ export class MockScenarioAdapter implements WorkbenchPort {
         ) {
           return this.reject(command, 'invalid-target', '指令不能为空')
         }
-        const targets = []
-        for (const targetId of command.targets) {
-          const agent = this.snapshot.agents.find(
-            (candidate) =>
-              candidate.agentInstanceId === targetId &&
-              candidate.projectId === command.projectId
-          )
-          if (!agent) {
-            return this.reject(command, 'invalid-target', 'Agent 不存在')
-          }
-          if (
-            agent.runtimeState === 'unavailable' ||
-            agent.runtimeState === 'archived'
-          ) {
-            return this.reject(
-              command,
-              'unavailable',
-              `Agent ${agent.name} 当前不可用`
-            )
-          }
-          targets.push(agent)
+        // The Picker previewed this exact plan; confirmation executes the
+        // SAME planner at the SAME revision atomically (ADR-0009,
+        // HANDOFF §5.5). The mock Run starts or enqueues per plan entry —
+        // a Dispatch is never written as completed here, and no Execution
+        // Result exists before the explicit completion transition.
+        const planResult = buildDispatchPlan(this.snapshot, {
+          expectedRevision: command.expectedRevision,
+          projectId: command.projectId,
+          targets: command.targets
+        })
+        if (!planResult.ok) {
+          return this.reject(command, planResult.reason, planResult.message)
         }
-        // Phase 1 models the Dispatch/Result record layer (#10): each target
-        // gets its own independent Dispatch and pending-review result. This
-        // never starts a Run and never touches the External Task's business
-        // status — both stay explicit user actions.
+        const { plan } = planResult
         const now = this.clock()
         const dispatchIds = []
-        for (const agent of targets) {
+        for (const entry of plan.entries) {
+          const agent = this.snapshot.agents.find(
+            (candidate) => candidate.agentInstanceId === entry.agentInstanceId
+          )!
           const dispatchId = this.freshId('DispatchId')
           this.snapshot.dispatches.push({
             dispatchId,
             projectId: command.projectId,
             agentInstanceId: agent.agentInstanceId,
+            agentNameSnapshot: agent.name,
             taskRef: structuredClone(command.taskRef),
             instruction: command.instruction,
-            status: 'completed',
+            status: entry.outcome === 'start' ? 'active' : 'queued',
             createdAt: now
           })
           task.dispatchIds.push(dispatchId)
-          this.snapshot.executionResults.push({
-            resultId: this.freshId('ExecutionResultId'),
-            dispatchId,
-            projectId: command.projectId,
-            agentInstanceId: agent.agentInstanceId,
-            taskRef: structuredClone(command.taskRef),
-            summary: `针对「${task.title}」的模拟执行结果：${command.instruction}`,
-            reviewState: 'pending-review',
-            createdAt: now
-          })
+          if (entry.outcome === 'queue') {
+            this.enqueue(agent)
+          } else {
+            this.startMockRun(agent, command.projectId)
+          }
           dispatchIds.push(dispatchId)
         }
         this.snapshot.activity = [
-          ...targets.map((agent) => ({
-            activityId: this.freshId('ActivityId'),
-            projectId: command.projectId,
-            agentInstanceId: agent.agentInstanceId,
-            timestamp: now,
-            kind: 'dispatch-created' as const,
-            summary: `${agent.name} 收到任务派发：${command.instruction}`
-          })),
+          ...plan.entries.map((entry) => {
+            const agent = this.snapshot.agents.find(
+              (candidate) => candidate.agentInstanceId === entry.agentInstanceId
+            )!
+            return {
+              activityId: this.freshId('ActivityId'),
+              projectId: command.projectId,
+              agentInstanceId: agent.agentInstanceId,
+              timestamp: now,
+              kind: 'dispatch-created' as const,
+              summary: `${agent.name} 收到任务派发：${command.instruction}`
+            }
+          }),
           ...this.snapshot.activity
         ]
         postEvents.push({
@@ -1810,6 +1860,60 @@ export class MockScenarioAdapter implements WorkbenchPort {
           correlationId: command.commandId,
           dispatchIds
         })
+        return null
+      }
+      case 'complete-dispatch': {
+        const dispatch = this.snapshot.dispatches.find(
+          (candidate) =>
+            candidate.dispatchId === command.dispatchId &&
+            candidate.projectId === command.projectId
+        )
+        if (!dispatch) {
+          return this.reject(command, 'invalid-target', '派发不存在')
+        }
+        // Only an active mock Run can complete; queued or already completed
+        // dispatches are duplicate responses.
+        if (dispatch.status !== 'active') {
+          return this.reject(
+            command,
+            'invalid-target',
+            '该派发不在进行中，不能完成'
+          )
+        }
+        dispatch.status = 'completed'
+        const agent = this.snapshot.agents.find(
+          (candidate) => candidate.agentInstanceId === dispatch.agentInstanceId
+        )
+        const now = this.clock()
+        this.snapshot.executionResults.push({
+          resultId: this.freshId('ExecutionResultId'),
+          dispatchId: dispatch.dispatchId,
+          projectId: dispatch.projectId,
+          agentInstanceId: dispatch.agentInstanceId,
+          taskRef: structuredClone(dispatch.taskRef),
+          summary: `针对「${dispatch.instruction}」的模拟执行结果`,
+          reviewState: 'pending-review',
+          createdAt: now
+        })
+        // The explicit mock completion also frees the execution slot.
+        if (agent && isActiveStructuredRunState(agent.runtimeState)) {
+          agent.runtimeState = 'ready'
+          delete agent.activeRunId
+          delete agent.activeRunConfigVersion
+          agent.lastActivityAt = now
+          this.recomputeActiveRunCounts()
+        }
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: dispatch.projectId,
+            agentInstanceId: dispatch.agentInstanceId,
+            timestamp: now,
+            kind: 'run-completed',
+            summary: `${dispatch.agentNameSnapshot} 完成了任务派发：${dispatch.instruction}`
+          },
+          ...this.snapshot.activity
+        ]
         return null
       }
       case 'review-execution-result': {
@@ -1851,7 +1955,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
             candidate.externalTaskId === command.externalTaskId &&
             candidate.projectId === command.projectId
         )
-        if (!task) {
+        if (!task || task.lifecycle !== 'active') {
           return this.reject(command, 'invalid-target', 'External Task 不存在')
         }
         if (command.expectedVersion !== task.version) {
@@ -1859,6 +1963,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
             command,
             'stale-revision',
             '任务投影版本已过期，请刷新后重试'
+          )
+        }
+        // A conflict can never be silently overwritten by the normal flow
+        // (ADR-0010): it needs the explicit version-bound resolution first.
+        if (task.syncState === 'conflict') {
+          return this.reject(
+            command,
+            'unavailable',
+            '任务存在冲突，请先解决冲突'
           )
         }
         // A failed external write is itself an authoritative outcome: the
@@ -1900,6 +2013,61 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         return null
       }
+      case 'resolve-external-task-conflict': {
+        const task = this.snapshot.externalTasks.find(
+          (candidate) =>
+            candidate.externalTaskId === command.externalTaskId &&
+            candidate.projectId === command.projectId
+        )
+        if (!task || task.lifecycle !== 'active') {
+          return this.reject(command, 'invalid-target', 'External Task 不存在')
+        }
+        if (command.expectedVersion !== task.version) {
+          return this.reject(
+            command,
+            'stale-revision',
+            '任务投影版本已过期，请刷新后重试'
+          )
+        }
+        if (task.syncState !== 'conflict') {
+          return this.reject(command, 'invalid-target', '任务当前没有冲突')
+        }
+        if (command.resolution === 'discard') {
+          // Dropping the local proposal is a local-only action: sync state,
+          // proposal and the conflict Attention settle atomically.
+          task.proposedChange = undefined
+          task.syncState = 'synced'
+          this.resolveTaskConflictAttention(task, postEvents)
+          this.snapshot.activity = [
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write',
+              summary: `已放弃飞书任务「${task.title}」的本地拟议修改`
+            },
+            ...this.snapshot.activity
+          ]
+          return null
+        }
+        // Overwrite is its own high-risk action (ADR-0010) and goes through
+        // the shared confirmation host, frozen on this exact version.
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        this.pendingAction = {
+          type: 'external-task-conflict-overwrite',
+          externalTaskId: task.externalTaskId,
+          expectedVersion: command.expectedVersion
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: this.freshId('ConfirmationId'),
+          action: '覆盖飞书任务冲突',
+          target: `${task.title}（${task.externalId}）`,
+          impact: `将用本地拟议修改「${task.proposedChange?.summary ?? ''}」覆盖飞书端（当前 v${task.version}）；冲突与对应 Attention 将原子解决。`,
+          nonBypassableReason: '冲突覆盖需要二次确认，无法跳过'
+        }
+        return null
+      }
       case 'request-external-task-operation': {
         const busy = this.rejectIfConfirmationPending(command)
         if (busy) return busy
@@ -1913,10 +2081,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
               candidate.externalTaskId === externalTaskId &&
               candidate.projectId === command.projectId
           )
-          if (!task) {
+          if (!task || task.lifecycle !== 'active') {
             return this.reject(command, 'invalid-target', 'External Task 不存在')
           }
           tasks.push(task)
+        }
+        // A conflict can never be silently overwritten by a high-risk write
+        // (ADR-0010) — it needs the explicit resolution flow first.
+        if (tasks.some((task) => task.syncState === 'conflict')) {
+          return this.reject(
+            command,
+            'unavailable',
+            '任务存在冲突，请先解决冲突'
+          )
         }
         const titles = tasks.map((task) => task.title).join('、')
         const meta: Record<
@@ -1925,11 +2102,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         > = {
           delete: {
             action: '删除飞书任务',
-            impact: `将删除飞书任务「${titles}」及其本地 Dispatch 与执行结果记录，且不可恢复。`
+            impact: `将删除飞书任务「${titles}」的外部投影（本地 Dispatch 与执行结果保留为审计）；此操作不可恢复。`
           },
           'batch-delete': {
             action: '批量删除飞书任务',
-            impact: `将批量删除 ${tasks.length} 个飞书任务「${titles}」及其本地 Dispatch 与执行结果记录，且不可恢复。`
+            impact: `将批量删除 ${tasks.length} 个飞书任务「${titles}」的外部投影（本地 Dispatch 与执行结果保留为审计）；此操作不可恢复。`
           },
           'change-members': {
             action: '变更飞书任务成员',
@@ -1941,10 +2118,45 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
         }
         const { action, impact } = meta[command.operation]
+        // An offline/unavailable target makes the whole write doomed: fail
+        // it as a kept proposal with its reason instead of faking a success
+        // through the confirmation host.
+        const unreachable = tasks.filter(
+          (task) =>
+            task.syncState === 'offline' || task.syncState === 'unavailable'
+        )
+        if (unreachable.length > 0) {
+          for (const task of unreachable) {
+            task.proposedChange = {
+              summary: action,
+              failureReason:
+                task.syncState === 'offline'
+                  ? '连接离线，无法写入飞书'
+                  : '飞书端不可用，无法写入'
+            }
+          }
+          this.snapshot.activity = [
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: tasks[0].projectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write-failed',
+              summary: `${action} 写入失败：${unreachable[0].proposedChange!.failureReason}`
+            },
+            ...this.snapshot.activity
+          ]
+          return null
+        }
+        // Freeze exactly what the user previews: every target's version and
+        // sync state is re-validated before execution (ADR-0010).
         this.pendingAction = {
           type: 'external-task-operation',
           operation: command.operation,
-          externalTaskIds: command.externalTaskIds
+          targets: tasks.map((task) => ({
+            externalTaskId: task.externalTaskId,
+            expectedVersion: task.version,
+            expectedSyncState: task.syncState
+          }))
         }
         this.snapshot.pendingConfirmation = {
           confirmationId: this.freshId('ConfirmationId'),
@@ -1961,7 +2173,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
             candidate.externalTaskId === command.externalTaskId &&
             candidate.projectId === command.projectId
         )
-        if (!task) {
+        if (!task || task.lifecycle !== 'active') {
           return this.reject(command, 'invalid-target', 'External Task 不存在')
         }
         if (command.version <= task.version) {
@@ -2106,6 +2318,33 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.snapshot.global.concurrency.activeGlobal = this.snapshot.agents.filter(
       (agent) => isActiveStructuredRunState(agent.runtimeState)
     ).length
+  }
+
+  /**
+   * Atomically resolves every open Attention item targeting this External
+   * Task and recomputes the projections. Used by conflict settlement and
+   * tombstoning, so no Attention ever deep-links into a stale context.
+   */
+  private resolveTaskConflictAttention(
+    task: WorkbenchViewModel['externalTasks'][number],
+    postEvents: PostDispatchEvent[]
+  ): void {
+    for (const item of this.snapshot.attentionItems) {
+      if (
+        item.state !== 'open' ||
+        item.target.kind !== 'external-task' ||
+        item.target.externalTaskId !== task.externalTaskId
+      ) {
+        continue
+      }
+      item.state = 'resolved'
+      postEvents.push({
+        kind: 'attention-changed',
+        attentionItemId: item.attentionItemId,
+        state: 'resolved'
+      })
+    }
+    this.recomputeAttentionCounts()
   }
 
   /** Resolves a TaskRef to its task record within the given Project. */

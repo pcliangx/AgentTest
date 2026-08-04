@@ -280,6 +280,7 @@ export function createStandardScenario(
         version: 3,
         syncState: 'conflict',
         businessStatus: 'open',
+        lifecycle: 'active',
         dispatchIds: [id('disp-001', 'DispatchId'), id('disp-002', 'DispatchId')]
       },
       {
@@ -291,6 +292,31 @@ export function createStandardScenario(
         version: 1,
         syncState: 'offline',
         businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: []
+      },
+      {
+        // Synced projection with its own dispatch history (#10).
+        externalTaskId: id('ext-task-003', 'ExternalTaskId'),
+        projectId,
+        title: '渠道拓展计划',
+        externalId: 'FS-T-3072',
+        version: 2,
+        syncState: 'synced',
+        businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: [id('disp-004', 'DispatchId')]
+      },
+      {
+        // Synced projection without dispatches yet.
+        externalTaskId: id('ext-task-004', 'ExternalTaskId'),
+        projectId,
+        title: '门店巡检',
+        externalId: 'FS-T-4096',
+        version: 1,
+        syncState: 'synced',
+        businessStatus: 'open',
+        lifecycle: 'active',
         dispatchIds: []
       }
     ],
@@ -299,6 +325,7 @@ export function createStandardScenario(
         dispatchId: id('disp-001', 'DispatchId'),
         projectId,
         agentInstanceId: ccData,
+        agentNameSnapshot: 'cc_data',
         taskRef: {
           kind: 'external-task',
           externalTaskId: id('ext-task-001', 'ExternalTaskId')
@@ -311,6 +338,7 @@ export function createStandardScenario(
         dispatchId: id('disp-002', 'DispatchId'),
         projectId,
         agentInstanceId: cxReview,
+        agentNameSnapshot: 'cx_review',
         taskRef: {
           kind: 'external-task',
           externalTaskId: id('ext-task-001', 'ExternalTaskId')
@@ -323,6 +351,7 @@ export function createStandardScenario(
         dispatchId: id('disp-003', 'DispatchId'),
         projectId,
         agentInstanceId: kimiViz,
+        agentNameSnapshot: 'kimi_visual',
         taskRef: {
           kind: 'project-task',
           projectTaskId: id('ptask-001', 'ProjectTaskId')
@@ -330,6 +359,19 @@ export function createStandardScenario(
         instruction: '生成本月报表初稿',
         status: 'completed',
         createdAt: now - 900_000
+      },
+      {
+        dispatchId: id('disp-004', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccEtl,
+        agentNameSnapshot: 'cc_etl',
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-003', 'ExternalTaskId')
+        },
+        instruction: '评估华东渠道缺口',
+        status: 'completed',
+        createdAt: now - 700_000
       }
     ],
     executionResults: [
@@ -372,6 +414,19 @@ export function createStandardScenario(
         summary: '报表初稿已生成，缺华东区分页',
         reviewState: 'pending-review',
         createdAt: now - 800_000
+      },
+      {
+        resultId: id('res-004', 'ExecutionResultId'),
+        dispatchId: id('disp-004', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccEtl,
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-003', 'ExternalTaskId')
+        },
+        summary: '华东 3 城渠道覆盖不足，建议先试点苏州',
+        reviewState: 'pending-review',
+        createdAt: now - 650_000
       }
     ],
     permissionRequests: [

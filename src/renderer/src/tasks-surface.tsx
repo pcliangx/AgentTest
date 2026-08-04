@@ -88,11 +88,6 @@ export function TasksSurface({
     return result
   }
 
-  const agentName = (agentInstanceId: string): string =>
-    snapshot.agents.find(
-      (candidate) => candidate.agentInstanceId === agentInstanceId
-    )?.name ?? agentInstanceId
-
   const projectExternalTasks = snapshot.externalTasks.filter(
     (candidate) => candidate.projectId === project.projectId
   )
@@ -136,8 +131,35 @@ export function TasksSurface({
               key={dispatchId}
               className="rounded bg-neutral-950 px-2.5 py-1.5 text-xs"
             >
-              <div className="text-neutral-300">
-                {agentName(dispatch.agentInstanceId)} · {dispatch.instruction}
+              <div className="flex items-center gap-2">
+                <span className="text-neutral-300">
+                  {dispatch.agentNameSnapshot} · {dispatch.instruction}
+                </span>
+                {dispatch.status === 'active' && (
+                  <>
+                    <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-sky-300">
+                      进行中
+                    </span>
+                    <button
+                      aria-label={`模拟完成：${dispatch.instruction.slice(0, 12)}`}
+                      className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200 hover:bg-neutral-700"
+                      onClick={() =>
+                        void act({
+                          kind: 'complete-dispatch',
+                          projectId: project.projectId,
+                          dispatchId: dispatch.dispatchId
+                        })
+                      }
+                    >
+                      模拟完成
+                    </button>
+                  </>
+                )}
+                {dispatch.status === 'queued' && (
+                  <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                    排队中
+                  </span>
+                )}
               </div>
               {result && (
                 <div className="mt-1 space-y-1">
@@ -213,6 +235,8 @@ export function TasksSurface({
       externalTaskId: task.externalTaskId
     }
     const highlighted = isHighlighted(taskRef)
+    const tombstoned = task.lifecycle === 'deleted'
+    const conflicted = task.syncState === 'conflict'
     return (
       <article
         key={task.externalTaskId}
@@ -222,16 +246,23 @@ export function TasksSurface({
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              aria-label={`选择 ${task.title}`}
-              checked={selectedForBatch.has(task.externalTaskId)}
-              onChange={() => toggleBatch(task.externalTaskId)}
-            />
+            {!tombstoned && (
+              <input
+                type="checkbox"
+                aria-label={`选择 ${task.title}`}
+                checked={selectedForBatch.has(task.externalTaskId)}
+                onChange={() => toggleBatch(task.externalTaskId)}
+              />
+            )}
             <span className="text-sm text-neutral-100">{task.title}</span>
             {highlighted && (
               <span className="rounded bg-blue-950 px-1.5 py-0.5 text-[10px] text-blue-300">
                 深链目标
+              </span>
+            )}
+            {tombstoned && (
+              <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                已删除
               </span>
             )}
           </div>
@@ -249,58 +280,99 @@ export function TasksSurface({
         </div>
 
         {task.proposedChange && (
-          <p role="alert" className="rounded bg-amber-950/50 px-2 py-1 text-xs text-amber-300">
-            拟议修改：{task.proposedChange.summary}（
-            {task.proposedChange.failureReason}）
-          </p>
+          <div
+            role="alert"
+            className="space-y-1.5 rounded bg-amber-950/50 px-2 py-1.5 text-xs text-amber-300"
+          >
+            <p>
+              拟议修改：{task.proposedChange.summary}（
+              {task.proposedChange.failureReason}）
+            </p>
+            {conflicted && !tombstoned && (
+              <div className="flex gap-1.5">
+                <button
+                  className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200 hover:bg-neutral-700"
+                  onClick={() =>
+                    void act({
+                      kind: 'resolve-external-task-conflict',
+                      projectId: project.projectId,
+                      externalTaskId: task.externalTaskId,
+                      expectedVersion: task.version,
+                      resolution: 'discard'
+                    })
+                  }
+                >
+                  放弃拟议修改
+                </button>
+                <button
+                  className="rounded bg-amber-900 px-2 py-0.5 text-[11px] text-amber-100 hover:bg-amber-800"
+                  onClick={() =>
+                    void act({
+                      kind: 'resolve-external-task-conflict',
+                      projectId: project.projectId,
+                      externalTaskId: task.externalTaskId,
+                      expectedVersion: task.version,
+                      resolution: 'overwrite'
+                    })
+                  }
+                >
+                  用拟议修改覆盖
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {renderDispatchResults(taskRef, task.dispatchIds)}
 
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
-            onClick={() => onDispatchTask(taskRef, task.title)}
-          >
-            派发给 Agent
-          </button>
-          {task.businessStatus === 'open' && (
+        {!tombstoned && (
+          <div className="flex flex-wrap gap-1.5">
             <button
-              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-emerald-300 hover:bg-neutral-700"
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
+              onClick={() => onDispatchTask(taskRef, task.title)}
+            >
+              派发给 Agent
+            </button>
+            {task.businessStatus === 'open' && (
+              <button
+                className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-emerald-300 hover:bg-neutral-700"
+                onClick={() =>
+                  void act({
+                    kind: 'update-external-task-status',
+                    projectId: project.projectId,
+                    externalTaskId: task.externalTaskId,
+                    status: 'completed',
+                    expectedVersion: task.version
+                  })
+                }
+              >
+                标记完成
+              </button>
+            )}
+            <button
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
               onClick={() =>
-                void act({
-                  kind: 'update-external-task-status',
-                  projectId: project.projectId,
-                  externalTaskId: task.externalTaskId,
-                  status: 'completed',
-                  expectedVersion: task.version
-                })
+                requestOperation('change-members', [task.externalTaskId])
               }
             >
-              标记完成
+              成员
             </button>
-          )}
-          <button
-            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
-            onClick={() => requestOperation('change-members', [task.externalTaskId])}
-          >
-            成员
-          </button>
-          <button
-            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
-            onClick={() =>
-              requestOperation('change-permissions', [task.externalTaskId])
-            }
-          >
-            权限
-          </button>
-          <button
-            className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
-            onClick={() => requestOperation('delete', [task.externalTaskId])}
-          >
-            删除
-          </button>
-        </div>
+            <button
+              className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300 hover:bg-neutral-700"
+              onClick={() =>
+                requestOperation('change-permissions', [task.externalTaskId])
+              }
+            >
+              权限
+            </button>
+            <button
+              className="rounded bg-red-950 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900"
+              onClick={() => requestOperation('delete', [task.externalTaskId])}
+            >
+              删除
+            </button>
+          </div>
+        )}
       </article>
     )
   }

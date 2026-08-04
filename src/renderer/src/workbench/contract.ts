@@ -288,13 +288,17 @@ export interface DispatchViewModel {
   dispatchId: DispatchId
   projectId: ProjectId
   agentInstanceId: AgentInstanceId
+  /** Immutable snapshot of the Agent's name at dispatch time (#10). */
+  agentNameSnapshot: string
   taskRef: TaskRef
   instruction: string
   /**
-   * Phase 1 models the Dispatch/Result record layer only: the mock delivers
-   * each Dispatch's result record directly, without claiming a real Run.
+   * Planner-bound lifecycle: a task dispatch starts ('active') or queues
+   * ('queued') exactly as the confirmed plan projects; 'completed' only
+   * ever comes from the explicit mock completion transition that also
+   * produces the Execution Result.
    */
-  status: 'completed'
+  status: 'active' | 'queued' | 'completed'
   createdAt: number
 }
 
@@ -333,6 +337,11 @@ export interface ExternalTaskViewModel {
   version: number
   syncState: TaskSyncState
   businessStatus: 'open' | 'completed'
+  /**
+   * External deletion is a tombstone: the projection stays so local
+   * Dispatch/Result audit and Attention deep links remain reachable (#10).
+   */
+  lifecycle: 'active' | 'deleted'
   dispatchIds: DispatchId[]
   /** A failed external write keeps the proposal and its reason (US-055). */
   proposedChange?: { summary: string; failureReason: string }
@@ -536,6 +545,11 @@ export type WorkbenchCommandBody =
       instruction: string
     }
   | {
+      kind: 'complete-dispatch'
+      projectId: ProjectId
+      dispatchId: DispatchId
+    }
+  | {
       kind: 'review-execution-result'
       projectId: ProjectId
       resultId: ExecutionResultId
@@ -547,6 +561,13 @@ export type WorkbenchCommandBody =
       externalTaskId: ExternalTaskId
       status: 'completed'
       expectedVersion: number
+    }
+  | {
+      kind: 'resolve-external-task-conflict'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      expectedVersion: number
+      resolution: 'discard' | 'overwrite'
     }
   | {
       kind: 'request-external-task-operation'

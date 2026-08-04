@@ -85,17 +85,17 @@ describe('Tasks surface — projections (#10)', () => {
 })
 
 describe('Tasks surface — dispatch (#10)', () => {
-  it('dispatches one External Task to multiple Agents through the unified picker', async () => {
+  it('dispatches through the planner and produces results only via mock completion', async () => {
     const { user, adapter } = await renderShell()
     await gotoTasks(user)
-    const card = taskCard('Q2 销售目标')
+    const card = taskCard('渠道拓展计划')
 
     await user.click(
       within(card).getByRole('button', { name: '派发给 Agent' })
     )
     const dialog = await screen.findByRole('dialog', { name: '派发给 Agent' })
     // The picker carries the task context.
-    expect(dialog).toHaveTextContent('Q2 销售目标')
+    expect(dialog).toHaveTextContent('渠道拓展计划')
 
     await user.click(
       within(dialog).getByRole('button', { name: /cx_review/ })
@@ -111,26 +111,58 @@ describe('Tasks surface — dispatch (#10)', () => {
       within(dialog).getByRole('button', { name: '确认派发' })
     )
 
-    // Each target forms an independent Dispatch/Result, and the External
-    // Task is NOT auto-completed.
+    // The confirmed planner executes: the first ready target starts, the
+    // second queues — and no Execution Result exists yet.
     await waitFor(async () => {
       const snap = await adapter.getSnapshot()
       const task = snap.externalTasks.find(
-        (candidate) => candidate.title === 'Q2 销售目标'
+        (candidate) => candidate.title === '渠道拓展计划'
       )!
-      expect(task.dispatchIds.length).toBe(4)
+      expect(task.dispatchIds.length).toBe(3)
       expect(task.businessStatus).toBe('open')
-      const pending = snap.executionResults.filter(
-        (result) =>
-          result.taskRef.kind === 'external-task' &&
-          result.taskRef.externalTaskId === task.externalTaskId &&
-          result.reviewState === 'pending-review'
+      const created = snap.dispatches.filter((dispatch) =>
+        task.dispatchIds.slice(-2).includes(dispatch.dispatchId)
       )
-      expect(pending.length).toBeGreaterThanOrEqual(3)
+      expect(created.find((d) => d.agentNameSnapshot === 'cx_review')!.status).toBe(
+        'active'
+      )
+      expect(
+        created.find((d) => d.agentNameSnapshot === 'kimi_visual')!.status
+      ).toBe('queued')
+      for (const dispatch of created) {
+        expect(
+          snap.executionResults.some(
+            (candidate) => candidate.dispatchId === dispatch.dispatchId
+          )
+        ).toBe(false)
+      }
     })
-    // The new results render in the card.
-    const updated = taskCard('Q2 销售目标')
-    expect(updated).toHaveTextContent('并行复核 Q2 口径')
+    const updated = taskCard('渠道拓展计划')
+    expect(updated).toHaveTextContent('进行中')
+    expect(updated).toHaveTextContent('排队中')
+
+    // The explicit mock completion produces the pending-review result.
+    await user.click(
+      within(updated).getByRole('button', {
+        name: /模拟完成：并行复核 Q2 口径/
+      })
+    )
+    await waitFor(() => {
+      expect(taskCard('渠道拓展计划')).toHaveTextContent('待评审')
+    })
+  })
+
+  it('renders dispatch history from the immutable name snapshot', async () => {
+    const scenario = createStandardScenario()
+    // kimi_visual is renamed after disp-003 was created: history keeps the
+    // dispatch-time snapshot, never the renamed identity.
+    scenario.agents.find((agent) => agent.name === 'kimi_visual')!.name =
+      'renamed_viz'
+    const { user } = await renderShell(scenario)
+    await gotoTasks(user)
+    const card = taskCard('月度报表')
+    expect(card).toHaveTextContent('kimi_visual')
+    expect(card).not.toHaveTextContent('renamed_viz')
   })
 })
 
@@ -166,7 +198,7 @@ describe('Tasks surface — review and acceptance (#10)', () => {
   it('marks business completion only through the explicit confirmation host', async () => {
     const { user } = await renderShell()
     await gotoTasks(user)
-    const card = taskCard('Q2 销售目标')
+    const card = taskCard('渠道拓展计划')
     await user.click(
       within(card).getByRole('button', { name: '标记完成' })
     )
@@ -174,15 +206,78 @@ describe('Tasks surface — review and acceptance (#10)', () => {
     const dialog = await screen.findByRole('dialog', {
       name: '更新飞书任务状态'
     })
-    expect(dialog).toHaveTextContent('Q2 销售目标')
+    expect(dialog).toHaveTextContent('渠道拓展计划')
     expect(dialog).toHaveTextContent('不可恢复')
     expect(dialog).toHaveTextContent('无法跳过')
 
     await user.click(within(dialog).getByRole('button', { name: '确认' }))
     await waitFor(() => {
+      const updated = taskCard('渠道拓展计划')
+      expect(updated).toHaveTextContent('已完成')
+      expect(updated).toHaveTextContent('v3')
+    })
+  })
+
+  it('refuses the normal status flow on a conflicted task and offers explicit resolution', async () => {
+    const scenario = createStandardScenario()
+    const conflicted = scenario.externalTasks.find(
+      (candidate) => candidate.title === 'Q2 销售目标'
+    )!
+    conflicted.proposedChange = {
+      summary: '标记为「已完成」',
+      failureReason: '连接离线，无法写入飞书'
+    }
+    const { user } = await renderShell(scenario)
+    await gotoTasks(user)
+    const card = taskCard('Q2 销售目标')
+
+    // The normal flow is blocked: conflict needs explicit resolution.
+    await user.click(
+      within(card).getByRole('button', { name: '标记完成' })
+    )
+    expect(
+      screen.queryByRole('dialog', { name: '更新飞书任务状态' })
+    ).toBeNull()
+    expect(await screen.findByText(/任务存在冲突/)).toBeVisible()
+
+    // Overwrite goes through its own confirmation host and settles the
+    // conflict atomically.
+    await user.click(
+      within(card).getByRole('button', { name: '用拟议修改覆盖' })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: '覆盖飞书任务冲突'
+    })
+    expect(dialog).toHaveTextContent('无法跳过')
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+    await waitFor(() => {
       const updated = taskCard('Q2 销售目标')
       expect(updated).toHaveTextContent('已完成')
-      expect(updated).toHaveTextContent('v4')
+      expect(updated).toHaveTextContent('已同步')
+      expect(updated).not.toHaveTextContent('拟议修改')
+    })
+  })
+
+  it('discards a conflict proposal and settles sync state atomically', async () => {
+    const scenario = createStandardScenario()
+    const conflicted = scenario.externalTasks.find(
+      (candidate) => candidate.title === 'Q2 销售目标'
+    )!
+    conflicted.proposedChange = {
+      summary: '标记为「已完成」',
+      failureReason: '连接离线，无法写入飞书'
+    }
+    const { user } = await renderShell(scenario)
+    await gotoTasks(user)
+    const card = taskCard('Q2 销售目标')
+    await user.click(
+      within(card).getByRole('button', { name: '放弃拟议修改' })
+    )
+    await waitFor(() => {
+      const updated = taskCard('Q2 销售目标')
+      expect(updated).toHaveTextContent('已同步')
+      expect(updated).toHaveTextContent('未完成')
+      expect(updated).not.toHaveTextContent('拟议修改')
     })
   })
 
@@ -209,26 +304,64 @@ describe('Tasks surface — review and acceptance (#10)', () => {
 })
 
 describe('Tasks surface — high-risk operations (#10)', () => {
-  it('deletes an External Task only through the confirmation host', async () => {
+  it('tombstones an External Task through the confirmation host and keeps local audit', async () => {
+    const { user } = await renderShell()
+    await gotoTasks(user)
+    const card = taskCard('门店巡检')
+    await user.click(within(card).getByRole('button', { name: '删除' }))
+
+    const dialog = await screen.findByRole('dialog', { name: '删除飞书任务' })
+    expect(dialog).toHaveTextContent('门店巡检')
+    expect(dialog).toHaveTextContent('无法跳过')
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
+    await waitFor(() => {
+      const tombstoned = taskCard('门店巡检')
+      expect(tombstoned).toHaveTextContent('已删除')
+      expect(
+        within(tombstoned).queryByRole('button', { name: '删除' })
+      ).toBeNull()
+    })
+  })
+
+  it('keeps the local dispatch history reachable on a tombstoned task', async () => {
+    const { user } = await renderShell()
+    await gotoTasks(user)
+    const card = taskCard('渠道拓展计划')
+    await user.click(within(card).getByRole('button', { name: '删除' }))
+    const dialog = await screen.findByRole('dialog', { name: '删除飞书任务' })
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
+    await waitFor(() => {
+      const tombstoned = taskCard('渠道拓展计划')
+      expect(tombstoned).toHaveTextContent('已删除')
+      // Local Dispatch/Result truth survives the external deletion.
+      expect(tombstoned).toHaveTextContent('评估华东渠道缺口')
+      expect(tombstoned).toHaveTextContent('华东 3 城渠道覆盖不足')
+    })
+  })
+
+  it('fails an offline deletion as a kept proposal instead of a fake success', async () => {
     const { user } = await renderShell()
     await gotoTasks(user)
     const card = taskCard('客户回访清单')
     await user.click(within(card).getByRole('button', { name: '删除' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '删除飞书任务' })
-    expect(dialog).toHaveTextContent('客户回访清单')
-    expect(dialog).toHaveTextContent('无法跳过')
-    await user.click(within(dialog).getByRole('button', { name: '确认' }))
-
+    // No confirmation host for a doomed write: the failure and the proposal
+    // stay visible instead.
+    expect(screen.queryByRole('dialog', { name: '删除飞书任务' })).toBeNull()
     await waitFor(() => {
-      expect(screen.queryByText('客户回访清单')).toBeNull()
+      const updated = taskCard('客户回访清单')
+      expect(updated).toHaveTextContent('拟议修改')
+      expect(updated).toHaveTextContent('连接离线')
+      expect(updated).not.toHaveTextContent('已删除')
     })
   })
 
   it('routes member and permission changes through the same confirmation contract', async () => {
     const { user } = await renderShell()
     await gotoTasks(user)
-    const card = taskCard('Q2 销售目标')
+    const card = taskCard('渠道拓展计划')
     await user.click(within(card).getByRole('button', { name: '成员' }))
     const membersDialog = await screen.findByRole('dialog', {
       name: '变更飞书任务成员'
@@ -239,7 +372,7 @@ describe('Tasks surface — high-risk operations (#10)', () => {
     )
 
     await user.click(
-      within(taskCard('Q2 销售目标')).getByRole('button', { name: '权限' })
+      within(taskCard('渠道拓展计划')).getByRole('button', { name: '权限' })
     )
     const permissionsDialog = await screen.findByRole('dialog', {
       name: '变更飞书任务权限'
@@ -249,7 +382,7 @@ describe('Tasks surface — high-risk operations (#10)', () => {
       within(permissionsDialog).getByRole('button', { name: '确认' })
     )
     await waitFor(() => {
-      expect(taskCard('Q2 销售目标')).toHaveTextContent('v4')
+      expect(taskCard('渠道拓展计划')).toHaveTextContent('v3')
     })
   })
 
@@ -270,7 +403,9 @@ describe('Tasks surface — high-risk operations (#10)', () => {
       })
     )
     await user.click(
-      within(taskCard('Q2 销售目标')).getByRole('button', { name: '标记完成' })
+      within(taskCard('渠道拓展计划')).getByRole('button', {
+        name: '标记完成'
+      })
     )
     await user.click(
       within(
@@ -278,7 +413,7 @@ describe('Tasks surface — high-risk operations (#10)', () => {
       ).getByRole('button', { name: '确认' })
     )
     await user.click(
-      within(taskCard('客户回访清单')).getByRole('button', { name: '删除' })
+      within(taskCard('门店巡检')).getByRole('button', { name: '删除' })
     )
     await user.click(
       within(
