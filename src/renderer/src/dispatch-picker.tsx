@@ -4,6 +4,7 @@ import type {
   AgentInstanceViewModel,
   DispatchPlan,
   ProjectViewModel,
+  TaskRef,
   WorkbenchPort,
   WorkbenchViewModel
 } from './workbench/contract'
@@ -220,12 +221,19 @@ export function DispatchPicker({
   snapshot,
   planDispatch,
   sendCommand,
+  taskContext,
   onClose
 }: {
   project: ProjectViewModel
   snapshot: WorkbenchViewModel
   planDispatch: WorkbenchPort['planDispatch']
   sendCommand: SendCommand
+  /**
+   * When opened from the Tasks surface (#10), the confirmation sends a
+   * task-linked `dispatch-task` instead of a bare `confirm-dispatch`, so
+   * every target forms an independent Dispatch/Result on this task.
+   */
+  taskContext?: { ref: TaskRef; title: string } | null
   onClose: () => void
 }) {
   const projectAgents = snapshot.agents.filter(
@@ -471,12 +479,20 @@ export function DispatchPicker({
     setSubmitting(true)
     try {
       const result = await sendCommand(
-        {
-          kind: 'confirm-dispatch',
-          projectId: submission.projectId,
-          targets: submission.targetIds,
-          instruction: submission.instruction
-        },
+        taskContext
+          ? {
+              kind: 'dispatch-task',
+              projectId: submission.projectId,
+              taskRef: taskContext.ref,
+              targets: submission.targetIds,
+              instruction: submission.instruction
+            }
+          : {
+              kind: 'confirm-dispatch',
+              projectId: submission.projectId,
+              targets: submission.targetIds,
+              instruction: submission.instruction
+            },
         submission.revision
       )
       if (result.ok) {
@@ -561,6 +577,11 @@ export function DispatchPicker({
         className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-lg border border-neutral-700 bg-neutral-900 p-4"
       >
         <h3 className="text-sm font-medium text-neutral-100">派发给 Agent</h3>
+        {taskContext && (
+          <p className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300">
+            任务：{taskContext.title}
+          </p>
+        )}
 
         <div className="space-y-1">
           <div className="text-xs text-neutral-400">

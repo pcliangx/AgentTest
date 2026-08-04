@@ -33,6 +33,7 @@ export type ProjectTaskId = Brand<string, 'ProjectTaskId'>
 export type ExternalTaskId = Brand<string, 'ExternalTaskId'>
 export type KnowledgeResourceId = Brand<string, 'KnowledgeResourceId'>
 export type ActivityId = Brand<string, 'ActivityId'>
+export type ExecutionResultId = Brand<string, 'ExecutionResultId'>
 
 /** Brands a raw string into a branded ID (cast helper). */
 export function id<T extends string, Name extends string>(
@@ -258,6 +259,85 @@ export interface ConfirmationViewModel {
   nonBypassableReason: string
 }
 
+// ---------------------------------------------------------------------------
+// Tasks domain (#10) — local Project Task vs Feishu External Task projection
+// ---------------------------------------------------------------------------
+
+/** Stable reference to the task a Dispatch/Result belongs to. */
+export type TaskRef =
+  | { kind: 'project-task'; projectTaskId: ProjectTaskId }
+  | { kind: 'external-task'; externalTaskId: ExternalTaskId }
+
+/** Sync truth of an External Task projection, never inferred by the UI. */
+export type TaskSyncState = 'synced' | 'offline' | 'conflict' | 'unavailable'
+
+/** User review of an Execution Result — the only path to acceptance. */
+export type ExecutionReviewState =
+  | 'pending-review'
+  | 'accepted'
+  | 'revision-requested'
+
+/** High-risk mock External Task operations routed through the confirmation host. */
+export type ExternalTaskOperation =
+  | 'delete'
+  | 'batch-delete'
+  | 'change-members'
+  | 'change-permissions'
+
+export interface DispatchViewModel {
+  dispatchId: DispatchId
+  projectId: ProjectId
+  agentInstanceId: AgentInstanceId
+  taskRef: TaskRef
+  instruction: string
+  /**
+   * Phase 1 models the Dispatch/Result record layer only: the mock delivers
+   * each Dispatch's result record directly, without claiming a real Run.
+   */
+  status: 'completed'
+  createdAt: number
+}
+
+export interface ExecutionResultViewModel {
+  resultId: ExecutionResultId
+  dispatchId: DispatchId
+  projectId: ProjectId
+  agentInstanceId: AgentInstanceId
+  taskRef: TaskRef
+  summary: string
+  reviewState: ExecutionReviewState
+  createdAt: number
+  reviewedAt?: number
+}
+
+/** A bounded local goal that only exists inside Agent Squad HQ. */
+export interface ProjectTaskViewModel {
+  projectTaskId: ProjectTaskId
+  projectId: ProjectId
+  title: string
+  status: 'open' | 'completed'
+  dispatchIds: DispatchId[]
+}
+
+/**
+ * The local projection of a Feishu-held task. Feishu owns the business
+ * fields; Agent Squad HQ tracks dispatch, results, acceptance and the
+ * projection's version/sync truth. A single Run or accepted result never
+ * changes `businessStatus` — that requires an explicit separate write.
+ */
+export interface ExternalTaskViewModel {
+  externalTaskId: ExternalTaskId
+  projectId: ProjectId
+  title: string
+  externalId: string
+  version: number
+  syncState: TaskSyncState
+  businessStatus: 'open' | 'completed'
+  dispatchIds: DispatchId[]
+  /** A failed external write keeps the proposal and its reason (US-055). */
+  proposedChange?: { summary: string; failureReason: string }
+}
+
 export type ActivityKind =
   | 'run-started'
   | 'run-completed'
@@ -269,6 +349,9 @@ export type ActivityKind =
   | 'attention-resolved'
   | 'instruction-sent'
   | 'dispatch-created'
+  | 'execution-result-reviewed'
+  | 'external-task-write'
+  | 'external-task-write-failed'
   | 'queue-cancelled'
   | 'dangerous-action-confirmed'
 
@@ -320,6 +403,10 @@ export interface WorkbenchViewModel {
   queue: QueueItemViewModel[]
   permissionRequests: PermissionRequestViewModel[]
   attentionItems: AttentionItemViewModel[]
+  projectTasks: ProjectTaskViewModel[]
+  externalTasks: ExternalTaskViewModel[]
+  dispatches: DispatchViewModel[]
+  executionResults: ExecutionResultViewModel[]
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
   appliedConfigurations: AppliedConfigurationViewModel[]
@@ -440,6 +527,39 @@ export type WorkbenchCommandBody =
       projectId: ProjectId
       targets: AgentInstanceId[]
       instruction: string
+    }
+  | {
+      kind: 'dispatch-task'
+      projectId: ProjectId
+      taskRef: TaskRef
+      targets: AgentInstanceId[]
+      instruction: string
+    }
+  | {
+      kind: 'review-execution-result'
+      projectId: ProjectId
+      resultId: ExecutionResultId
+      decision: 'accept' | 'request-revision'
+    }
+  | {
+      kind: 'update-external-task-status'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      status: 'completed'
+      expectedVersion: number
+    }
+  | {
+      kind: 'request-external-task-operation'
+      projectId: ProjectId
+      operation: ExternalTaskOperation
+      externalTaskIds: ExternalTaskId[]
+    }
+  | {
+      kind: 'apply-external-task-update'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      version: number
+      summary: string
     }
   | {
       kind: 'manage-queue'

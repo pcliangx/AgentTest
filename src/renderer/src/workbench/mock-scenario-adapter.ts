@@ -7,10 +7,13 @@ import type {
   ConnectionId,
   DispatchPlanRequest,
   DispatchPlanResult,
+  ExternalTaskId,
+  ExternalTaskOperation,
   LayoutTargetEffect,
   PanelId,
   PermissionRequestId,
   ProjectId,
+  TaskRef,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -244,6 +247,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
         type: 'discard-configuration'
         projectId: ProjectId
         drafts: ConfigurationDraftEntry[]
+      }
+    | {
+        type: 'external-task-status'
+        externalTaskId: ExternalTaskId
+        expectedVersion: number
+      }
+    | {
+        type: 'external-task-operation'
+        operation: ExternalTaskOperation
+        externalTaskIds: ExternalTaskId[]
       }
     | null = null
 
@@ -625,6 +638,95 @@ export class MockScenarioAdapter implements WorkbenchPort {
           )
         }
         const { action, target } = pending
+
+        if (pendingAction.type === 'external-task-status') {
+          const task = this.snapshot.externalTasks.find(
+            (candidate) =>
+              candidate.externalTaskId === pendingAction.externalTaskId
+          )
+          if (!task || task.version !== pendingAction.expectedVersion) {
+            return this.reject(
+              command,
+              'invalid-target',
+              '任务版本已变化，请重新预览'
+            )
+          }
+          task.businessStatus = 'completed'
+          task.version += 1
+          task.proposedChange = undefined
+          this.snapshot.pendingConfirmation = undefined
+          this.pendingAction = null
+          this.snapshot.activity = [
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write',
+              summary: `飞书任务「${task.title}」已标记完成（v${task.version}）`
+            },
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'dangerous-action-confirmed',
+              summary: `已确认: ${action}（${target}）`
+            },
+            ...this.snapshot.activity
+          ]
+          return null
+        }
+
+        if (pendingAction.type === 'external-task-operation') {
+          const operation = pendingAction.operation
+          const ids = new Set(pendingAction.externalTaskIds)
+          const affected = this.snapshot.externalTasks.filter((candidate) =>
+            ids.has(candidate.externalTaskId)
+          )
+          const activityProjectId = affected[0]?.projectId
+          if (operation === 'delete' || operation === 'batch-delete') {
+            this.snapshot.externalTasks = this.snapshot.externalTasks.filter(
+              (candidate) => !ids.has(candidate.externalTaskId)
+            )
+            // Linked Dispatch/Result records die with the projection.
+            this.snapshot.dispatches = this.snapshot.dispatches.filter(
+              (candidate) =>
+                candidate.taskRef.kind !== 'external-task' ||
+                !ids.has(candidate.taskRef.externalTaskId)
+            )
+            this.snapshot.executionResults =
+              this.snapshot.executionResults.filter(
+                (candidate) =>
+                  candidate.taskRef.kind !== 'external-task' ||
+                  !ids.has(candidate.taskRef.externalTaskId)
+              )
+          } else {
+            // change-members / change-permissions: mock records the external
+            // write and bumps the projection version — no real Feishu CRUD.
+            for (const task of affected) {
+              task.version += 1
+            }
+            this.snapshot.activity = [
+              {
+                activityId: this.freshId('ActivityId'),
+                projectId: activityProjectId,
+                timestamp: this.clock(),
+                kind: 'external-task-write',
+                summary: `${action}：${target}`
+              },
+              ...this.snapshot.activity
+            ]
+          }
+          this.snapshot.pendingConfirmation = undefined
+          this.pendingAction = null
+          this.snapshot.activity.unshift({
+            activityId: this.freshId('ActivityId'),
+            projectId: activityProjectId,
+            timestamp: this.clock(),
+            kind: 'dangerous-action-confirmed',
+            summary: `已确认: ${action}（${target}）`
+          })
+          return null
+        }
 
         if (pendingAction.type === 'configuration-apply') {
           const frozen = pendingAction
@@ -1620,6 +1722,281 @@ export class MockScenarioAdapter implements WorkbenchPort {
         this.recomputeAttentionCounts()
         return null
       }
+      case 'dispatch-task': {
+        const project = this.snapshot.projects.find(
+          (candidate) => candidate.projectId === command.projectId
+        )
+        if (!project) {
+          return this.reject(command, 'invalid-target', 'Project 不存在')
+        }
+        const task = this.findTaskByRef(command.taskRef, command.projectId)
+        if (!task) {
+          return this.reject(command, 'invalid-target', '任务不存在')
+        }
+        if (command.targets.length === 0) {
+          return this.reject(command, 'invalid-target', '派发目标不能为空')
+        }
+        if (
+          command.instruction === undefined ||
+          command.instruction.trim().length === 0
+        ) {
+          return this.reject(command, 'invalid-target', '指令不能为空')
+        }
+        const targets = []
+        for (const targetId of command.targets) {
+          const agent = this.snapshot.agents.find(
+            (candidate) =>
+              candidate.agentInstanceId === targetId &&
+              candidate.projectId === command.projectId
+          )
+          if (!agent) {
+            return this.reject(command, 'invalid-target', 'Agent 不存在')
+          }
+          if (
+            agent.runtimeState === 'unavailable' ||
+            agent.runtimeState === 'archived'
+          ) {
+            return this.reject(
+              command,
+              'unavailable',
+              `Agent ${agent.name} 当前不可用`
+            )
+          }
+          targets.push(agent)
+        }
+        // Phase 1 models the Dispatch/Result record layer (#10): each target
+        // gets its own independent Dispatch and pending-review result. This
+        // never starts a Run and never touches the External Task's business
+        // status — both stay explicit user actions.
+        const now = this.clock()
+        const dispatchIds = []
+        for (const agent of targets) {
+          const dispatchId = this.freshId('DispatchId')
+          this.snapshot.dispatches.push({
+            dispatchId,
+            projectId: command.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            taskRef: structuredClone(command.taskRef),
+            instruction: command.instruction,
+            status: 'completed',
+            createdAt: now
+          })
+          task.dispatchIds.push(dispatchId)
+          this.snapshot.executionResults.push({
+            resultId: this.freshId('ExecutionResultId'),
+            dispatchId,
+            projectId: command.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            taskRef: structuredClone(command.taskRef),
+            summary: `针对「${task.title}」的模拟执行结果：${command.instruction}`,
+            reviewState: 'pending-review',
+            createdAt: now
+          })
+          dispatchIds.push(dispatchId)
+        }
+        this.snapshot.activity = [
+          ...targets.map((agent) => ({
+            activityId: this.freshId('ActivityId'),
+            projectId: command.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            timestamp: now,
+            kind: 'dispatch-created' as const,
+            summary: `${agent.name} 收到任务派发：${command.instruction}`
+          })),
+          ...this.snapshot.activity
+        ]
+        postEvents.push({
+          kind: 'dispatch-created',
+          correlationId: command.commandId,
+          dispatchIds
+        })
+        return null
+      }
+      case 'review-execution-result': {
+        const result = this.snapshot.executionResults.find(
+          (candidate) =>
+            candidate.resultId === command.resultId &&
+            candidate.projectId === command.projectId
+        )
+        if (!result) {
+          return this.reject(command, 'invalid-target', '执行结果不存在')
+        }
+        if (result.reviewState !== 'pending-review') {
+          return this.reject(command, 'invalid-target', '该结果已评审')
+        }
+        result.reviewState =
+          command.decision === 'accept' ? 'accepted' : 'revision-requested'
+        result.reviewedAt = this.clock()
+        const agent = this.snapshot.agents.find(
+          (candidate) => candidate.agentInstanceId === result.agentInstanceId
+        )
+        this.snapshot.activity = [
+          {
+            activityId: this.freshId('ActivityId'),
+            projectId: result.projectId,
+            agentInstanceId: result.agentInstanceId,
+            timestamp: this.clock(),
+            kind: 'execution-result-reviewed',
+            summary: `${agent?.name ?? result.agentInstanceId} 的执行结果${command.decision === 'accept' ? '已验收' : '已提出修订'}：${result.summary}`
+          },
+          ...this.snapshot.activity
+        ]
+        return null
+      }
+      case 'update-external-task-status': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        const task = this.snapshot.externalTasks.find(
+          (candidate) =>
+            candidate.externalTaskId === command.externalTaskId &&
+            candidate.projectId === command.projectId
+        )
+        if (!task) {
+          return this.reject(command, 'invalid-target', 'External Task 不存在')
+        }
+        if (command.expectedVersion !== task.version) {
+          return this.reject(
+            command,
+            'stale-revision',
+            '任务投影版本已过期，请刷新后重试'
+          )
+        }
+        // A failed external write is itself an authoritative outcome: the
+        // business status stays untouched while the proposal and its reason
+        // are kept for the user (US-055).
+        if (task.syncState === 'offline' || task.syncState === 'unavailable') {
+          task.proposedChange = {
+            summary: '标记为「已完成」',
+            failureReason:
+              task.syncState === 'offline'
+                ? '连接离线，无法写入飞书'
+                : '飞书端不可用，无法写入'
+          }
+          this.snapshot.activity = [
+            {
+              activityId: this.freshId('ActivityId'),
+              projectId: task.projectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write-failed',
+              summary: `飞书任务「${task.title}」写入失败：${task.proposedChange.failureReason}`
+            },
+            ...this.snapshot.activity
+          ]
+          return null
+        }
+        // The explicit business write is a high-risk external action and
+        // goes through the shared confirmation host like any other.
+        this.pendingAction = {
+          type: 'external-task-status',
+          externalTaskId: task.externalTaskId,
+          expectedVersion: command.expectedVersion
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: this.freshId('ConfirmationId'),
+          action: '更新飞书任务状态',
+          target: `${task.title}（${task.externalId}）`,
+          impact: `将把飞书任务「${task.title}」标记为已完成。单个 Run 或验收结果不会自动完成业务任务；此操作不可恢复。`,
+          nonBypassableReason: '外部业务状态变更需要二次确认，无法跳过'
+        }
+        return null
+      }
+      case 'request-external-task-operation': {
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        if (command.externalTaskIds.length === 0) {
+          return this.reject(command, 'invalid-target', '任务列表不能为空')
+        }
+        const tasks = []
+        for (const externalTaskId of command.externalTaskIds) {
+          const task = this.snapshot.externalTasks.find(
+            (candidate) =>
+              candidate.externalTaskId === externalTaskId &&
+              candidate.projectId === command.projectId
+          )
+          if (!task) {
+            return this.reject(command, 'invalid-target', 'External Task 不存在')
+          }
+          tasks.push(task)
+        }
+        const titles = tasks.map((task) => task.title).join('、')
+        const meta: Record<
+          ExternalTaskOperation,
+          { action: string; impact: string }
+        > = {
+          delete: {
+            action: '删除飞书任务',
+            impact: `将删除飞书任务「${titles}」及其本地 Dispatch 与执行结果记录，且不可恢复。`
+          },
+          'batch-delete': {
+            action: '批量删除飞书任务',
+            impact: `将批量删除 ${tasks.length} 个飞书任务「${titles}」及其本地 Dispatch 与执行结果记录，且不可恢复。`
+          },
+          'change-members': {
+            action: '变更飞书任务成员',
+            impact: `将变更飞书任务「${titles}」的成员设置；mock 只记录该外部写入，不执行真实变更。`
+          },
+          'change-permissions': {
+            action: '变更飞书任务权限',
+            impact: `将变更飞书任务「${titles}」的权限设置；mock 只记录该外部写入，不执行真实变更。`
+          }
+        }
+        const { action, impact } = meta[command.operation]
+        this.pendingAction = {
+          type: 'external-task-operation',
+          operation: command.operation,
+          externalTaskIds: command.externalTaskIds
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: this.freshId('ConfirmationId'),
+          action,
+          target: titles,
+          impact,
+          nonBypassableReason: '飞书高风险操作需要二次确认，无法跳过'
+        }
+        return null
+      }
+      case 'apply-external-task-update': {
+        const task = this.snapshot.externalTasks.find(
+          (candidate) =>
+            candidate.externalTaskId === command.externalTaskId &&
+            candidate.projectId === command.projectId
+        )
+        if (!task) {
+          return this.reject(command, 'invalid-target', 'External Task 不存在')
+        }
+        if (command.version <= task.version) {
+          return this.reject(
+            command,
+            'invalid-target',
+            '外部更新版本必须大于当前投影版本'
+          )
+        }
+        // External updates only ever refresh the projection or create an
+        // Attention item — they never start an Agent (US-055).
+        task.version = command.version
+        if (task.proposedChange) {
+          task.syncState = 'conflict'
+          const attentionItemId = this.freshId('AttentionItemId')
+          this.snapshot.attentionItems.push({
+            attentionItemId,
+            kind: 'connection-conflict',
+            target: {
+              kind: 'external-task',
+              projectId: task.projectId,
+              externalTaskId: task.externalTaskId
+            },
+            state: 'open',
+            title: `飞书任务「${task.title}」外部更新与本地拟议修改冲突`
+          })
+          postEvents.push({
+            kind: 'attention-changed',
+            attentionItemId,
+            state: 'open'
+          })
+          this.recomputeAttentionCounts()
+        }
+        return null
+      }
       case 'set-terminal-takeover': {
         const project = this.snapshot.projects.find(
           (p) => p.projectId === command.projectId
@@ -1729,6 +2106,28 @@ export class MockScenarioAdapter implements WorkbenchPort {
     this.snapshot.global.concurrency.activeGlobal = this.snapshot.agents.filter(
       (agent) => isActiveStructuredRunState(agent.runtimeState)
     ).length
+  }
+
+  /** Resolves a TaskRef to its task record within the given Project. */
+  private findTaskByRef(
+    taskRef: TaskRef,
+    projectId: ProjectId
+  ):
+    | WorkbenchViewModel['projectTasks'][number]
+    | WorkbenchViewModel['externalTasks'][number]
+    | undefined {
+    if (taskRef.kind === 'project-task') {
+      return this.snapshot.projectTasks.find(
+        (candidate) =>
+          candidate.projectTaskId === taskRef.projectTaskId &&
+          candidate.projectId === projectId
+      )
+    }
+    return this.snapshot.externalTasks.find(
+      (candidate) =>
+        candidate.externalTaskId === taskRef.externalTaskId &&
+        candidate.projectId === projectId
+    )
   }
 
   /** Rebuilds attention summaries exclusively from authoritative open items. */
