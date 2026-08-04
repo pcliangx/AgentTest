@@ -42,7 +42,6 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --shadow-overlay: 0 18px 50px rgb(23 32 51 / 14%);
-  --shadow-card: 0 4px 16px rgb(23 32 51 / 7%);
   --shadow-lift: 0 2px 10px rgb(23 32 51 / 6%);
 }
 

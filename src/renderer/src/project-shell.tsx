@@ -205,20 +205,31 @@ const SURFACES: Array<{ surface: ProjectSurface; label: string }> = [
 /**
  * Icon-nav order of the frozen A command-center shell (#65): six workspace
  * surfaces in the rail body; Attention and Settings sit at the rail bottom.
- * Glyphs are decorative only — accessible names stay the Chinese labels.
+ * Glyphs are decorative only — accessible names stay the Chinese labels,
+ * which come from SURFACES so the two lists can never drift apart.
  */
 const NAV_ITEMS: Array<{
   surface: ProjectSurface
-  label: string
   glyph: string
 }> = [
-  { surface: 'overview', label: '概览', glyph: '⌂' },
-  { surface: 'agents', label: 'Agent', glyph: '⌘' },
-  { surface: 'tasks', label: '任务', glyph: '✓' },
-  { surface: 'knowledge', label: '知识', glyph: '◇' },
-  { surface: 'handoffs', label: '交接', glyph: '⇄' },
-  { surface: 'activity', label: '活动', glyph: '≋' }
+  { surface: 'overview', glyph: '⌂' },
+  { surface: 'agents', glyph: '⌘' },
+  { surface: 'tasks', glyph: '✓' },
+  { surface: 'knowledge', glyph: '◇' },
+  { surface: 'handoffs', glyph: '⇄' },
+  { surface: 'activity', glyph: '≋' }
 ]
+
+/**
+ * Shared rail-item styling of the frozen A shell (#65) — one definition so
+ * surface items and the Attention entry can never drift apart.
+ */
+const navRailItemClass = (isActive: boolean): string =>
+  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
+    isActive
+      ? 'bg-nav-active text-nav'
+      : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
+  }`
 
 const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
   { surface: 'connections', label: '连接' },
@@ -744,22 +755,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
    * accessible name stays the Chinese label so existing queries keep
    * matching. Disabled only when no Project exists at all.
    */
-  const renderNavItem = (
-    surface: ProjectSurface,
-    label: string,
-    glyph: string
-  ) => {
+  const renderNavItem = (surface: ProjectSurface, glyph: string) => {
     const isActive = !inGlobalView && project?.currentSurface === surface
+    const label =
+      SURFACES.find((s) => s.surface === surface)?.label ?? surface
     return (
       <button
         key={surface}
         aria-current={isActive ? 'page' : undefined}
         disabled={!project}
-        className={`grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
-          isActive
-            ? 'bg-nav-active text-nav'
-            : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
-        }`}
+        className={navRailItemClass(isActive)}
         onClick={() => {
           if (!project) return
           // The permissions deep link is one-shot: manual surface navigation
@@ -929,17 +934,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             aria-hidden="true"
             className="my-1 h-px w-[30px] shrink-0 bg-nav-line"
           />
-          {NAV_ITEMS.map((item) =>
-            renderNavItem(item.surface, item.label, item.glyph)
-          )}
+          {NAV_ITEMS.map((item) => renderNavItem(item.surface, item.glyph))}
           <div aria-hidden="true" className="flex-1" />
           <button
             aria-label="Global Attention"
-            className={`grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
-              showAttention
-                ? 'bg-nav-active text-nav'
-                : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
-            }`}
+            className={navRailItemClass(showAttention)}
             onClick={() => setShowAttention(true)}
           >
             <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[9px] font-bold text-paper">
@@ -947,7 +946,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </span>
             <span>关注</span>
           </button>
-          {renderNavItem('settings', '设置', '⚙')}
+          {renderNavItem('settings', '⚙')}
         </nav>
 
         {inGlobalView ? (

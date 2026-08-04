@@ -970,7 +970,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               }}
               onDragEnd={ctx.onDragTabEnd}
             >
-              <span>{agent.name}</span>
+              <span className="font-mono">{agent.name}</span>
               {openAttentionTargets.has(tabId) && (
                 <span
                   role="img"
@@ -1174,7 +1174,9 @@ function AgentView({
       className="flex min-h-0 flex-1 flex-col p-4"
     >
       <header className="mb-3">
-        <h3 className="text-base font-medium text-ink">{agent.name}</h3>
+        <h3 className="font-mono text-base font-medium text-ink">
+          {agent.name}
+        </h3>
         <p className="mt-0.5 text-xs text-muted">
           {providerLabel(agent.providerId)} ·{' '}
           {RUNTIME_STATE_LABEL[agent.runtimeState]}

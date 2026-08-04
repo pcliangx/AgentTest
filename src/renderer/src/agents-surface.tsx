@@ -414,7 +414,9 @@ function AgentDirectory({
                   {/* Adjacent text names the state; the dot stays decorative
                       while shape + color double-code it (#65). */}
                   <StatusDot state={statusDotState(agent.runtimeState)} />
-                  <span className="text-sm font-medium text-ink">
+                  {/* Agent Names are technical identifiers — the frozen
+                      baseline renders them in the mono token (#65). */}
+                  <span className="font-mono text-sm font-medium text-ink">
                     {agent.name}
                   </span>
                   {openAttentionTargets.has(agent.agentInstanceId) && (
