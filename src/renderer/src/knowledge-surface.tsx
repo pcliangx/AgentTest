@@ -42,6 +42,18 @@ const KNOWLEDGE_OPERATION_ORDER: KnowledgeOperationKind[] = [
   'security'
 ]
 
+const KNOWLEDGE_OPERATION_COPY: Record<
+  KnowledgeOperationKind,
+  { action: string; failure: string }
+> = {
+  recovery: { action: '恢复连接', failure: '恢复连接失败' },
+  connections: {
+    action: '全局 Connections 导航',
+    failure: '全局 Connections 导航失败'
+  },
+  security: { action: '安全演练', failure: '安全演练失败' }
+}
+
 const FAILURE_REASON_LABEL: Record<KnowledgeFailureReason, string> = {
   'stale-revision': '状态已更新',
   'invalid-target': '目标不存在',
@@ -117,23 +129,32 @@ function KnowledgeRecoveryButton({
 }
 
 function KnowledgeIndependenceNote({
+  project,
   className = 'mt-1 text-neutral-500'
 }: {
+  project: ProjectViewModel
   className?: string
 }) {
+  const localCapabilitiesAvailable =
+    project.lifecycle === 'active' && project.rootAvailability === 'available'
   return (
     <p className={className}>
       Knowledge 连接状态不会自行改变 Project 生命周期、Root
       可用性，以及 Agent、Tasks、Activity 与 worktree 的各自状态。
+      {localCapabilitiesAvailable && (
+        <> 当前仍可使用 Agents、本地 Tasks、Handoffs 与 Activity。</>
+      )}
     </p>
   )
 }
 
 function KnowledgeStateFeedback({
+  project,
   container,
   onOpenConnections,
   onRecoverConnection
 }: {
+  project: ProjectViewModel
   container: KnowledgeContainerViewModel
   onOpenConnections: () => void
   onRecoverConnection: (resourceId: KnowledgeResourceId) => void
@@ -144,7 +165,10 @@ function KnowledgeStateFeedback({
       return (
         <div className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200">
           <p>缓存元数据不完整，不能作为有效离线缓存展示。</p>
-          <KnowledgeIndependenceNote className="mt-1 text-red-300" />
+          <KnowledgeIndependenceNote
+            project={project}
+            className="mt-1 text-red-300"
+          />
           <KnowledgeRecoveryButton
             resourceId={container.knowledgeResourceId}
             tone="neutral"
@@ -172,7 +196,10 @@ function KnowledgeStateFeedback({
     return (
       <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-3 text-sm text-neutral-300">
         <p>尚未配置 Knowledge 主连接。</p>
-        <KnowledgeIndependenceNote className="mt-1 text-xs text-neutral-500" />
+        <KnowledgeIndependenceNote
+          project={project}
+          className="mt-1 text-xs text-neutral-500"
+        />
         <button
           className="mt-3 rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-100 hover:bg-neutral-600"
           onClick={onOpenConnections}
@@ -186,7 +213,7 @@ function KnowledgeStateFeedback({
     return (
       <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
         <p>Knowledge 容器当前不可用。</p>
-        <KnowledgeIndependenceNote />
+        <KnowledgeIndependenceNote project={project} />
         <button
           className="mt-2 rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
           onClick={onOpenConnections}
@@ -200,7 +227,7 @@ function KnowledgeStateFeedback({
   return (
     <div className="border-b border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
       <p>实时内容离线，且没有可用缓存。</p>
-      <KnowledgeIndependenceNote />
+      <KnowledgeIndependenceNote project={project} />
       <KnowledgeRecoveryButton
         resourceId={container.knowledgeResourceId}
         tone="neutral"
@@ -364,6 +391,7 @@ export function KnowledgeSurface({
           </div>
 
           <KnowledgeStateFeedback
+            project={project}
             container={container}
             onOpenConnections={openConnections}
             onRecoverConnection={recoverConnection}
@@ -372,15 +400,17 @@ export function KnowledgeSurface({
           {KNOWLEDGE_OPERATION_ORDER.map((operationKind) => {
             const commandFailure = commandFailures[operationKind]
             if (!commandFailure) return null
+            const operationCopy = KNOWLEDGE_OPERATION_COPY[operationKind]
             return (
               <div
                 key={operationKind}
                 role="alert"
-                aria-label="Knowledge 操作失败"
+                aria-label={`Knowledge ${operationCopy.failure}`}
                 className="border-b border-red-900/70 bg-red-950/30 px-3 py-2 text-xs text-red-200"
               >
                 <p>
-                  操作失败（{FAILURE_REASON_LABEL[commandFailure.reason]}）：
+                  {operationCopy.action}失败（
+                  {FAILURE_REASON_LABEL[commandFailure.reason]}）：
                   {commandFailure.message}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -390,7 +420,7 @@ export function KnowledgeSurface({
                       runCommand(operationKind, commandFailure.retry)
                     }
                   >
-                    重试上次操作
+                    重试{operationCopy.action}
                   </button>
                   <button
                     className="rounded bg-neutral-700 px-2 py-1 text-neutral-100 hover:bg-neutral-600"

@@ -151,6 +151,13 @@ interface KnowledgeContainerBaseViewModel {
   projectId: ProjectId
   knowledgeResourceId?: KnowledgeResourceId
   label?: string
+  /**
+   * Adapter-owned local-change truth. Attention may project this fact, but
+   * resolving that projection never clears the underlying unsynced changes.
+   */
+  unsyncedChanges?: {
+    summary: string
+  }
   humanBrowserIdentity?: string
   connectionId?: ConnectionId
   connectorIdentity?: string

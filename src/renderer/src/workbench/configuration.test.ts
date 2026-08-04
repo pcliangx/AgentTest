@@ -747,12 +747,10 @@ describe('apply-configuration — primary connection', () => {
     expect(draftOf(snap, projectOwner)).toBeDefined()
   })
 
-  it('expires an integration preview when its Knowledge conflict changes', async () => {
+  it('keeps unsynced Knowledge impact after its Attention projection is resolved', async () => {
     const adapter = new MockScenarioAdapter()
-    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
-    await applyAll(adapter, [projectOwner])
-    const preview = await adapter.getSnapshot()
-    const conflict = preview.attentionItems.find(
+    const initial = await adapter.getSnapshot()
+    const conflict = initial.attentionItems.find(
       (item) =>
         item.state === 'open' &&
         item.kind === 'connection-conflict' &&
@@ -765,16 +763,18 @@ describe('apply-configuration — primary connection', () => {
       attentionItemId: conflict.attentionItemId
     })
     expect(resolved.ok).toBe(true)
-    const confirmed = await send(adapter, {
-      kind: 'confirm-dangerous-action',
-      confirmationId: preview.pendingConfirmation!.confirmationId
-    })
 
-    expect(confirmed.ok).toBe(false)
-    if (!confirmed.ok) expect(confirmed.reason).toBe('invalid-target')
-    const after = await adapter.getSnapshot()
-    expect(after.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
-    expect(after.pendingConfirmation).toBeDefined()
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    const requested = await applyAll(adapter, [projectOwner])
+    expect(requested.ok).toBe(true)
+
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation?.impact).toContain(
+      '未同步 Knowledge 修改'
+    )
+    expect(preview.pendingConfirmation?.impact).toContain(
+      '销售知识库有未同步的修改'
+    )
   })
 
   it('requires connection-difference confirmation even with zero bindings', async () => {

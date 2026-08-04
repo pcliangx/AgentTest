@@ -49,6 +49,27 @@ class RejectingKnowledgeAdapter extends MockScenarioAdapter {
   }
 }
 
+class RejectingConcurrentKnowledgeAdapter extends MockScenarioAdapter {
+  override async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    if (
+      command.kind !== 'recover-knowledge-connection' &&
+      command.kind !== 'preview-knowledge-security-event'
+    ) {
+      return super.dispatch(command)
+    }
+    return {
+      ok: false,
+      commandId: command.commandId,
+      reason: 'unavailable',
+      latestRevision: command.expectedRevision,
+      message:
+        command.kind === 'recover-knowledge-connection'
+          ? 'Knowledge 恢复连接失败'
+          : 'Knowledge 安全演练失败'
+    }
+  }
+}
+
 class ThrowingKnowledgeAdapter extends MockScenarioAdapter {
   constructor(
     private readonly throwingKind:
@@ -147,6 +168,42 @@ class EventFirstKnowledgeNavigationAdapter extends MockScenarioAdapter {
   }
 }
 
+type DeferredKnowledgeRaceResult = 'tasks' | 'knowledge' | 'agent-layout'
+
+class DeferredKnowledgeRaceAdapter extends MockScenarioAdapter {
+  private releases = new Map<DeferredKnowledgeRaceResult, () => void>()
+
+  override async dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+    const result = await super.dispatch(command)
+    if (command.kind === 'change-layout') {
+      return new Promise((resolve) => {
+        this.releases.set('agent-layout', () => resolve(result))
+      })
+    }
+    if (
+      command.kind !== 'navigate' ||
+      (command.surface !== 'tasks' && command.surface !== 'knowledge')
+    ) {
+      return result
+    }
+    const surface = command.surface
+    return new Promise((resolve) => {
+      this.releases.set(surface, () => resolve(result))
+    })
+  }
+
+  hasPending(result: DeferredKnowledgeRaceResult): boolean {
+    return this.releases.has(result)
+  }
+
+  releaseResult(result: DeferredKnowledgeRaceResult): void {
+    const release = this.releases.get(result)
+    if (!release) throw new Error(`${result} Result is not pending`)
+    this.releases.delete(result)
+    release()
+  }
+}
+
 class ThrowingKnowledgeNavigationAdapter extends MockScenarioAdapter {
   override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
     if (command.kind === 'navigate' && command.surface === 'knowledge') {
@@ -178,13 +235,20 @@ function routeAttentionToSecondKnowledgeResource(
   scenario: WorkbenchViewModel
 ): void {
   const primary = scenario.knowledge[0]
-  const { state: _state, cache: _cache, ...sharedBoundary } = primary
+  const {
+    state: _state,
+    cache: _cache,
+    unsyncedChanges,
+    ...sharedBoundary
+  } = primary
+  delete primary.unsyncedChanges
   const secondResourceId = id('know-002', 'KnowledgeResourceId')
   scenario.knowledge.push({
     ...sharedBoundary,
     knowledgeResourceId: secondResourceId,
     label: '竞品资料库',
-    state: 'online'
+    state: 'online',
+    unsyncedChanges
   })
   const attention = scenario.attentionItems.find(
     (item) => item.target.kind === 'knowledge'
@@ -397,6 +461,9 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     expect(surface).toHaveTextContent(
       'Knowledge 连接状态不会自行改变 Project 生命周期、Root 可用性'
     )
+    expect(surface).toHaveTextContent(
+      '仍可使用 Agents、本地 Tasks、Handoffs 与 Activity'
+    )
 
     await user.click(
       within(surface).getByRole('button', { name: '前往全局 Connections' })
@@ -435,6 +502,9 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     expect(surface).not.toHaveTextContent('Project 仍然可用')
     expect(surface).not.toHaveTextContent('Project 本地能力仍然可用')
     expect(surface).not.toHaveTextContent('不受影响')
+    expect(surface).not.toHaveTextContent(
+      '仍可使用 Agents、本地 Tasks、Handoffs 与 Activity'
+    )
   })
 
   it('previews each browser security decision through the port without external side effects', async () => {
@@ -538,16 +608,20 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     {
       rejectedKind: 'recover-knowledge-connection' as const,
       state: 'offline' as const,
-      action: '恢复 Knowledge 连接'
+      action: '恢复 Knowledge 连接',
+      failureName: 'Knowledge 恢复连接失败',
+      retryName: '重试恢复连接'
     },
     {
       rejectedKind: 'preview-knowledge-security-event' as const,
       state: 'online' as const,
-      action: '模拟下载'
+      action: '模拟下载',
+      failureName: 'Knowledge 安全演练失败',
+      retryName: '重试安全演练'
     }
   ])(
     'surfaces $rejectedKind rejection reason with retry and recovery actions',
-    async ({ rejectedKind, state, action }) => {
+    async ({ rejectedKind, state, action, failureName, retryName }) => {
       const scenario = createStandardScenario()
       setPrimaryKnowledgeState(scenario, state)
       const port = new RejectingKnowledgeAdapter(scenario, rejectedKind)
@@ -562,13 +636,13 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       await user.click(within(surface).getByRole('button', { name: action }))
 
       const failure = await within(surface).findByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: failureName
       })
       expect(failure).toHaveTextContent('当前不可用')
       expect(failure).not.toHaveTextContent('unavailable')
       expect(failure).toHaveTextContent('Knowledge 测试连接当前不可用')
       expect(
-        within(failure).getByRole('button', { name: '重试上次操作' })
+        within(failure).getByRole('button', { name: retryName })
       ).toBeEnabled()
       expect(
         within(failure).getByRole('button', {
@@ -577,7 +651,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       ).toBeEnabled()
 
       await user.click(
-        within(failure).getByRole('button', { name: '重试上次操作' })
+        within(failure).getByRole('button', { name: retryName })
       )
       await waitFor(() =>
         expect(
@@ -588,6 +662,39 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       )
     }
   )
+
+  it('gives concurrent operation failures distinct accessible retry targets', async () => {
+    const scenario = createStandardScenario()
+    setPrimaryKnowledgeState(scenario, 'offline')
+    const user = userEvent.setup()
+    render(
+      <ProjectShell port={new RejectingConcurrentKnowledgeAdapter(scenario)} />
+    )
+
+    await user.click(await screen.findByRole('button', { name: '知识' }))
+    const surface = await screen.findByRole('region', { name: 'Knowledge' })
+    await user.click(
+      within(surface).getByRole('button', { name: '恢复 Knowledge 连接' })
+    )
+    await user.click(
+      within(surface).getByRole('button', { name: '模拟下载' })
+    )
+
+    const recoveryFailure = await within(surface).findByRole('alert', {
+      name: 'Knowledge 恢复连接失败'
+    })
+    const securityFailure = within(surface).getByRole('alert', {
+      name: 'Knowledge 安全演练失败'
+    })
+    expect(recoveryFailure).toHaveTextContent('Knowledge 恢复连接失败')
+    expect(securityFailure).toHaveTextContent('Knowledge 安全演练失败')
+    expect(
+      within(recoveryFailure).getByRole('button', { name: '重试恢复连接' })
+    ).toBeEnabled()
+    expect(
+      within(securityFailure).getByRole('button', { name: '重试安全演练' })
+    ).toBeEnabled()
+  })
 
   it('keeps a delayed recovery failure when an unrelated security action succeeds', async () => {
     const scenario = createStandardScenario()
@@ -617,7 +724,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
 
     expect(
       await within(surface).findByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: 'Knowledge 恢复连接失败'
       })
     ).toHaveTextContent('Knowledge 恢复连接失败')
   })
@@ -633,7 +740,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     )
 
     const failure = await within(surface).findByRole('alert', {
-      name: 'Knowledge 操作失败'
+      name: 'Knowledge 安全演练失败'
     })
     expect(failure).toHaveTextContent('通信失败')
     expect(failure).toHaveTextContent('命令传输失败，请重试')
@@ -660,7 +767,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     )
 
     const failure = await within(surface).findByRole('alert', {
-      name: 'Knowledge 操作失败'
+      name: 'Knowledge 全局 Connections 导航失败'
     })
     expect(failure).toHaveTextContent('通信失败')
     expect(failure).toHaveTextContent('命令传输失败，请重试')
@@ -689,7 +796,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     )
     expect(
       await within(surface).findByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: 'Knowledge 安全演练失败'
       })
     ).toBeVisible()
 
@@ -713,7 +820,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     ).toHaveTextContent('KnowledgeResourceId：know-002')
     expect(
       within(updatedSurface).queryByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: 'Knowledge 安全演练失败'
       })
     ).toBeNull()
   })
@@ -734,7 +841,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     )
     expect(
       within(initialSurface).queryByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: 'Knowledge 安全演练失败'
       })
     ).toBeNull()
 
@@ -762,7 +869,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     })
     expect(
       within(updatedSurface).queryByRole('alert', {
-        name: 'Knowledge 操作失败'
+        name: 'Knowledge 安全演练失败'
       })
     ).toBeNull()
   })
@@ -854,6 +961,114 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
 
     await act(async () => {
       port.releaseKnowledgeNavigation()
+      await Promise.resolve()
+    })
+  })
+
+  it('keeps a newer pending Knowledge target when an older explicit navigation succeeds late', async () => {
+    const scenario = createStandardScenario()
+    routeAttentionToSecondKnowledgeResource(scenario)
+    const port = new DeferredKnowledgeRaceAdapter(scenario)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+
+    await user.click(await screen.findByRole('button', { name: '任务' }))
+    expect(await screen.findByText(/任务 工作面尚未实现/)).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
+    const drawer = await screen.findByRole('complementary', {
+      name: 'Global Attention'
+    })
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：销售知识库有未同步的修改'
+      })
+    )
+
+    const surface = await screen.findByRole('region', { name: 'Knowledge' })
+    expect(
+      await within(surface).findByRole('article', {
+        name: '当前知识资源：竞品资料库'
+      })
+    ).toHaveTextContent('KnowledgeResourceId：know-002')
+
+    await act(async () => {
+      port.releaseResult('tasks')
+      await Promise.resolve()
+    })
+
+    const currentSurface = screen.getByRole('region', { name: 'Knowledge' })
+    expect(
+      within(currentSurface).getByRole('article', {
+        name: '当前知识资源：竞品资料库'
+      })
+    ).toHaveTextContent('KnowledgeResourceId：know-002')
+    expect(
+      within(currentSurface).queryByRole('article', {
+        name: '当前知识资源：销售知识库'
+      })
+    ).toBeNull()
+
+    await act(async () => {
+      port.releaseResult('knowledge')
+      await Promise.resolve()
+    })
+  })
+
+  it('keeps a newer pending Knowledge target while an older Agent layout settles', async () => {
+    const scenario = createStandardScenario()
+    routeAttentionToSecondKnowledgeResource(scenario)
+    const port = new DeferredKnowledgeRaceAdapter(scenario)
+    const user = userEvent.setup()
+    render(<ProjectShell port={port} />)
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Global Attention' })
+    )
+    let drawer = await screen.findByRole('complementary', {
+      name: 'Global Attention'
+    })
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_sql 等待输入：确认 6 月数据口径'
+      })
+    )
+    await waitFor(() => expect(port.hasPending('agent-layout')).toBe(true))
+
+    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
+    drawer = await screen.findByRole('complementary', {
+      name: 'Global Attention'
+    })
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：销售知识库有未同步的修改'
+      })
+    )
+
+    expect(
+      await screen.findByRole('article', {
+        name: '当前知识资源：竞品资料库'
+      })
+    ).toHaveTextContent('KnowledgeResourceId：know-002')
+
+    await act(async () => {
+      port.releaseResult('agent-layout')
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByRole('article', {
+        name: '当前知识资源：竞品资料库'
+      })
+    ).toHaveTextContent('KnowledgeResourceId：know-002')
+    expect(
+      screen.queryByRole('article', {
+        name: '当前知识资源：销售知识库'
+      })
+    ).toBeNull()
+
+    await act(async () => {
+      port.releaseResult('knowledge')
       await Promise.resolve()
     })
   })

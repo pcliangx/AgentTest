@@ -94,14 +94,13 @@ type KnowledgeImpactResource = {
   knowledgeResourceId: KnowledgeResourceId
 }
 
-type KnowledgeConflictPreview = KnowledgeImpactResource & {
-  attentionItemId: AttentionItemId
-  title: string
+type KnowledgeUnsyncedPreview = KnowledgeImpactResource & {
+  summary: string
 }
 
 type KnowledgeImpactPreview = {
   resources: KnowledgeImpactResource[]
-  conflicts: KnowledgeConflictPreview[]
+  unsyncedChanges: KnowledgeUnsyncedPreview[]
 }
 
 function knowledgeResourceKey(resource: KnowledgeImpactResource): string {
@@ -646,7 +645,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           }
         }
         impact += this.formatUnsyncedKnowledgeImpact(
-          knowledgeImpact.conflicts
+          knowledgeImpact.unsyncedChanges
         )
         this.snapshot.pendingConfirmation = {
           confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
@@ -1587,7 +1586,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
                 ? `将解除 ${removedBindings.length} 个 Resource Binding：${bindingImpact}。解除后需重新授权才能恢复。`
                 : '将解除 0 个 Resource Binding；当前没有绑定会丢失，但主连接差异仍需确认。'
             impact += this.formatUnsyncedKnowledgeImpact(
-              knowledgeImpact.conflicts
+              knowledgeImpact.unsyncedChanges
             )
             this.pendingAction = {
               type: 'configuration-apply',
@@ -2897,42 +2896,35 @@ export class MockScenarioAdapter implements WorkbenchPort {
     }
     return {
       resources,
-      conflicts: this.openKnowledgeConflictsForResources(resources)
+      unsyncedChanges: this.unsyncedKnowledgeForResources(resources)
     }
   }
 
-  private openKnowledgeConflictsForResources(
+  private unsyncedKnowledgeForResources(
     resources: KnowledgeImpactResource[]
-  ): KnowledgeConflictPreview[] {
+  ): KnowledgeUnsyncedPreview[] {
     const relevant = new Set(resources.map(knowledgeResourceKey))
-    return this.snapshot.attentionItems.flatMap((item) => {
-      if (
-        item.state !== 'open' ||
-        item.kind !== 'connection-conflict' ||
-        item.target.kind !== 'knowledge'
-      ) {
-        return []
-      }
+    return this.snapshot.knowledge.flatMap((container) => {
+      if (!container.knowledgeResourceId || !container.unsyncedChanges) return []
       const resource = {
-        projectId: item.target.projectId,
-        knowledgeResourceId: item.target.knowledgeResourceId
+        projectId: container.projectId,
+        knowledgeResourceId: container.knowledgeResourceId
       }
       if (!relevant.has(knowledgeResourceKey(resource))) return []
       return [
         {
           ...resource,
-          attentionItemId: item.attentionItemId,
-          title: item.title
+          summary: container.unsyncedChanges.summary
         }
       ]
     })
   }
 
   private formatUnsyncedKnowledgeImpact(
-    conflicts: KnowledgeConflictPreview[]
+    unsyncedChanges: KnowledgeUnsyncedPreview[]
   ): string {
-    if (conflicts.length === 0) return ''
-    return `存在 ${conflicts.length} 项未同步 Knowledge 修改：${conflicts.map((conflict) => `「${conflict.title}」`).join('、')}。确认后相关 Knowledge 资源将失去当前连接或绑定入口。`
+    if (unsyncedChanges.length === 0) return ''
+    return `存在 ${unsyncedChanges.length} 项未同步 Knowledge 修改：${unsyncedChanges.map((change) => `「${change.summary}」`).join('、')}。确认后相关 Knowledge 资源将失去当前连接或绑定入口。`
   }
 
   /**
@@ -2973,8 +2965,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
           connectionId: container.connectionId,
           resourceBindingId: container.resourceBindingId
         })),
-      knowledgeConflicts:
-        this.openKnowledgeConflictsForResources(knowledgeResources),
+      knowledgeUnsyncedChanges:
+        this.unsyncedKnowledgeForResources(knowledgeResources),
       applied: this.snapshot.appliedConfigurations.filter(
         (config) =>
           config.owner.kind === 'project' &&
@@ -3048,8 +3040,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
           connectionId: container.connectionId,
           resourceBindingId: container.resourceBindingId
         })),
-      knowledgeConflicts:
-        this.openKnowledgeConflictsForResources(knowledgeResources)
+      knowledgeUnsyncedChanges:
+        this.unsyncedKnowledgeForResources(knowledgeResources)
     })
   }
 

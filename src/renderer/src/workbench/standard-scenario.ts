@@ -26,6 +26,7 @@ export function createStandardScenario(
   const connId = id('conn-feishu-primary', 'ConnectionId')
   const panelId = id('panel-main', 'PanelId')
   const panelId2 = id('panel-research', 'PanelId')
+  const salesKnowledgeUnsyncedSummary = '销售知识库有未同步的修改'
 
   const claudeCode = id('claude-code', 'AgentProviderId')
   const codex = id('codex', 'AgentProviderId')
@@ -251,6 +252,7 @@ export function createStandardScenario(
         knowledgeResourceId: id('know-001', 'KnowledgeResourceId'),
         label: '销售知识库',
         state: 'online',
+        unsyncedChanges: { summary: salesKnowledgeUnsyncedSummary },
         humanBrowserIdentity: '林晓（销售团队）',
         connectionId: connId,
         connectorIdentity: 'Agent Squad HQ Connector（销售团队应用）',
@@ -395,7 +397,7 @@ export function createStandardScenario(
           knowledgeResourceId: id('know-001', 'KnowledgeResourceId')
         },
         state: 'open',
-        title: '销售知识库有未同步的修改'
+        title: salesKnowledgeUnsyncedSummary
       },
       {
         attentionItemId: id('att-010', 'AttentionItemId'),

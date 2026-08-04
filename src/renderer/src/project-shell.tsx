@@ -401,13 +401,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
   const beginDeepLinkIntent = (): {
     attempt: number
-    retainedIntentToken: number | undefined
+    retainedIntentToken: number
   } => {
     const previousToken = activeDeepLinkIntentTokenRef.current
     const attempt = ++deepLinkAttemptRef.current
     // Register the replacement before retiring the previous barrier so an
     // already-settled older target effect cannot commit in between them.
-    const retainedIntentToken = registerRetainedTargetIntent()
+    const retainedIntentToken = registerAbsoluteRetainedTargetIntent()
     activeDeepLinkIntentTokenRef.current = retainedIntentToken
     settleRetainedTargetIntent(previousToken, { kind: 'rejected' })
     return { attempt, retainedIntentToken }
@@ -633,16 +633,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     const result = navigateAway()
     void result.then(
       (outcome) => {
+        const isCurrent = deepLinkAttemptRef.current === attempt
         settleRetainedTargetIntent(
           intentToken,
-          outcome.ok
+          outcome.ok && isCurrent
             ? {
                 kind: 'accepted-target',
                 target: null
               }
             : { kind: 'rejected' }
         )
-        if (outcome.ok && deepLinkAttemptRef.current === attempt) {
+        if (outcome.ok && isCurrent) {
           setDeepLinkNotice(null)
           onAcceptedCurrent?.()
         }
