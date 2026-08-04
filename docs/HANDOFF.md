@@ -59,7 +59,7 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | Phase 1 #9 Permission Center 与 Global Attention | ✅ 已合入 main |
 | Phase 1 #14 策略矩阵、Readiness 与降级安全状态 | ✅ 见 [Issue #14](https://github.com/pcliangx/agent-squad-hq/issues/14)；其余 #3–#16 按 frontier 推进 |
 | UI 视觉对齐 #65 设计令牌与应用壳 | ✅ 已合入 main（[PR #70](https://github.com/pcliangx/agent-squad-hq/pull/70)）：@theme 亮色令牌、`@layer components` 共享类、全局 StatusDot、38px 自定义 titlebar、82px 图标导航与 statusbar；context pane 属 #66 |
-| UI 视觉对齐 #66 固定上下文目录栏与 Agent Directory | 🚧 分支 `issue-66` 交付中：244px context pane（`raised` 背景 + `line` 右边框）常驻全部 Project surface；项目切换卡、需要处理/全部实例分组（去重枚举）、31px provider-code avatar、运行摘要 footer；Agents surface 内部目录列与此共用同一组件 |
+| UI 视觉对齐 #66 固定上下文目录栏与 Agent Directory | ✅ 已合入 main（[PR #71](https://github.com/pcliangx/agent-squad-hq/pull/71)）：244px context pane（`raised` 背景 + `line` 右边框）常驻全部 Project surface；项目切换卡、需要处理/全部实例分组（去重枚举）、31px provider-code avatar、运行摘要 footer；Agents surface 内部目录列与此共用同一组件 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
