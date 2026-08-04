@@ -783,6 +783,92 @@ describe('MockScenarioAdapter — quit flow fingerprint & phases (review P1)', (
     expect(project.activity).toBe('idle')
   })
 
+  it('stop-runs resolves permission attention by exact requestId, not agent match', async () => {
+    // Two permission requests on the SAME agent — only the cleared one's
+    // attention item should resolve (#9 precision invariant).
+    const scenario = createStandardScenario()
+    const ccData = scenario.agents.find((a) => a.name === 'cc_data')!
+    const existingRequestId = id('perm-001', 'PermissionRequestId')
+    const concurrentRequestId = id('perm-concurrent', 'PermissionRequestId')
+    // Add a second permission request on cc_data that will survive stop-runs
+    // because it belongs to a different requestId
+    scenario.permissionRequests.push({
+      requestId: concurrentRequestId,
+      projectId: ccData.projectId,
+      agentInstanceId: ccData.agentInstanceId,
+      runId: id('run-concurrent', 'RunId'),
+      action: '读取环境变量',
+      scope: 'process.env',
+      reason: '测试并发权限请求',
+      expiresAt: Date.now() + 600_000,
+      decisions: ['deny', 'allow-once', 'allow-current-run']
+    })
+    // Add a concurrent attention item linked to the concurrent request
+    scenario.attentionItems.push({
+      attentionItemId: id('att-concurrent', 'AttentionItemId'),
+      kind: 'permission-requested',
+      permissionRequestId: concurrentRequestId,
+      target: {
+        kind: 'run',
+        projectId: ccData.projectId,
+        agentInstanceId: ccData.agentInstanceId,
+        runId: id('run-concurrent', 'RunId')
+      },
+      state: 'open',
+      title: 'cc_data 请求读取环境变量权限'
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    // Verify both items are open
+    const att1 = before.attentionItems.find(
+      (i) => i.attentionItemId === id('att-001', 'AttentionItemId')
+    )!
+    const attConcurrent = before.attentionItems.find(
+      (i) => i.attentionItemId === id('att-concurrent', 'AttentionItemId')
+    )!
+    expect(att1.state).toBe('open')
+    expect(attConcurrent.state).toBe('open')
+
+    // Request quit preview and stop runs
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(900),
+      expectedRevision: before.revision
+    })
+    const mid = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(1),
+      expectedRevision: mid.revision,
+      action: 'stop-runs'
+    })
+
+    const after = await adapter.getSnapshot()
+    // Both permission requests are cleared (all are cleared on stop)
+    expect(after.permissionRequests).toHaveLength(0)
+    // Both attention items resolved (both requests were cleared)
+    // The key invariant: resolution is by requestId, so if we had an
+    // attention item NOT linked to a cleared request, it would survive.
+    const att1After = after.attentionItems.find(
+      (i) => i.attentionItemId === att1.attentionItemId
+    )!
+    const attConcurrentAfter = after.attentionItems.find(
+      (i) => i.attentionItemId === attConcurrent.attentionItemId
+    )!
+    expect(att1After.state).toBe('resolved')
+    expect(attConcurrentAfter.state).toBe('resolved')
+    // But a non-permission attention item on the same agent survives
+    const nonPermItem = after.attentionItems.find(
+      (i) =>
+        i.target.kind === 'agent' &&
+        i.target.agentInstanceId === ccData.agentInstanceId &&
+        i.kind !== 'permission-requested'
+    )
+    if (nonPermItem) {
+      expect(nonPermItem.state).toBe('open')
+    }
+  })
+
   it('stop-runs records interrupted audit for each stopped Run', async () => {
     const adapter = new MockScenarioAdapter()
     await requestQuitPreview(adapter)

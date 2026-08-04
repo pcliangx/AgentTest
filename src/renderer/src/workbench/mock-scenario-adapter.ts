@@ -2290,7 +2290,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
     const stoppedAgents: WorkbenchViewModel['agents'][number][] = []
     for (const agent of this.snapshot.agents) {
       if (isActiveStructuredRunState(agent.runtimeState)) {
-        const runId = agent.activeRunId
         agent.runtimeState = 'interrupted'
         agent.activeRunId = undefined
         agent.lastActivityAt = this.clock()
@@ -2307,19 +2306,6 @@ export class MockScenarioAdapter implements WorkbenchPort {
           },
           ...this.snapshot.activity
         ]
-        // Resolve permission-requested attention items linked to this agent.
-        if (runId) {
-          for (const item of this.snapshot.attentionItems) {
-            if (
-              item.state === 'open' &&
-              item.kind === 'permission-requested' &&
-              item.target.kind === 'run' &&
-              item.target.agentInstanceId === agent.agentInstanceId
-            ) {
-              item.state = 'resolved'
-            }
-          }
-        }
       }
       // Close all occupied terminals (active or opening).
       if (isTerminalExecutionSlotOccupied(agent.terminalState)) {
@@ -2327,10 +2313,28 @@ export class MockScenarioAdapter implements WorkbenchPort {
       }
     }
     // Clear pending permission requests — their held Runs are gone.
+    // Collect their requestIds FIRST so attention resolution is precise:
+    // only items linked to exactly these requests resolve, never a broad
+    // agent match that could clear an unrelated concurrent request (#9).
+    const clearedRequestIds = new Set(
+      this.snapshot.permissionRequests.map((r) => r.requestId)
+    )
     for (const request of [...this.snapshot.permissionRequests]) {
       this.cancelPermissionTimer(request.requestId)
     }
     this.snapshot.permissionRequests = []
+    // Resolve only the permission-requested attention items linked to the
+    // exact requests that were cleared — never a broad agent match (#9).
+    for (const item of this.snapshot.attentionItems) {
+      if (
+        item.state === 'open' &&
+        item.kind === 'permission-requested' &&
+        item.permissionRequestId &&
+        clearedRequestIds.has(item.permissionRequestId)
+      ) {
+        item.state = 'resolved'
+      }
+    }
     // Recompute all projections from authoritative state.
     this.recomputeActiveRunCounts()
     this.recomputeAttentionCounts()
