@@ -563,3 +563,101 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     expect(screen.getByText(/任务 工作面尚未实现/)).toBeVisible()
   })
 })
+
+describe('Global Attention — stale and in-surface supersession (#9 review)', () => {
+  it('shows a retryable hint when a command stale-rejects instead of swallowing it', async () => {
+    // Events lag behind responses: the first resolve succeeds in the port
+    // but its snapshot event has not arrived when the user processes the
+    // next item, so that command stale-rejects (spec 566–568).
+    class DelayedEventPort extends MockScenarioAdapter {
+      override subscribe(
+        listener: (event: WorkbenchEvent) => void
+      ): () => void {
+        return super.subscribe((event) => {
+          setTimeout(() => listener(event), 100)
+        })
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new DelayedEventPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '标记已处理：cx_review 已完成客户流失复核'
+      })
+    )
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '标记已处理：本地任务「月度报表」已完成'
+      })
+    )
+
+    // The second command stale-rejected: the user must see a recoverable
+    // hint (spec 632–633), and the item must still be pending.
+    expect(await within(drawer).findByText(/请重试/)).toBeVisible()
+    expect(
+      within(drawer).getByText('本地任务「月度报表」已完成')
+    ).toBeVisible()
+
+    // The upstream refetch makes a retry work.
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '标记已处理：本地任务「月度报表」已完成'
+      })
+    )
+    await waitFor(() => {
+      expect(within(drawer).queryByText(/请重试/)).toBeNull()
+    })
+    await waitFor(() => {
+      expect(
+        within(drawer).queryByText('本地任务「月度报表」已完成')
+      ).toBeNull()
+    })
+  })
+
+  it('supersedes an in-flight deep link when the user switches Agent in the directory', async () => {
+    const commands: WorkbenchCommand[] = []
+    class DeferredResultPort extends MockScenarioAdapter {
+      override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
+        commands.push(command)
+        const result = super.dispatch(command)
+        const isFirstNavigate =
+          command.kind === 'navigate' &&
+          commands.filter((c) => c.kind === 'navigate').length === 1
+        if (isFirstNavigate) {
+          // Event at once, CommandResult later — a contract-legal order.
+          return new Promise((resolve) =>
+            setTimeout(() => {
+              void result.then(resolve)
+            }, 30)
+          )
+        }
+        return result
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new DeferredResultPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_etl 的上一次 Run 被中断'
+      })
+    )
+    // The deep-link navigate event landed (Agents surface); while its result
+    // is still in flight the user picks another Agent from the directory.
+    const directory = await screen.findByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await screen.findByRole('tab', { name: /cc_sql/ })
+    // Let the deferred deep-link result land, then observe.
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    // The superseded continuation must not write its notice or retained
+    // target over the workspace the user actually chose.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/已保留目标：Run run-etl-001/)).toBeNull()
+    expect(screen.getByRole('tab', { name: /cc_sql/ })).toBeVisible()
+  })
+})

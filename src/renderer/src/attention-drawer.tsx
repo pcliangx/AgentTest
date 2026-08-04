@@ -51,6 +51,18 @@ const DECISION_ACTIONS: Array<{
   }
 ]
 
+/**
+ * A rejected command always deserves a visible, recoverable explanation
+ * (spec 632–633). A stale-revision means the action did NOT happen; the
+ * upstream refetch already brought the latest state, so the hint asks the
+ * user to retry instead of pretending the click worked.
+ */
+function rejectionMessage(result: Extract<CommandResult, { ok: false }>): string {
+  return result.reason === 'stale-revision'
+    ? '操作基于过期状态，已刷新最新状态，请重试'
+    : result.message
+}
+
 export function AttentionDrawer({
   snapshot,
   onClose,
@@ -83,11 +95,11 @@ export function AttentionDrawer({
   ): Promise<void> => {
     setAnswerError(null)
     const result = await onAnswerPermission(request, decision)
-    // Stale rejections already trigger a snapshot refetch upstream; only
-    // genuine rejections (e.g. duplicate or unsupported decisions) need an
-    // explanation next to the request.
-    if (!result.ok && result.reason !== 'stale-revision') {
-      setAnswerError({ requestId: request.requestId, message: result.message })
+    if (!result.ok) {
+      setAnswerError({
+        requestId: request.requestId,
+        message: rejectionMessage(result)
+      })
     }
   }
 
@@ -98,8 +110,8 @@ export function AttentionDrawer({
     const result = await onResolve(attentionItemId)
     // A rejected resolve must not look resolved: keep the item and show a
     // retryable explanation (spec 632–633).
-    if (!result.ok && result.reason !== 'stale-revision') {
-      setResolveError(result.message)
+    if (!result.ok) {
+      setResolveError(rejectionMessage(result))
     }
   }
 
@@ -108,8 +120,8 @@ export function AttentionDrawer({
     const result = await onManagePolicy(projectId)
     // The shell commits its local close/remount only on success; here we
     // just surface the failure without losing the request context.
-    if (!result.ok && result.reason !== 'stale-revision') {
-      setPolicyError(result.message)
+    if (!result.ok) {
+      setPolicyError(rejectionMessage(result))
     }
   }
 

@@ -23,6 +23,7 @@ import type {
 import { id } from './workbench/contract'
 import { activityKindLabel } from './activity-display'
 import { AgentsSurface } from './agents-surface'
+import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
@@ -394,6 +395,19 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   ): Promise<CommandResult> =>
     sendCommand({ kind: 'resolve-attention', attentionItemId })
 
+  // Agent Directory, Tab and Panel gestures are intentional target
+  // switches: they supersede an in-flight deep link and clear its
+  // leftovers. The deep link's own layout commands deliberately use the
+  // raw sendCommand above so they never invalidate themselves.
+  const sendLayoutCommand: SendCommand = (body, expectedRevision) => {
+    if (body.kind === 'change-layout') {
+      deepLinkAttemptRef.current += 1
+      setRetainedDeepLink(null)
+      setDeepLinkNotice(null)
+    }
+    return sendCommand(body, expectedRevision)
+  }
+
   return (
     <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
       <header
@@ -587,7 +601,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 project={project}
                 snapshot={snapshot}
                 planDispatch={planDispatch}
-                sendCommand={sendCommand}
+                sendCommand={sendLayoutCommand}
                 onDispatch={() => setShowPicker(true)}
               />
             )}
