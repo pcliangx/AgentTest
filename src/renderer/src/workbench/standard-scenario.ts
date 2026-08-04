@@ -191,6 +191,8 @@ export function createStandardScenario(
         activeRunCount: 2,
         queuedRunCount: 2,
         attentionCount: 9,
+        rootPath: '~/Projects/sales-analysis',
+        currentBranch: 'main',
         primaryConnectionId: connId,
         resourceBindings: [
           {
@@ -230,6 +232,8 @@ export function createStandardScenario(
         activeRunCount: 0,
         queuedRunCount: 0,
         attentionCount: 2,
+        rootPath: '~/Projects/user-research',
+        currentBranch: 'develop',
         // No primary connection and no resource bindings — exercises the
         // "unbound" preview path (#6).
         resourceBindings: [],

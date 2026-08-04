@@ -58,6 +58,38 @@ describe('ProjectShell — snapshot rendering', () => {
   })
 })
 
+describe('ProjectShell — shell chrome (#65)', () => {
+  it('shows Agent Squad HQ as its own titlebar text node plus the project name', async () => {
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    // The product mark must be a standalone text node — screenshot and
+    // a11y queries rely on exactly one exact match (#65 titlebar).
+    expect(screen.getByText('Agent Squad HQ', { exact: true })).toBeVisible()
+    expect(
+      screen.getByText((content, element) =>
+        element?.tagName === 'SPAN' && content.startsWith('/ 销售数据分析')
+      )
+    ).toBeVisible()
+  })
+
+  it('shows root path, branch and layout auto-save in the statusbar', async () => {
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    const statusbar = document.querySelector('footer')
+    expect(statusbar).not.toBeNull()
+    expect(statusbar).toHaveTextContent('~/Projects/sales-analysis')
+    expect(statusbar).toHaveTextContent('main')
+    expect(statusbar).toHaveTextContent('布局自动保存')
+  })
+
+  it('shows Project/Global run capacity from the contract in the statusbar', async () => {
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    const statusbar = document.querySelector('footer')
+    expect(statusbar).toHaveTextContent('Project 2 / 3 · Global 2 / 6')
+  })
+})
+
 describe('ProjectShell — navigation', () => {
   const navLabels = [
     '概览',

@@ -404,7 +404,7 @@ export function SettingsSurface({
     >
       <nav
         aria-label="设置目录"
-        className="w-40 shrink-0 space-y-0.5 border-r border-neutral-800 pr-3"
+        className="w-40 shrink-0 space-y-0.5 border-r border-line pr-3"
       >
         {EDIT_SECTIONS.map(({ key, label }) => (
           <button
@@ -412,15 +412,15 @@ export function SettingsSurface({
             aria-current={section === key ? 'page' : undefined}
             className={`block w-full rounded px-2 py-1 text-left text-sm ${
               section === key
-                ? 'bg-neutral-800 text-neutral-100'
-                : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                ? 'bg-wash font-medium text-ink'
+                : 'text-muted hover:bg-wash hover:text-ink'
             }`}
             onClick={() => setSection(key)}
           >
             {label}
           </button>
         ))}
-        <p className="px-2 pt-2 text-[10px] uppercase tracking-wide text-neutral-600">
+        <p className="section-label px-2 pt-2">
           只读视图
         </p>
         {READONLY_SECTIONS.map(({ key, label }) => (
@@ -429,8 +429,8 @@ export function SettingsSurface({
             aria-current={section === key ? 'page' : undefined}
             className={`block w-full rounded px-2 py-1 text-left text-sm ${
               section === key
-                ? 'bg-neutral-800 text-neutral-100'
-                : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                ? 'bg-wash font-medium text-ink'
+                : 'text-muted hover:bg-wash hover:text-ink'
             }`}
             onClick={() => setSection(key)}
           >
@@ -440,13 +440,13 @@ export function SettingsSurface({
       </nav>
 
       <div className="min-w-0 flex-1 overflow-auto pr-2">
-        <p className="mb-4 text-xs text-neutral-500">
+        <p className="mb-4 text-xs text-muted">
           布局、当前工作面与过滤器会自动保存；以下配置需点击应用后生效。
         </p>
 
         {section === 'general' && (
           <div>
-            <p className="mb-3 text-xs text-neutral-500">
+            <p className="mb-3 text-xs text-muted">
               根目录：{ROOT_LABEL[project.rootAvailability]} · Git：
               {GIT_LABEL[project.repositoryReadiness]}
             </p>
@@ -456,7 +456,7 @@ export function SettingsSurface({
 
         {section === 'defaults' && (
           <div>
-            <p className="mb-3 text-xs text-neutral-500">
+            <p className="mb-3 text-xs text-muted">
               默认配置只影响之后创建的实例，不追溯修改现有实例。
             </p>
             {renderFieldRows(projectOwner, PROJECT_SECTION_FIELDS.defaults)}
@@ -465,11 +465,11 @@ export function SettingsSurface({
 
         {section === 'instances' && (
           <div>
-            <label className="mb-3 block text-xs text-neutral-400">
+            <label className="mb-3 block text-xs text-muted">
               选择实例
               <select
                 aria-label="选择实例"
-                className="mt-1 block w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
+                className="mt-1 block w-64 rounded border border-line bg-paper px-2 py-1 text-sm text-ink"
                 value={selectedAgentId}
                 onChange={(e) =>
                   setSelectedAgentId(
@@ -485,7 +485,7 @@ export function SettingsSurface({
               </select>
             </label>
             {selectedAgent?.activeRunConfigVersion !== undefined && (
-              <p className="mb-3 text-xs text-amber-300">
+              <p className="mb-3 text-xs text-amber">
                 当前 Run 配置快照：v{selectedAgent.activeRunConfigVersion}
                 （应用不影响进行中的 Run）
               </p>
@@ -501,7 +501,7 @@ export function SettingsSurface({
               projectOwner,
               PROJECT_SECTION_FIELDS.integrations
             )}
-            <p className="mt-4 text-xs text-neutral-500">
+            <p className="mt-4 text-xs text-muted">
               人工浏览器身份与 Connector 执行身份相互隔离；连接凭据不会进入
               Project 配置或导出内容。
             </p>
@@ -519,7 +519,7 @@ export function SettingsSurface({
                 recorded policy is intent only and renders as blocked —
                 never as enforced. The editing rows above stay the editor. */}
             <div className="mt-4">
-              <h3 className="text-xs font-medium text-neutral-300">
+              <h3 className="text-xs font-medium text-ink">
                 生效状态（只读）
               </h3>
               <ul className="mt-2 space-y-2">
@@ -530,21 +530,21 @@ export function SettingsSurface({
                   if (!entry) return null
                   return (
                     <li key={fieldPath} className="text-xs">
-                      <span className="text-neutral-400">
+                      <span className="text-muted">
                         {fieldDescriptor(fieldPath)?.label ?? fieldPath}：
                         {formatValue(fieldPath, entry.applied)}
                       </span>
                       <span
                         className={
                           entry.status === 'blocked'
-                            ? 'ml-2 text-amber-400'
-                            : 'ml-2 text-emerald-400'
+                            ? 'ml-2 text-amber'
+                            : 'ml-2 text-teal'
                         }
                       >
                         {entry.status === 'blocked' ? '已阻止' : '可生效'}
                       </span>
                       {entry.status === 'blocked' && entry.blockedReason && (
-                        <p className="mt-0.5 text-neutral-500">
+                        <p className="mt-0.5 text-muted">
                           {entry.blockedReason}
                         </p>
                       )}
@@ -558,20 +558,20 @@ export function SettingsSurface({
 
         {section === 'storage' && (
           <div className="space-y-3 text-sm">
-            <p className="text-xs text-neutral-500">
+            <p className="text-xs text-muted">
               本地数据仅保存在本机，滚动快照随 schema 版本保留；凭据、Token
               与 Cookie 不进入 Project 数据。
             </p>
             <div className="flex gap-2">
               <button
-                className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mini-button disabled:cursor-not-allowed"
                 disabled
                 title="导出将在后续版本提供"
               >
                 导出
               </button>
               <button
-                className="rounded bg-neutral-800 px-3 py-1 text-xs text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mini-button disabled:cursor-not-allowed"
                 disabled
                 title="导入将在后续版本提供"
               >
@@ -583,7 +583,7 @@ export function SettingsSurface({
 
         {section === 'matrix' && (
           <div>
-            <p className="mb-3 text-xs text-neutral-500">
+            <p className="mb-3 text-xs text-muted">
               只读比较视图 · 编辑请回到上方对应设置。
             </p>
             <PolicyMatrix
@@ -596,7 +596,7 @@ export function SettingsSurface({
 
         {section === 'readiness' && (
           <div>
-            <p className="mb-3 text-xs text-neutral-500">
+            <p className="mb-3 text-xs text-muted">
               只读摘要 · 下一次 Run 的就绪状态由 adapter
               汇总；配置编辑请回到上方对应设置。
             </p>
@@ -612,11 +612,11 @@ export function SettingsSurface({
       <aside
         aria-label="待应用摘要"
         aria-busy={pendingStageCount > 0}
-        className="flex w-72 shrink-0 flex-col rounded border border-neutral-800 p-3"
+        className="flex w-72 shrink-0 flex-col rounded-lg border border-line bg-paper p-3"
       >
-        <h3 className="mb-2 text-sm font-medium text-neutral-200">待应用摘要</h3>
+        <h3 className="mb-2 text-sm font-medium text-ink">待应用摘要</h3>
         {draftsWithChanges.length === 0 ? (
-          <p className="text-xs text-neutral-500">暂无待应用变更</p>
+          <p className="text-xs text-muted">暂无待应用变更</p>
         ) : (
           <ul className="min-h-0 flex-1 space-y-2 overflow-auto">
             {draftsWithChanges.map((draft) => {
@@ -626,12 +626,12 @@ export function SettingsSurface({
                   key={ownerKey(draft.owner)}
                   className="flex items-center justify-between gap-2 text-xs"
                 >
-                  <span className="text-neutral-300">
+                  <span className="text-ink">
                     {label}：{draft.changes.length} 项变更
                   </span>
                   <button
                     aria-label={`丢弃「${label}」的草稿`}
-                    className="rounded px-1.5 py-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                    className="rounded px-1.5 py-0.5 text-muted hover:bg-wash hover:text-ink"
                     onClick={() => {
                       setFeedback(null)
                       void sendCommand({
@@ -648,7 +648,7 @@ export function SettingsSurface({
           </ul>
         )}
         <button
-          className="mt-3 rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-100 hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-40"
+          className="btn btn-primary mt-3"
           disabled={
             draftsWithChanges.length === 0 || pendingStageCount > 0
           }
@@ -660,7 +660,7 @@ export function SettingsSurface({
           应用全部变更
         </button>
         {pendingStageCount > 0 && (
-          <p role="status" className="mt-2 text-xs text-neutral-400">
+          <p role="status" className="mt-2 text-xs text-muted">
             正在暂存 {pendingStageCount} 项修改…
           </p>
         )}
@@ -668,7 +668,7 @@ export function SettingsSurface({
           <p
             role={feedback.kind === 'alert' ? 'alert' : 'status'}
             className={`mt-2 text-xs ${
-              feedback.kind === 'alert' ? 'text-red-400' : 'text-emerald-400'
+              feedback.kind === 'alert' ? 'text-danger' : 'text-teal'
             }`}
           >
             {feedback.message}
@@ -677,16 +677,16 @@ export function SettingsSurface({
       </aside>
 
       {showApplyDialog && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-backdrop">
           <div
             role="dialog"
             aria-label="应用配置变更"
-            className="w-full max-w-lg space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4"
+            className="w-full max-w-lg space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay"
           >
-            <h3 className="text-sm font-medium text-neutral-100">
+            <h3 className="text-sm font-medium text-ink">
               应用配置变更
             </h3>
-            <p className="text-xs text-neutral-500">
+            <p className="text-xs text-muted">
               以下变更将原子提交：任一验证失败都不会修改任何 applied 配置。
             </p>
             <ul className="max-h-64 space-y-1.5 overflow-auto text-xs">
@@ -694,7 +694,7 @@ export function SettingsSurface({
                 draft.changes.map((change) => (
                   <li
                     key={`${ownerKey(draft.owner)}:${change.fieldPath}`}
-                    className="text-neutral-300"
+                    className="text-ink"
                   >
                     {ownerLabel(draft.owner)} ·{' '}
                     {fieldDescriptor(change.fieldPath)?.label ??
@@ -708,13 +708,13 @@ export function SettingsSurface({
             </ul>
             <div className="flex justify-end gap-2">
               <button
-                className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+                className="btn btn-ghost"
                 onClick={() => setShowApplyDialog(false)}
               >
                 取消
               </button>
               <button
-                className="rounded bg-neutral-700 px-3 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+                className="btn btn-primary"
                 disabled={pendingStageCount > 0}
                 onClick={() => void confirmApply()}
               >
@@ -785,13 +785,13 @@ function ConfigFieldRow({
   return (
     <li className="space-y-1">
       <div className="flex items-center gap-3">
-        <span className="w-32 shrink-0 text-xs text-neutral-400">
+        <span className="w-32 shrink-0 text-xs text-muted">
           {descriptor.label}
         </span>
         {descriptor.kind === 'select' ? (
           <select
             aria-label={descriptor.label}
-            className="w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="w-64 rounded border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={value}
             onChange={(e) => {
               setValue(e.target.value)
@@ -812,7 +812,7 @@ function ConfigFieldRow({
         ) : (
           <input
             aria-label={descriptor.label}
-            className="w-64 rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="w-64 rounded border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onBlur={() => {
@@ -826,21 +826,21 @@ function ConfigFieldRow({
             }}
           />
         )}
-        <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+        <span className="chip">
           {TIMING_LABEL[descriptor.timing]}
         </span>
       </div>
       <div className="flex items-center gap-3 pl-[8.75rem] text-xs">
-        <span className="text-neutral-500">
+        <span className="text-muted">
           当前：{formatValue(appliedValue)}（v{appliedVersion}）
         </span>
         {draftChange && (
-          <span className="text-amber-300">
+          <span className="text-amber">
             待应用：{formatValue(draftChange.draft)}
           </span>
         )}
       </div>
-      {error && <p className="pl-[8.75rem] text-xs text-red-400">{error}</p>}
+      {error && <p className="pl-[8.75rem] text-xs text-danger">{error}</p>}
     </li>
   )
 }
@@ -865,14 +865,14 @@ function PolicyMatrix({
 }) {
   if (agents.length === 0) {
     return (
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm text-muted">
         当前 Project 尚无 Agent 实例，暂无可比较的配置。
       </p>
     )
   }
   if (agents.length === 1) {
     return (
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm text-muted">
         当前 Project 只有 1 个 Agent 实例，策略矩阵需要至少 2
         个实例进行比较。
       </p>
@@ -903,7 +903,7 @@ function PolicyMatrix({
         <tr>
           <th
             scope="col"
-            className="border-b border-neutral-800 px-2 py-1.5 text-left text-xs font-normal text-neutral-500"
+            className="border-b border-line px-2 py-1.5 text-left text-xs font-normal text-muted"
           >
             配置项
           </th>
@@ -911,12 +911,12 @@ function PolicyMatrix({
             <th
               key={agent.agentInstanceId}
               scope="col"
-              className="border-b border-neutral-800 px-2 py-1.5 text-left"
+              className="border-b border-line px-2 py-1.5 text-left"
             >
-              <span className="block font-medium text-neutral-100">
+              <span className="block font-medium text-ink">
                 {agent.name}
               </span>
-              <span className="block text-xs font-normal text-neutral-500">
+              <span className="block text-xs font-normal text-muted">
                 {providerLabel(agent.providerId)}
               </span>
             </th>
@@ -928,7 +928,7 @@ function PolicyMatrix({
           <tr key={fieldPath}>
             <th
               scope="row"
-              className="whitespace-nowrap border-b border-neutral-900 px-2 py-1.5 text-left text-xs font-normal text-neutral-400"
+              className="whitespace-nowrap border-b border-line px-2 py-1.5 text-left text-xs font-normal text-muted"
             >
               {fieldDescriptor(fieldPath)?.label ?? fieldPath}
             </th>
@@ -939,7 +939,7 @@ function PolicyMatrix({
               return (
                 <td
                   key={agent.agentInstanceId}
-                  className="border-b border-neutral-900 px-2 py-1.5 align-top text-neutral-300"
+                  className="border-b border-line px-2 py-1.5 align-top text-ink"
                 >
                   <span>
                     {value === undefined || value === null || value === ''
@@ -947,7 +947,7 @@ function PolicyMatrix({
                       : formatValue(fieldPath, value)}
                   </span>
                   {blocked && (
-                    <span className="mt-0.5 block text-xs text-amber-400">
+                    <span className="mt-0.5 block text-xs text-amber">
                       已阻止：{entry.blockedReason}
                     </span>
                   )}
@@ -990,20 +990,20 @@ function ReadinessSummary({
           return (
             <li
               key={agent.agentInstanceId}
-              className="rounded border border-neutral-800 px-3 py-2"
+              className="rounded-lg border border-line bg-paper px-3 py-2"
             >
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-neutral-100">
+                <span className="text-sm font-medium text-ink">
                   {agent.name}
                 </span>
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-muted">
                   {providerLabel(agent.providerId)}
                 </span>
                 <span
                   className={`text-xs ${
                     readiness.status === 'ready'
-                      ? 'text-emerald-400'
-                      : 'text-amber-400'
+                      ? 'text-teal'
+                      : 'text-amber'
                   }`}
                 >
                   {readiness.status === 'ready' ? '就绪' : '已阻止'}
@@ -1014,12 +1014,12 @@ function ReadinessSummary({
                   {readiness.blockers.map((blocker, index) => (
                     <li
                       key={index}
-                      className="flex items-center gap-2 text-xs text-neutral-400"
+                      className="flex items-center gap-2 text-xs text-muted"
                     >
                       <span>{blocker.message}</span>
                       {blocker.target && (
                         <button
-                          className="text-blue-400 hover:text-blue-300"
+                          className="text-brand hover:underline"
                           onClick={() => onOpenTarget(blocker.target!)}
                         >
                           {targetLabel(blocker.target)}
@@ -1033,7 +1033,7 @@ function ReadinessSummary({
           )
         })}
       </ul>
-      <p className="mt-3 text-[11px] text-neutral-600">
+      <p className="mt-3 text-[11px] text-muted">
         演示模式：Readiness 汇总基于 mock 场景；权限策略尚未接入
         PermissionBroker，Readiness 不代表真实强制能力。
       </p>

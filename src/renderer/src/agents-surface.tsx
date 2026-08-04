@@ -22,6 +22,7 @@ import type {
 import { id } from './workbench/contract'
 import { resolveProviderModelSelection } from './workbench/provider-capability'
 import { providerLabel, RUNTIME_STATE_LABEL } from './agent-display'
+import { StatusDot, statusDotState } from './status-dot'
 import { WorkspaceArea } from './workspace-layout'
 
 /**
@@ -173,12 +174,12 @@ export function AgentsSurface({
       {layoutNotice && (
         <div
           role="status"
-          className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded border border-amber-700 bg-neutral-900 px-3 py-1.5 text-xs text-amber-300"
+          className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded-lg border border-amber bg-amber-soft px-3 py-1.5 text-xs text-amber"
         >
           <span>{layoutNotice}</span>
           <button
             aria-label="关闭提示"
-            className="rounded px-1 text-amber-300 hover:bg-neutral-800"
+            className="rounded px-1 text-amber hover:bg-amber-soft"
             onClick={() => setLayoutNotice(null)}
           >
             ×
@@ -317,23 +318,20 @@ function AgentDirectory({
     <aside
       role="region"
       aria-label="Agent 目录"
-      className="flex w-64 shrink-0 flex-col border-r border-neutral-800"
+      className="flex w-64 shrink-0 flex-col border-r border-line bg-raised"
     >
       <div className="flex items-center justify-between px-3 pt-3">
-        <h2 className="text-sm font-medium text-neutral-200">
+        <h2 className="text-sm font-medium text-ink">
           Agent 目录
-          <span className="ml-1 text-xs text-neutral-500">{agents.length}</span>
+          <span className="ml-1 text-xs text-muted">{agents.length}</span>
         </h2>
         <div className="flex gap-1">
-          <button
-            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700"
-            onClick={onDispatch}
-          >
+          <button className="mini-button" onClick={onDispatch}>
             派发给 Agent
           </button>
           <button
             ref={newAgentButtonRef}
-            className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-neutral-400"
+            className="mini-button mini-button-primary"
             onClick={() => setShowNewAgent(true)}
           >
             新建 Agent
@@ -345,7 +343,7 @@ function AgentDirectory({
         <input
           ref={searchInputRef}
           aria-label="搜索 Agent"
-          className="w-full rounded bg-neutral-900 px-2 py-1 text-sm text-neutral-200 outline-none placeholder:text-neutral-600 focus-visible:outline-2 focus-visible:outline-neutral-400"
+          className="w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink placeholder:text-muted"
           placeholder="按名称搜索…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -353,7 +351,7 @@ function AgentDirectory({
         <div className="flex gap-1.5">
           <select
             aria-label="按 Provider 过滤"
-            className="w-full rounded bg-neutral-900 px-1 py-1 text-xs text-neutral-300 outline-none"
+            className="w-full rounded-lg border border-line bg-paper px-1 py-1 text-xs text-ink"
             value={providerFilter}
             onChange={(e) => setProviderFilter(e.target.value)}
           >
@@ -366,7 +364,7 @@ function AgentDirectory({
           </select>
           <select
             aria-label="按状态过滤"
-            className="w-full rounded bg-neutral-900 px-1 py-1 text-xs text-neutral-300 outline-none"
+            className="w-full rounded-lg border border-line bg-paper px-1 py-1 text-xs text-ink"
             value={stateFilter}
             onChange={(e) =>
               setStateFilter(e.target.value as AgentRuntimeState | 'all')
@@ -382,7 +380,7 @@ function AgentDirectory({
         </div>
         <select
           aria-label="排序方式"
-          className="w-full rounded bg-neutral-900 px-1 py-1 text-xs text-neutral-300 outline-none"
+          className="w-full rounded-lg border border-line bg-paper px-1 py-1 text-xs text-ink"
           value={sortMode}
           onChange={(e) => setSortMode(e.target.value as SortMode)}
         >
@@ -396,7 +394,7 @@ function AgentDirectory({
         className="min-h-0 flex-1 space-y-0.5 overflow-auto px-2 pb-2"
       >
         {visibleAgents.length === 0 && (
-          <li className="px-1 py-2 text-xs text-neutral-600">没有匹配的 Agent</li>
+          <li className="px-1 py-2 text-xs text-muted">没有匹配的 Agent</li>
         )}
         {visibleAgents.map((agent) => {
           const viewBadges: string[] = []
@@ -409,24 +407,29 @@ function AgentDirectory({
                 ref={(element) =>
                   registerAgentButton(agent.agentInstanceId, element)
                 }
-                className="block min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-neutral-900 focus-visible:outline-2 focus-visible:outline-neutral-400"
+                className="block min-w-0 flex-1 rounded-lg px-2 py-1.5 text-left hover:bg-paper"
                 onClick={() => openAgent(agent.agentInstanceId)}
               >
                 <span className="flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-neutral-100">
+                  {/* Adjacent text names the state; the dot stays decorative
+                      while shape + color double-code it (#65). */}
+                  <StatusDot state={statusDotState(agent.runtimeState)} />
+                  {/* Agent Names are technical identifiers — the frozen
+                      baseline renders them in the mono token (#65). */}
+                  <span className="font-mono text-sm font-medium text-ink">
                     {agent.name}
                   </span>
                   {openAttentionTargets.has(agent.agentInstanceId) && (
                     <span
                       role="img"
                       aria-label="有待处理事项"
-                      className="text-amber-400"
+                      className="text-amber"
                     >
                       ●
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 block text-xs text-neutral-500">
+                <span className="mt-0.5 block text-xs text-muted">
                   {providerLabel(agent.providerId)} ·{' '}
                   {RUNTIME_STATE_LABEL[agent.runtimeState]}
                   {viewBadges.length > 0 && ` · ${viewBadges.join(' · ')}`}
@@ -434,7 +437,7 @@ function AgentDirectory({
               </button>
               <button
                 aria-label={`在新 Panel 打开 ${agent.name}`}
-                className="shrink-0 rounded px-1.5 text-xs text-neutral-600 hover:bg-neutral-900 hover:text-neutral-300"
+                className="shrink-0 rounded-lg px-1.5 text-xs text-muted hover:bg-paper hover:text-ink"
                 onClick={(e) => {
                   e.stopPropagation()
                   openAgentInNewPanel(agent.agentInstanceId)
@@ -578,7 +581,7 @@ function NewAgentDialog({
       role="dialog"
       aria-label="新建 Agent"
       aria-modal="true"
-      className="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
+      className="absolute inset-0 z-10 flex items-center justify-center bg-backdrop"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           event.preventDefault()
@@ -606,25 +609,25 @@ function NewAgentDialog({
         }
       }}
     >
-      <div className="w-80 space-y-3 rounded-lg border border-neutral-700 bg-neutral-900 p-4">
-        <h3 className="text-sm font-medium text-neutral-100">新建 Agent</h3>
+      <div className="w-80 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+        <h3 className="text-sm font-medium text-ink">新建 Agent</h3>
 
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           Agent 名称
           <input
             ref={nameInputRef}
             aria-label="Agent 名称"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
 
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           Provider
           <select
             aria-label="Provider"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={providerId}
             onChange={(e) => selectProvider(e.target.value)}
           >
@@ -643,11 +646,11 @@ function NewAgentDialog({
           </select>
         </label>
 
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           模型
           <select
             aria-label="模型"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={modelId}
             onChange={(e) => {
               setModelId(e.target.value)
@@ -667,11 +670,11 @@ function NewAgentDialog({
           </select>
         </label>
 
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           打开方式
           <select
             aria-label="打开方式"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={open}
             onChange={(e) => setOpen(e.target.value as AgentOpenMode)}
           >
@@ -681,11 +684,11 @@ function NewAgentDialog({
           </select>
         </label>
 
-        <label className="block text-xs text-neutral-400">
+        <label className="block text-xs text-muted">
           worktree 模式
           <select
             aria-label="worktree 模式"
-            className="mt-1 w-full rounded bg-neutral-950 px-2 py-1 text-sm text-neutral-200 outline-none"
+            className="mt-1 w-full rounded-lg border border-line bg-paper px-2 py-1 text-sm text-ink"
             value={worktreeMode}
             onChange={(e) =>
               setWorktreeMode(e.target.value as AgentWorktreeMode)
@@ -697,20 +700,20 @@ function NewAgentDialog({
         </label>
 
         {(error ?? capabilityError) && (
-          <p role="alert" className="text-xs text-red-400">
+          <p role="alert" className="text-xs text-danger">
             {error ?? capabilityError}
           </p>
         )}
 
         <div className="flex justify-end gap-2">
           <button
-            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+            className="btn btn-ghost min-h-[29px]"
             onClick={onClose}
           >
             取消
           </button>
           <button
-            className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+            className="mini-button mini-button-primary"
             disabled={!providerSelection.ok}
             onClick={() => void submit()}
           >

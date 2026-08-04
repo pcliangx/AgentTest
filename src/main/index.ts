@@ -37,6 +37,18 @@ function createWindow(): void {
     height: viewport.height,
     useContentSize: uiSmokeMode.enabled,
     show: false,
+    // Custom 38px titlebar (#65): on macOS the traffic lights float over the
+    // renderer's own titlebar; other platforms keep the native frame so
+    // window controls are never lost.
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 13 }
+        }
+      : {}),
+    // Matches the renderer `wash` token so the window never flashes dark
+    // before the stylesheet loads (main process has no token layer).
+    backgroundColor: '#f4f6fa',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

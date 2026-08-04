@@ -1,25 +1,332 @@
 @import 'tailwindcss';
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
+/*
+ * Agent Squad HQ design tokens — frozen 2026-08-02 command-center baseline
+ * (UX-v0.2 §5; issue #65). Every color, font stack and shadow used by the
+ * renderer MUST come from this layer; components must not hard-code hex
+ * values. #66–#69 build their surfaces on these tokens and on the shared
+ * component classes below.
+ */
+@theme {
+  --color-paper: #ffffff;
+  --color-wash: #f4f6fa;
+  --color-raised: #f8f9fc;
+  --color-ink: #172033;
+  --color-muted: #677187;
+  --color-line: #d9deea;
+  --color-line-strong: #aeb7ca;
+  --color-nav: #151c2b;
+  --color-nav-soft: #222c40;
+  --color-nav-line: #334057;
+  --color-nav-text: #dfe5f1;
+  --color-nav-muted: #97a3b8;
+  --color-nav-active: #eef2ff;
+  --color-brand: #3d68f5;
+  --color-brand-soft: #e8edff;
+  --color-brand-border: #bdc8fa;
+  --color-brand-ink: #274bc9;
+  --color-teal: #0f8a83;
+  --color-teal-soft: #e1f2f0;
+  --color-amber: #ad6a00;
+  --color-amber-soft: #fdf0d7;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-attention-red: #f04438;
+  --color-dot-idle: #7e8799;
+  --color-backdrop: rgb(17 24 39 / 36%);
+
+  --font-sans:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --shadow-overlay: 0 18px 50px rgb(23 32 51 / 14%);
+  --shadow-lift: 0 2px 10px rgb(23 32 51 / 6%);
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font: 13px/1.45 var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-wash);
+  }
+
+  /* Focus must stay visible on every interactive element (UX-v0.2 §15). */
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* Reduced motion: no operation may depend on animation to complete, and
+     transitions must not delay or hide state changes (UX-v0.2 §15). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
 }
 
-/* Reduced motion: no operation may depend on animation to complete, and
-   transitions must not delay or hide state changes (UX-v0.2 §15). */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+@layer components {
+  /* --- Buttons -----------------------------------------------------------
+     Shared button language of the frozen baseline. Use these classes
+     instead of re-deriving button styles per surface (#66–#69 reuse). */
+  .btn {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--color-line);
+    border-radius: 9px;
+    background: var(--color-paper);
+    padding: 0 10px;
+    color: var(--color-ink);
+    font-size: 11px;
+    font-weight: 650;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--color-line-strong);
+    background: var(--color-wash);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+  }
+
+  .btn-primary {
+    border-color: var(--color-brand);
+    background: var(--color-brand);
+    color: var(--color-paper);
+  }
+  .btn-primary:hover:not(:disabled) {
+    border-color: var(--color-brand-ink);
+    background: var(--color-brand-ink);
+  }
+
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--color-muted);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--color-wash);
+    color: var(--color-ink);
+  }
+
+  .btn-danger {
+    color: var(--color-danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    border-color: var(--color-danger);
+    background: var(--color-danger-soft);
+  }
+
+  /* Solid danger is reserved for the final step of a confirmed destructive
+     flow (quit, permanent delete) — never for everyday actions. */
+  .btn-danger-solid {
+    border-color: var(--color-danger);
+    background: var(--color-danger);
+    color: var(--color-paper);
+  }
+  .btn-danger-solid:hover:not(:disabled) {
+    border-color: var(--color-danger);
+    background: var(--color-danger);
+    filter: brightness(1.08);
+  }
+
+  .mini-button {
+    display: inline-flex;
+    min-height: 29px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+    background: var(--color-paper);
+    padding: 0 8px;
+    color: var(--color-ink);
+    font-size: 10px;
+    font-weight: 650;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
+  .mini-button:hover:not(:disabled) {
+    border-color: var(--color-line-strong);
+    background: var(--color-wash);
+  }
+  .mini-button:disabled {
+    opacity: 0.45;
+  }
+
+  .mini-button-primary {
+    border-color: var(--color-brand);
+    background: var(--color-brand);
+    color: var(--color-paper);
+  }
+  .mini-button-primary:hover:not(:disabled) {
+    border-color: var(--color-brand-ink);
+    background: var(--color-brand-ink);
+  }
+
+  .mini-button-danger {
+    color: var(--color-danger);
+  }
+  .mini-button-danger:hover:not(:disabled) {
+    border-color: var(--color-danger);
+    background: var(--color-danger-soft);
+  }
+
+  /* --- Chips, cards, labels --------------------------------------------- */
+  .chip {
+    display: inline-flex;
+    min-height: 23px;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
+    background: var(--color-paper);
+    padding: 0 7px;
+    color: var(--color-muted);
+    font-size: 9px;
+  }
+  .chip-brand {
+    border-color: var(--color-brand-border);
+    background: var(--color-brand-soft);
+    color: var(--color-brand-ink);
+    font-weight: 650;
+  }
+
+  .card {
+    overflow: hidden;
+    border: 1px solid var(--color-line);
+    border-radius: 11px;
+    background: var(--color-paper);
+  }
+
+  .section-label {
+    color: var(--color-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .icon-btn {
+    display: grid;
+    width: 29px;
+    height: 29px;
+    place-items: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--color-muted);
+    font-size: 12px;
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+  .icon-btn:hover:not(:disabled) {
+    background: var(--color-paper);
+    color: var(--color-ink);
+  }
+
+  /* --- Titlebar -----------------------------------------------------------
+     Frameless window chrome (issue #65): the whole bar is a drag region
+     except interactive elements. */
+  .titlebar {
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+  .titlebar button,
+  .titlebar a,
+  .titlebar input,
+  .titlebar select,
+  .titlebar textarea,
+  .titlebar [role='button'] {
+    -webkit-app-region: no-drag;
+  }
+
+  .live-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-teal);
+    box-shadow: 0 0 0 3px rgb(15 138 131 / 12%);
+  }
+
+  /* --- Status dot ---------------------------------------------------------
+     The single global status-dot implementation (issue #65). Every Agent
+     state indicator renders through `StatusDot` / these classes — never a
+     per-surface re-implementation. Color and shape are double-coded:
+       running     teal spinning ring
+       queued      brand outline + brand-soft fill
+       attention   amber square
+       ready       solid teal circle
+       unavailable hollow danger circle
+       archived    muted hollow diamond */
+  .state-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border: 1px solid var(--color-dot-idle);
+    border-radius: 50%;
+    background: transparent;
+  }
+  .state-dot-running {
+    border-color: var(--color-teal);
+    border-top-color: transparent;
+    animation: state-dot-spin 1s linear infinite;
+  }
+  .state-dot-queued {
+    border-color: var(--color-brand);
+    background: var(--color-brand-soft);
+  }
+  .state-dot-attention {
+    border-color: transparent;
+    border-radius: 2px;
+    background: var(--color-amber);
+  }
+  .state-dot-ready {
+    border-color: var(--color-teal);
+    background: var(--color-teal);
+  }
+  .state-dot-unavailable {
+    border-color: var(--color-danger);
+    background: transparent;
+  }
+  .state-dot-archived {
+    border-color: var(--color-muted);
+    border-radius: 2px;
+    background: transparent;
+    transform: rotate(45deg);
+  }
+
+  @keyframes state-dot-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 }
