@@ -33,6 +33,7 @@ export type ProjectTaskId = Brand<string, 'ProjectTaskId'>
 export type ExternalTaskId = Brand<string, 'ExternalTaskId'>
 export type KnowledgeResourceId = Brand<string, 'KnowledgeResourceId'>
 export type ActivityId = Brand<string, 'ActivityId'>
+export type ExecutionResultId = Brand<string, 'ExecutionResultId'>
 
 /** Brands a raw string into a branded ID (cast helper). */
 export function id<T extends string, Name extends string>(
@@ -160,6 +161,14 @@ export interface AgentInstanceViewModel {
   /** Epoch ms of the instance's latest known activity, for recency ordering. */
   lastActivityAt?: number
   /**
+   * Adapter-owned handoff facts that cannot be derived from runtime, Activity
+   * or worktree projections. Renderer consumers display these facts verbatim.
+   */
+  handoffDirtyFlags?: {
+    unsyncedTaskCount: number
+    manuallyMarked: boolean
+  }
+  /**
    * The applied configuration version this instance's active Run started
    * with (Run 配置快照). Applying newer configuration never rewrites it —
    * run configuration only takes effect on the next Run (US-91).
@@ -257,6 +266,12 @@ export interface QueueItemViewModel {
   agentInstanceId: AgentInstanceId
   position: number
   priority: 'low' | 'normal' | 'high'
+  /**
+   * Exact link to the task Dispatch this queue item belongs to (#10). Only
+   * task-linked queue entries carry it; cancelling the item cancels exactly
+   * this Dispatch — never a sibling's.
+   */
+  dispatchId?: DispatchId
 }
 
 export interface PermissionRequestViewModel {
@@ -317,6 +332,104 @@ export interface ConfirmationViewModel {
   nonBypassableReason: string
 }
 
+// ---------------------------------------------------------------------------
+// Tasks domain (#10) — local Project Task vs Feishu External Task projection
+// ---------------------------------------------------------------------------
+
+/** Stable reference to the task a Dispatch/Result belongs to. */
+export type TaskRef =
+  | { kind: 'project-task'; projectTaskId: ProjectTaskId }
+  | { kind: 'external-task'; externalTaskId: ExternalTaskId }
+
+/** Sync truth of an External Task projection, never inferred by the UI. */
+export type TaskSyncState = 'synced' | 'offline' | 'conflict' | 'unavailable'
+
+/** User review of an Execution Result — the only path to acceptance. */
+export type ExecutionReviewState =
+  | 'pending-review'
+  | 'accepted'
+  | 'revision-requested'
+
+/** High-risk mock External Task operations routed through the confirmation host. */
+export type ExternalTaskOperation =
+  | 'delete'
+  | 'batch-delete'
+  | 'change-members'
+  | 'change-permissions'
+
+export interface DispatchViewModel {
+  dispatchId: DispatchId
+  projectId: ProjectId
+  agentInstanceId: AgentInstanceId
+  /** Immutable snapshot of the Agent's name at dispatch time (#10). */
+  agentNameSnapshot: string
+  taskRef: TaskRef
+  instruction: string
+  /**
+   * Planner-bound lifecycle: a task dispatch starts ('active') or queues
+   * ('queued') exactly as the confirmed plan projects; 'completed' only
+   * ever comes from the explicit mock completion transition that also
+   * produces the Execution Result; 'cancelled' means its queue item was
+   * cancelled before it ever started — no result will follow.
+   */
+  status: 'active' | 'queued' | 'completed' | 'cancelled'
+  createdAt: number
+}
+
+export interface ExecutionResultViewModel {
+  resultId: ExecutionResultId
+  dispatchId: DispatchId
+  projectId: ProjectId
+  agentInstanceId: AgentInstanceId
+  taskRef: TaskRef
+  summary: string
+  reviewState: ExecutionReviewState
+  createdAt: number
+  reviewedAt?: number
+}
+
+/** A bounded local goal that only exists inside Agent Squad HQ. */
+export interface ProjectTaskViewModel {
+  projectTaskId: ProjectTaskId
+  projectId: ProjectId
+  title: string
+  status: 'open' | 'completed'
+  dispatchIds: DispatchId[]
+}
+
+/**
+ * The local projection of a Feishu-held task. Feishu owns the business
+ * fields; Agent Squad HQ tracks dispatch, results, acceptance and the
+ * projection's version/sync truth. A single Run or accepted result never
+ * changes `businessStatus` — that requires an explicit separate write.
+ */
+export interface ExternalTaskViewModel {
+  externalTaskId: ExternalTaskId
+  projectId: ProjectId
+  title: string
+  externalId: string
+  version: number
+  syncState: TaskSyncState
+  businessStatus: 'open' | 'completed'
+  /**
+   * External deletion is a tombstone: the projection stays so local
+   * Dispatch/Result audit and Attention deep links remain reachable (#10).
+   */
+  lifecycle: 'active' | 'deleted'
+  dispatchIds: DispatchId[]
+  /** A failed external write keeps the proposal and its reason (Issue #10). */
+  proposedChange?: {
+    summary: string
+    failureReason: string
+    /**
+     * What the failed write actually intended, so a later explicit
+     * conflict overwrite applies the REAL proposal instead of assuming a
+     * business completion (#10 review).
+     */
+    action: 'complete' | ExternalTaskOperation
+  }
+}
+
 export type ActivityKind =
   | 'run-started'
   | 'run-completed'
@@ -328,6 +441,10 @@ export type ActivityKind =
   | 'attention-resolved'
   | 'instruction-sent'
   | 'dispatch-created'
+  | 'execution-result-reviewed'
+  | 'external-task-write'
+  | 'external-task-write-failed'
+  | 'external-task-conflict-resolved'
   | 'queue-cancelled'
   | 'dangerous-action-confirmed'
 
@@ -352,6 +469,92 @@ export type ActivityEntry =
       queueItemId?: never
       reason?: never
     })
+
+// ---------------------------------------------------------------------------
+// Handoff (#12)
+// ---------------------------------------------------------------------------
+
+export interface HandoffArtifactViewModel {
+  path: string
+  status: 'included' | 'missing'
+}
+
+export interface HandoffValidationViewModel {
+  status: 'pass' | 'fail' | 'pending'
+  message?: string
+}
+
+export type HandoffImportState =
+  | 'not-imported'
+  | 'inspect-only'
+  | 'execute-confirmed'
+
+export interface HandoffViewModel {
+  handoffId: HandoffId
+  projectId: ProjectId
+  source: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  target?: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  provenance: {
+    origin: 'local' | 'imported' | 'cross-project' | 'quit-snapshot'
+    createdAt: number
+    /** Project name for cross-project provenance only. */
+    sourceProjectName?: string
+  }
+  goal: string
+  summary: string
+  baseCommit: string
+  changeSummary: string
+  artifacts: HandoffArtifactViewModel[]
+  validation: HandoffValidationViewModel
+  completeness: 'complete' | 'incomplete'
+  incompleteReason?: string
+  recoveryActions: string[]
+  importState: HandoffImportState
+}
+
+// ---------------------------------------------------------------------------
+// Quit preview (#12)
+// ---------------------------------------------------------------------------
+
+export type HandoffDirtyReason =
+  | 'successful-round'
+  | 'worktree-changes'
+  | 'active-run'
+  | 'active-terminal'
+  | 'failed-run'
+  | 'interrupted-run'
+  | 'pending-confirmation'
+  | 'unsynced-task'
+  | 'manual'
+
+export interface QuitPreviewViewModel {
+  phase: 'resolve-active-work' | 'request-final-handoff'
+  activeRuns: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    runId: RunId
+    runtimeState: AgentRuntimeState
+  }>
+  activeTerminals: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }>
+  handoffDirtyAgents: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    changeSummary: string
+    reasons: HandoffDirtyReason[]
+  }>
+}
 
 export interface WorktreeChangesViewModel {
   agentInstanceId: AgentInstanceId
@@ -379,6 +582,10 @@ export interface WorkbenchViewModel {
   queue: QueueItemViewModel[]
   permissionRequests: PermissionRequestViewModel[]
   attentionItems: AttentionItemViewModel[]
+  projectTasks: ProjectTaskViewModel[]
+  externalTasks: ExternalTaskViewModel[]
+  dispatches: DispatchViewModel[]
+  executionResults: ExecutionResultViewModel[]
   pendingConfirmation?: ConfirmationViewModel
   configurationDrafts: ConfigurationDraftViewModel[]
   appliedConfigurations: AppliedConfigurationViewModel[]
@@ -396,6 +603,8 @@ export interface WorkbenchViewModel {
   runReadiness: RunReadinessViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
+  handoffs: HandoffViewModel[]
+  quitPreview?: QuitPreviewViewModel
   global: {
     attentionCount: number
     concurrency: {
@@ -513,6 +722,51 @@ export type WorkbenchCommandBody =
       instruction: string
     }
   | {
+      kind: 'dispatch-task'
+      projectId: ProjectId
+      taskRef: TaskRef
+      targets: AgentInstanceId[]
+      instruction: string
+    }
+  | {
+      kind: 'complete-dispatch'
+      projectId: ProjectId
+      dispatchId: DispatchId
+    }
+  | {
+      kind: 'review-execution-result'
+      projectId: ProjectId
+      resultId: ExecutionResultId
+      decision: 'accept' | 'request-revision'
+    }
+  | {
+      kind: 'update-external-task-status'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      status: 'completed'
+      expectedVersion: number
+    }
+  | {
+      kind: 'resolve-external-task-conflict'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      expectedVersion: number
+      resolution: 'discard' | 'overwrite'
+    }
+  | {
+      kind: 'request-external-task-operation'
+      projectId: ProjectId
+      operation: ExternalTaskOperation
+      externalTaskIds: ExternalTaskId[]
+    }
+  | {
+      kind: 'apply-external-task-update'
+      projectId: ProjectId
+      externalTaskId: ExternalTaskId
+      version: number
+      summary: string
+    }
+  | {
       kind: 'manage-queue'
       projectId: ProjectId
       queueItemId: QueueItemId
@@ -555,6 +809,13 @@ export type WorkbenchCommandBody =
       projectId: ProjectId
       handoffId: HandoffId
       targetAgentInstanceId: AgentInstanceId
+      mode: 'request-execute'
+    }
+  | {
+      kind: 'import-handoff'
+      projectId: ProjectId
+      handoffId: HandoffId
+      targetAgentInstanceId: AgentInstanceId
       mode: 'execute-confirmed'
       confirmationId: ConfirmationId
     }
@@ -564,6 +825,10 @@ export type WorkbenchCommandBody =
   | { kind: 'merge-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'discard-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'request-quit-preview' }
+  | {
+      kind: 'execute-quit'
+      action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
+    }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 
 /** Commands whose successful result may carry a LayoutTargetEffect. */

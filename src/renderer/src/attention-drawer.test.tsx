@@ -211,20 +211,8 @@ describe('Global Attention — deep links (#9)', () => {
 
   it.each([
     {
-      title: '本地任务「月度报表」已完成',
-      retained: '已保留目标：Project Task ptask-001'
-    },
-    {
-      title: '飞书任务「Q2 销售目标」存在版本冲突',
-      retained: '已保留目标：External Task ext-task-001'
-    },
-    {
       title: '销售知识库有未同步的修改',
       retained: '已保留目标：Knowledge know-001'
-    },
-    {
-      title: '交接包不完整：缺少验证结果',
-      retained: '已保留目标：Handoff handoff-001'
     }
   ])(
     'keeps the undelivered target on an explicit placeholder page: $retained',
@@ -241,6 +229,27 @@ describe('Global Attention — deep links (#9)', () => {
       expect(screen.getByText(new RegExp(retained))).toBeVisible()
     }
   )
+
+  it('navigates to the Handoffs surface and highlights the specific handoff from attention', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：交接包不完整：缺少验证结果'
+      })
+    )
+    expect(
+      screen.queryByRole('complementary', { name: 'Global Attention' })
+    ).toBeNull()
+    // The Handoffs surface is now implemented (#12) — shows actual handoff
+    // data instead of a placeholder page.
+    const region = await screen.findByRole('region', { name: '交接' })
+    expect(region).toHaveTextContent('不完整')
+    expect(region).toHaveTextContent('缺少验证结果')
+    // The specific handoff-001 card is highlighted via focus ring (#9 deep link)
+    const focusedCard = within(region).getByText('handoff-001')
+    expect(focusedCard.closest('li')).toHaveClass('ring-2')
+  })
 })
 
 describe('Permission Center — decisions (#9)', () => {
@@ -666,7 +675,7 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     // While the deep link's first command result is still in flight, the
     // user navigates manually — this supersedes the whole deep link.
     await user.click(screen.getByRole('button', { name: '任务' }))
-    await screen.findByText(/任务 工作面尚未实现/)
+    await screen.findByRole('region', { name: '任务' })
     // Let the deferred result land, then observe.
     await new Promise((resolve) => setTimeout(resolve, 60))
 
@@ -675,7 +684,7 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     expect(commands.some((c) => c.kind === 'change-layout')).toBe(false)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByText(/已保留目标/)).toBeNull()
-    expect(screen.getByText(/任务 工作面尚未实现/)).toBeVisible()
+    expect(screen.getByRole('region', { name: '任务' })).toBeVisible()
   })
 })
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   AgentInstanceId,
+  AgentInstanceViewModel,
   AgentProviderId,
   AttentionItemId,
   AttentionTarget,
@@ -9,6 +10,10 @@ import type {
   ConfirmationId,
   ConnectionId,
   GlobalSurface,
+  HandoffId,
+  HandoffImportState,
+  HandoffValidationViewModel,
+  HandoffViewModel,
   LayoutTargetEffect,
   PanelId,
   PermissionDecision,
@@ -16,6 +21,7 @@ import type {
   ProjectId,
   ProjectSurface,
   ProjectViewModel,
+  TaskRef,
   WorkbenchCommand,
   WorkbenchCommandBody,
   WorkbenchPort,
@@ -29,6 +35,7 @@ import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
+import { TasksSurface } from './tasks-surface'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -264,8 +271,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // The unified Dispatch Picker lives at shell level so all Project surfaces
   // open the same dispatcher instead of owning divergent implementations.
   const [showPicker, setShowPicker] = useState(false)
+  // Task-linked dispatch context (#10): set when the picker opens from the
+  // Tasks surface so its confirmation creates task-linked Dispatch/Result
+  // records instead of a bare dispatch.
+  const [pickerTask, setPickerTask] = useState<{
+    ref: TaskRef
+    title: string
+  } | null>(null)
   // Global Attention Center (#9): one shell-level drawer over every surface.
   const [showAttention, setShowAttention] = useState(false)
+  // Close-window notice: shows that background state is preserved (#12 AC3).
+  const [showCloseNotice, setShowCloseNotice] = useState(false)
   // Undelivered deep-link targets stay retained for their placeholder page
   // until the user navigates somewhere else explicitly.
   const [retainedDeepLink, setRetainedDeepLink] =
@@ -689,7 +705,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {project && (
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
-              onClick={() => setShowPicker(true)}
+              onClick={() => {
+                setPickerTask(null)
+                setShowPicker(true)
+              }}
             >
               派发给 Agent
             </button>
@@ -699,6 +718,20 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               {connection.label}
             </span>
           )}
+          <button
+            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
+            onClick={() => setShowCloseNotice(true)}
+          >
+            关闭窗口
+          </button>
+          <button
+            className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300 hover:bg-red-800"
+            onClick={() => {
+              void sendCommand({ kind: 'request-quit-preview' })
+            }}
+          >
+            退出
+          </button>
         </div>
       </header>
 
@@ -845,10 +878,45 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
+            {project.currentSurface === 'tasks' && (
+              <TasksSurface
+                key={project.projectId}
+                project={project}
+                snapshot={snapshot}
+                sendCommand={sendCommand}
+                highlightTaskRef={
+                  retainedDeepLink &&
+                  (retainedDeepLink.kind === 'project-task' ||
+                    retainedDeepLink.kind === 'external-task') &&
+                  retainedDeepLink.projectId === project.projectId
+                    ? retainedDeepLink
+                    : null
+                }
+                onDispatchTask={(taskRef, title) => {
+                  setPickerTask({ ref: taskRef, title })
+                  setShowPicker(true)
+                }}
+              />
+            )}
+            {project.currentSurface === 'handoffs' && (
+              <HandoffsSurface
+                snapshot={snapshot}
+                project={project}
+                sendCommand={sendCommand}
+                focusHandoffId={
+                  retainedDeepLink?.kind === 'handoff' &&
+                  retainedDeepLink.projectId === project.projectId
+                    ? retainedDeepLink.handoffId
+                    : undefined
+                }
+              />
+            )}
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
               project.currentSurface !== 'agents' &&
-              project.currentSurface !== 'settings' && (
+              project.currentSurface !== 'settings' &&
+              project.currentSurface !== 'tasks' &&
+              project.currentSurface !== 'handoffs' && (
                 <PlaceholderSurface
                   surface={project.currentSurface}
                   retainedTarget={
@@ -876,7 +944,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           snapshot={snapshot}
           planDispatch={planDispatch}
           sendCommand={sendCommand}
-          onClose={() => setShowPicker(false)}
+          taskContext={pickerTask}
+          onClose={() => {
+            setPickerTask(null)
+            setShowPicker(false)
+          }}
         />
       )}
 
@@ -906,6 +978,28 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )
           }
           onCancel={() => void dismissConfirmation()}
+        />
+      )}
+
+      {showCloseNotice && (
+        <CloseWindowNotice onClose={() => setShowCloseNotice(false)} />
+      )}
+
+      {snapshot.quitPreview && !snapshot.pendingConfirmation && (
+        <QuitPreviewDialog
+          preview={snapshot.quitPreview}
+          onAction={(action) => {
+            void sendCommand({ kind: 'execute-quit', action }).then(
+              (result) => {
+                if (!result.ok && result.reason === 'stale-revision') {
+                  void sendCommand(
+                    { kind: 'request-quit-preview' },
+                    result.latestRevision
+                  )
+                }
+              }
+            )
+          }}
         />
       )}
     </div>
@@ -1148,6 +1242,439 @@ function GlobalSettingsSurface() {
       <h2 className="text-lg font-medium text-neutral-100">全局设置</h2>
       <p className="text-sm text-neutral-500">全局设置工作面尚未实现</p>
     </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Handoffs surface (#12 AC1)
+// ---------------------------------------------------------------------------
+
+const COMPLETENESS_LABEL: Record<'complete' | 'incomplete', string> = {
+  complete: '完整',
+  incomplete: '不完整'
+}
+
+const VALIDATION_LABEL: Record<HandoffValidationViewModel['status'], string> = {
+  pass: '验证通过',
+  fail: '验证失败',
+  pending: '验证待完成'
+}
+
+const IMPORT_STATE_LABEL: Record<HandoffImportState, string> = {
+  'not-imported': '未导入',
+  'inspect-only': '已检查',
+  'execute-confirmed': '已确认执行'
+}
+
+function HandoffsSurface({
+  snapshot,
+  project,
+  sendCommand,
+  focusHandoffId
+}: {
+  snapshot: WorkbenchViewModel
+  project: ProjectViewModel
+  sendCommand: (
+    body: WorkbenchCommandBody,
+    expectedRevision?: number
+  ) => Promise<CommandResult>
+  focusHandoffId?: HandoffId
+}) {
+  const handoffs = snapshot.handoffs.filter(
+    (h) => h.projectId === project.projectId
+  )
+  const projectAgents = snapshot.agents.filter(
+    (a) => a.projectId === project.projectId
+  )
+  const focusRef = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (focusHandoffId && focusRef.current) {
+      focusRef.current.scrollIntoView?.({
+        behavior: 'smooth',
+        block: 'center'
+      })
+    }
+  }, [focusHandoffId])
+
+  if (handoffs.length === 0) {
+    return (
+      <section role="region" aria-label="交接" className="space-y-3">
+        <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
+        <p className="text-sm text-neutral-500">暂无交接记录</p>
+      </section>
+    )
+  }
+
+  return (
+    <section role="region" aria-label="交接" className="space-y-3">
+      <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
+      <ul className="space-y-3">
+        {handoffs.map((h) => {
+          const isFocused = focusHandoffId === h.handoffId
+          return (
+            <li
+              key={h.handoffId}
+              ref={isFocused ? focusRef : undefined}
+              className={`rounded-lg p-4 ${
+                isFocused
+                  ? 'bg-neutral-800 ring-2 ring-blue-600'
+                  : 'bg-neutral-900'
+              }`}
+            >
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded px-1.5 py-0.5 text-xs ${
+                    h.completeness === 'complete'
+                      ? 'bg-emerald-950 text-emerald-400'
+                      : 'bg-amber-950 text-amber-400'
+                  }`}
+                >
+                  {COMPLETENESS_LABEL[h.completeness]}
+                </span>
+                <span className="text-xs text-neutral-500">
+                  {IMPORT_STATE_LABEL[h.importState]}
+                </span>
+                {h.provenance.origin === 'cross-project' && (
+                  <span className="rounded bg-blue-950 px-1.5 py-0.5 text-xs text-blue-400">
+                    跨项目（来自 {h.provenance.sourceProjectName}）
+                  </span>
+                )}
+                {h.provenance.origin === 'quit-snapshot' && (
+                  <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
+                    退出快照
+                  </span>
+                )}
+                {h.provenance.origin === 'imported' && (
+                  <span className="rounded bg-purple-950 px-1.5 py-0.5 text-xs text-purple-400">
+                    导入
+                  </span>
+                )}
+                <span className="font-mono text-[10px] text-neutral-600">
+                  {h.handoffId}
+                </span>
+                <span className="text-[10px] text-neutral-600">
+                  {PROVENANCE_ORIGIN_LABEL[h.provenance.origin]}
+                  {new Date(h.provenance.createdAt).toLocaleString()}
+                </span>
+              </div>
+              <p className="text-sm text-neutral-200">{h.goal}</p>
+              <p className="mt-1 text-xs text-neutral-500">{h.summary}</p>
+              <dl className="mt-2 space-y-1 text-xs text-neutral-400">
+                <div>
+                  <dt className="inline text-neutral-600">来源：</dt>
+                  <dd className="inline">{h.source.agentName}</dd>
+                  {h.target && (
+                    <>
+                      <dt className="ml-2 inline text-neutral-600">目标：</dt>
+                      <dd className="inline">{h.target.agentName}</dd>
+                    </>
+                  )}
+                </div>
+                <div>
+                  <dt className="inline text-neutral-600">基线：</dt>
+                  <dd className="inline font-mono">{h.baseCommit}</dd>
+                  <dt className="ml-3 text-neutral-600">验证：</dt>
+                  <dd className="inline">
+                    {VALIDATION_LABEL[h.validation.status]}
+                    {h.validation.message ? `（${h.validation.message}）` : ''}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="inline text-neutral-600">改动：</dt>
+                  <dd className="inline">{h.changeSummary}</dd>
+                </div>
+                {h.artifacts.length > 0 && (
+                  <div>
+                    <dt className="inline text-neutral-600">产物：</dt>
+                    <dd className="inline">
+                      {h.artifacts
+                        .map(
+                          (a) =>
+                            `${a.path}${a.status === 'missing' ? '（缺失）' : ''}`
+                        )
+                        .join('、')}
+                    </dd>
+                  </div>
+                )}
+                {h.incompleteReason && (
+                  <div className="text-amber-400">
+                    <dt className="inline text-amber-600">不完整原因：</dt>
+                    <dd className="inline">{h.incompleteReason}</dd>
+                  </div>
+                )}
+                {h.recoveryActions.length > 0 && (
+                  <div>
+                    <dt className="inline text-neutral-600">恢复动作：</dt>
+                    <dd className="inline">{h.recoveryActions.join('；')}</dd>
+                  </div>
+                )}
+              </dl>
+              {h.importState === 'not-imported' && (
+                <HandoffImportActions
+                  handoffId={h.handoffId}
+                  agents={projectAgents}
+                  onImport={(targetAgentInstanceId, mode) =>
+                    void sendCommand({
+                      kind: 'import-handoff',
+                      projectId: project.projectId,
+                      handoffId: h.handoffId,
+                      targetAgentInstanceId,
+                      mode
+                    })
+                  }
+                />
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+const PROVENANCE_ORIGIN_LABEL: Record<
+  HandoffViewModel['provenance']['origin'],
+  string
+> = {
+  local: '本地 · ',
+  imported: '导入 · ',
+  'cross-project': '跨项目 · ',
+  'quit-snapshot': '退出快照 · '
+}
+
+function HandoffImportActions({
+  handoffId,
+  agents,
+  onImport
+}: {
+  handoffId: HandoffId
+  agents: AgentInstanceViewModel[]
+  onImport: (
+    targetAgentInstanceId: AgentInstanceId,
+    mode: 'inspect-only' | 'request-execute'
+  ) => void
+}) {
+  const [targetId, setTargetId] = useState<string>('')
+  const available = agents.filter(
+    (a) => a.runtimeState !== 'unavailable' && a.runtimeState !== 'archived'
+  )
+  return (
+    <div className="mt-3 flex items-center gap-2 border-t border-neutral-800 pt-2">
+      <select
+        aria-label={`导入目标 Agent ${handoffId}`}
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200"
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+      >
+        <option value="">选择目标 Agent…</option>
+        {available.map((a) => (
+          <option key={a.agentInstanceId} value={a.agentInstanceId}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      <button
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        disabled={!targetId}
+        onClick={() =>
+          onImport(id(targetId, 'AgentInstanceId'), 'inspect-only')
+        }
+      >
+        仅导入检查
+      </button>
+      <button
+        className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+        disabled={!targetId}
+        onClick={() =>
+          onImport(id(targetId, 'AgentInstanceId'), 'request-execute')
+        }
+      >
+        导入并执行
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Close-window notice (#12 AC3)
+// ---------------------------------------------------------------------------
+
+function CloseWindowNotice({ onClose }: { onClose: () => void }) {
+  const noticeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    noticeRef.current?.focus()
+  }, [])
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="关闭窗口"
+        className="w-full max-w-sm space-y-3 rounded-lg bg-neutral-900 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-medium text-neutral-100">关闭窗口</h3>
+        <p className="text-sm text-neutral-400">
+          关闭窗口不会停止后台 Run、Terminal 或 Agent。后台工作将继续运行。
+        </p>
+        <div className="flex justify-end pt-2">
+          <button
+            ref={noticeRef}
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={onClose}
+          >
+            知道了
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Quit preview dialog (#12 AC3/AC4)
+// ---------------------------------------------------------------------------
+
+function QuitPreviewDialog({
+  preview,
+  onAction
+}: {
+  preview: WorkbenchViewModel['quitPreview']
+  onAction: (
+    action:
+      | 'wait-for-runs'
+      | 'stop-runs'
+      | 'request-final-handoff'
+      | 'force-quit'
+  ) => void
+}) {
+  const quitRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    quitRef.current?.focus()
+  }, [])
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // In both phases, Escape dismisses the quit dialog. The contract
+        // has no dedicated "cancel-quit" action — `wait-for-runs` is the
+        // canonical dismiss path (clears quitPreview, preserves state).
+        onAction('wait-for-runs')
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onAction])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="退出 Agent Squad HQ"
+        className="w-full max-w-lg space-y-4 rounded-lg bg-neutral-900 p-5"
+      >
+        <h3 className="text-base font-medium text-neutral-100">
+          退出 Agent Squad HQ
+        </h3>
+
+        {preview!.phase === 'resolve-active-work' ? (
+          <p className="text-sm text-neutral-400">
+            请先等待或停止活动 Run 与 Terminal，再生成最终 Handoff。
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-400">
+            活动执行已处理。请为 handoff-dirty Agent 生成最终 Handoff。
+          </p>
+        )}
+
+        {preview!.activeRuns.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              活动 Run（{preview!.activeRuns.length}）
+            </h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.activeRuns.map((run) => (
+                <li key={run.runId}>
+                  {run.agentName}（{run.runtimeState}）
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.activeTerminals.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              活动 Terminal（{preview!.activeTerminals.length}）
+            </h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.activeTerminals.map((term) => (
+                <li key={term.agentInstanceId}>{term.agentName}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.handoffDirtyAgents.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              需最终 Handoff 的 Agent（{preview!.handoffDirtyAgents.length}）
+            </h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.handoffDirtyAgents.map((agent) => (
+                <li key={agent.agentInstanceId}>
+                  {agent.agentName}：{agent.changeSummary}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.activeRuns.length === 0 &&
+          preview!.activeTerminals.length === 0 &&
+          preview!.handoffDirtyAgents.length === 0 && (
+            <p className="text-sm text-neutral-500">
+              没有活动 Run、Terminal 或待交接状态，可以安全退出。
+            </p>
+          )}
+
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
+          <button
+            ref={quitRef}
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={() => onAction('wait-for-runs')}
+          >
+            {preview!.phase === 'resolve-active-work'
+              ? '等待 Run 完成'
+              : '取消退出'}
+          </button>
+          {preview!.phase === 'resolve-active-work' ? (
+            <button
+              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+              onClick={() => onAction('stop-runs')}
+            >
+              停止 Run
+            </button>
+          ) : (
+            <button
+              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+              onClick={() => onAction('request-final-handoff')}
+            >
+              生成最终 Handoff
+            </button>
+          )}
+          <button
+            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
+            onClick={() => onAction('force-quit')}
+          >
+            强制退出
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

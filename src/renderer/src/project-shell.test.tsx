@@ -197,7 +197,9 @@ describe('ProjectShell — project switcher', () => {
 
     // Navigate sales project to tasks
     await user.click(screen.getByRole('button', { name: '任务' }))
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
 
     // Switch to 用户研究 — should show its own overview, not tasks
     await user.selectOptions(
@@ -213,7 +215,9 @@ describe('ProjectShell — project switcher', () => {
       screen.getByRole('combobox', { name: '切换项目' }),
       '销售数据分析'
     )
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
   })
 })
 
@@ -273,7 +277,9 @@ describe('ProjectShell — stale snapshot safety', () => {
 
     // The renderer must keep revision 1's state (tasks surface), not
     // overwrite it with the stale revision 0 (overview surface).
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
   })
 })
 
@@ -285,7 +291,9 @@ describe('ProjectShell — command ID uniqueness', () => {
     const { unmount } = render(<ProjectShell port={adapter} />)
     await waitForLoad()
     await user.click(screen.getByRole('button', { name: '任务' }))
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
     unmount()
 
     // Remount with the same adapter — new mount must not reuse old
@@ -348,12 +356,16 @@ describe('ProjectShell — global surfaces', () => {
     await waitForLoad()
     // Navigate to tasks first, then go to global, then return
     await user.click(screen.getByRole('button', { name: '任务' }))
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: '连接' }))
     await screen.findByRole('region', { name: '全局连接' })
     await user.click(screen.getByRole('button', { name: /返回项目/ }))
     // Should return to tasks surface, not overview
-    expect(await screen.findByText(/尚未实现/)).toBeVisible()
+    expect(
+      await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
   })
 })
 
