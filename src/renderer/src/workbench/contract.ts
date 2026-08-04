@@ -160,6 +160,14 @@ export interface AgentInstanceViewModel {
   /** Epoch ms of the instance's latest known activity, for recency ordering. */
   lastActivityAt?: number
   /**
+   * Adapter-owned handoff facts that cannot be derived from runtime, Activity
+   * or worktree projections. Renderer consumers display these facts verbatim.
+   */
+  handoffDirtyFlags?: {
+    unsyncedTaskCount: number
+    manuallyMarked: boolean
+  }
+  /**
    * The applied configuration version this instance's active Run started
    * with (Run 配置快照). Applying newer configuration never rewrites it —
    * run configuration only takes effect on the next Run (US-91).
@@ -294,6 +302,92 @@ export type ActivityEntry =
       reason?: never
     })
 
+// ---------------------------------------------------------------------------
+// Handoff (#12)
+// ---------------------------------------------------------------------------
+
+export interface HandoffArtifactViewModel {
+  path: string
+  status: 'included' | 'missing'
+}
+
+export interface HandoffValidationViewModel {
+  status: 'pass' | 'fail' | 'pending'
+  message?: string
+}
+
+export type HandoffImportState =
+  | 'not-imported'
+  | 'inspect-only'
+  | 'execute-confirmed'
+
+export interface HandoffViewModel {
+  handoffId: HandoffId
+  projectId: ProjectId
+  source: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  target?: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  provenance: {
+    origin: 'local' | 'imported' | 'cross-project' | 'quit-snapshot'
+    createdAt: number
+    /** Project name for cross-project provenance only. */
+    sourceProjectName?: string
+  }
+  goal: string
+  summary: string
+  baseCommit: string
+  changeSummary: string
+  artifacts: HandoffArtifactViewModel[]
+  validation: HandoffValidationViewModel
+  completeness: 'complete' | 'incomplete'
+  incompleteReason?: string
+  recoveryActions: string[]
+  importState: HandoffImportState
+}
+
+// ---------------------------------------------------------------------------
+// Quit preview (#12)
+// ---------------------------------------------------------------------------
+
+export type HandoffDirtyReason =
+  | 'successful-round'
+  | 'worktree-changes'
+  | 'active-run'
+  | 'active-terminal'
+  | 'failed-run'
+  | 'interrupted-run'
+  | 'pending-confirmation'
+  | 'unsynced-task'
+  | 'manual'
+
+export interface QuitPreviewViewModel {
+  phase: 'resolve-active-work' | 'request-final-handoff'
+  activeRuns: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    runId: RunId
+    runtimeState: AgentRuntimeState
+  }>
+  activeTerminals: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }>
+  handoffDirtyAgents: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    changeSummary: string
+    reasons: HandoffDirtyReason[]
+  }>
+}
+
 export interface WorktreeChangesViewModel {
   agentInstanceId: AgentInstanceId
   baseCommit: string
@@ -325,6 +419,8 @@ export interface WorkbenchViewModel {
   appliedConfigurations: AppliedConfigurationViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
+  handoffs: HandoffViewModel[]
+  quitPreview?: QuitPreviewViewModel
   global: {
     attentionCount: number
     concurrency: {
@@ -484,6 +580,13 @@ export type WorkbenchCommandBody =
       projectId: ProjectId
       handoffId: HandoffId
       targetAgentInstanceId: AgentInstanceId
+      mode: 'request-execute'
+    }
+  | {
+      kind: 'import-handoff'
+      projectId: ProjectId
+      handoffId: HandoffId
+      targetAgentInstanceId: AgentInstanceId
       mode: 'execute-confirmed'
       confirmationId: ConfirmationId
     }
@@ -493,6 +596,10 @@ export type WorkbenchCommandBody =
   | { kind: 'merge-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'discard-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'request-quit-preview' }
+  | {
+      kind: 'execute-quit'
+      action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
+    }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 
 /** Commands whose successful result may carry a LayoutTargetEffect. */

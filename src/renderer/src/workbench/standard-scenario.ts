@@ -152,7 +152,9 @@ export function createStandardScenario(
       // applying newer configuration never rewrites this version.
       activeRunConfigVersion: 3
     }),
-    agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000),
+    agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000, {
+      activeRunId: id('run-sql-001', 'RunId')
+    }),
     agent(ccEtl, 'cc_etl', claudeCode, 'failed', now - 1_800_000),
     agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000, {
       terminalState: 'active'
@@ -454,6 +456,102 @@ export function createStandardScenario(
           status: 'fail',
           message: '类型检查失败：第 42 行有未定义变量'
         }
+      }
+    ],
+    handoffs: [
+      {
+        handoffId: id('handoff-complete-001', 'HandoffId'),
+        projectId,
+        source: {
+          agentInstanceId: ccData,
+          agentName: 'cc_data'
+        },
+        target: {
+          agentInstanceId: ccSql,
+          agentName: 'cc_sql'
+        },
+        provenance: {
+          origin: 'local',
+          createdAt: now - 900_000
+        },
+        goal: '将清洗后的 Q2 销售流水交给 cc_sql 进行 schema 对齐',
+        summary:
+          'cc_data 完成了 Q2 销售流水的清洗，生成了类型定义和中间结果文件',
+        baseCommit: 'a1b2c3d',
+        changeSummary: '2 个文件变更：新增类型定义、修改清洗逻辑',
+        artifacts: [
+          { path: 'src/types.ts', status: 'included' },
+          { path: 'src/clean.ts', status: 'included' }
+        ],
+        validation: { status: 'pass' },
+        completeness: 'complete',
+        recoveryActions: [],
+        importState: 'not-imported'
+      },
+      {
+        // Referenced by attention item att-010 in the research project.
+        handoffId: id('handoff-001', 'HandoffId'),
+        projectId: researchId,
+        source: {
+          agentInstanceId: ccReport,
+          agentName: 'cc_report'
+        },
+        target: {
+          agentInstanceId: cxSurvey,
+          agentName: 'cx_survey'
+        },
+        provenance: {
+          origin: 'local',
+          createdAt: now - 700_000
+        },
+        goal: '将用户访谈摘要交给 cx_survey 设计问卷',
+        summary: 'cc_report 完成了用户访谈摘要，但验证结果缺失',
+        baseCommit: 'e4f5g6h',
+        changeSummary: '1 个文件变更：用户访谈摘要草稿',
+        artifacts: [{ path: 'docs/interview-summary.md', status: 'included' }],
+        validation: {
+          status: 'pending',
+          message: '验证结果尚未生成'
+        },
+        completeness: 'incomplete',
+        incompleteReason: '缺少验证结果：handoff 生成时 cc_report 的 Run 被中断',
+        recoveryActions: [
+          '重新对 cc_report 发起验证 Run',
+          '手动检查 interview-summary.md 完整性后标记为 complete'
+        ],
+        importState: 'not-imported'
+      },
+      {
+        // Cross-project handoff from sales to research — exercises the
+        // inspect-only / execute-confirmed import flow (#12 AC2).
+        handoffId: id('handoff-cross-002', 'HandoffId'),
+        projectId: researchId,
+        source: {
+          agentInstanceId: cxReview,
+          agentName: 'cx_review'
+        },
+        target: {
+          agentInstanceId: ccReport,
+          agentName: 'cc_report'
+        },
+        provenance: {
+          origin: 'cross-project',
+          createdAt: now - 500_000,
+          sourceProjectName: '销售数据分析'
+        },
+        goal: '将客户流失复核结论导入用户研究 Project',
+        summary:
+          'cx_review 完成了客户流失异常值处理策略的复核，结论可用于用户研究',
+        baseCommit: 'i7j8k9l',
+        changeSummary: '1 个文件变更：流失复核策略文档',
+        artifacts: [
+          { path: 'docs/churn-review.md', status: 'included' },
+          { path: 'docs/churn-data.csv', status: 'missing' }
+        ],
+        validation: { status: 'pass' },
+        completeness: 'complete',
+        recoveryActions: [],
+        importState: 'not-imported'
       }
     ],
     activity: [
