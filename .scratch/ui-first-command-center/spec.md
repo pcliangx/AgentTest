@@ -487,8 +487,21 @@ type CommandRejectionReason =
   | 'unavailable' | 'busy' | 'confirmation-required'
   | 'not-enforceable' | 'scenario-read-only'
 
+type LayoutTargetEffect =
+  | { kind: 'selected-agent'; agentInstanceId: AgentInstanceId | null }
+  | {
+      kind: 'closed-agent'
+      agentInstanceId: AgentInstanceId
+      selectedAgentInstanceId?: AgentInstanceId | null
+    }
+
 type CommandResult =
-  | { ok: true; commandId: CommandId; acceptedRevision: number }
+  | {
+      ok: true
+      commandId: CommandId
+      acceptedRevision: number
+      layoutTargetEffect?: LayoutTargetEffect
+    }
   | {
       ok: false
       commandId: CommandId
@@ -581,6 +594,16 @@ interface WorkbenchPort {
 - Layout reducer 是 port 后面的共享纯状态转换，也是 mock 与未来真实 adapter 的唯一
   结构布局转换。它维护 Tab 全窗口唯一、Tab 单 Panel 归属、有效比例、空 Panel 裁剪、
   Focus 可逆和无悬空 Panel 引用等不变量；不得在 renderer 与 adapter 各复制一套 reducer。
+- 接受 `change-layout`，或 `create-agent` 以当前/新 Panel 打开实例时，同一 reducer 可在
+  `CommandResult.layoutTargetEffect` 返回权威的 Agent 选择/关闭后果。renderer 只能按
+  命令意图顺序结算这些 effect，不得根据旧布局重演 reducer；拒绝结果和无 target
+  effect 的结构操作都不改变已保留的深链目标。更新的 deep link 在导航阶段作为 pending
+  target intent；发出 Agent layout 命令时必须无缝转交为该命令的 intent。后续操作可以
+  取消深链 UI continuation，但不能丢弃已发出命令仍待结算的权威 effect，避免旧 Result
+  越过已到达的新 Event 清除目标；该 intent 同时携带完整新 deep-link 目标，因此同一
+  Agent 的不同 Run 或 Agent 级目标也能替换旧 Run。显式离开当前上下文的导航同样按
+  intent 顺序结算：仅接受且仍为当前意图时清除目标、notice 或 one-shot section 状态，
+  拒绝或已被更新意图取代时保持原上下文。
 - renderer 只允许在 pointer/keyboard 操作进行中保存临时视觉预览；结构变更在提交
   `change-layout` 后以 port 新快照为准。`stale-revision` 或不变量拒绝会丢弃预览、恢复
   最新权威布局并显示可恢复提示。

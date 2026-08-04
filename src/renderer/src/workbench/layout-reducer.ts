@@ -3,6 +3,7 @@ import type {
   CommandRejectionReason,
   LayoutNode,
   LayoutOperation,
+  LayoutTargetEffect,
   PanelId,
   SplitNodeId,
   WorkspaceLayoutViewModel
@@ -24,7 +25,11 @@ export interface LayoutIdGenerator {
 }
 
 export type LayoutResult =
-  | { ok: true; layout: WorkspaceLayoutViewModel }
+  | {
+      ok: true
+      layout: WorkspaceLayoutViewModel
+      targetEffect?: LayoutTargetEffect
+    }
   | { ok: false; reason: CommandRejectionReason; message: string }
 
 const MIN_RATIO = 0.1
@@ -152,8 +157,11 @@ function retargetFocus(state: WorkspaceLayoutViewModel, panelId: PanelId): void 
   }
 }
 
-function ok(layout: WorkspaceLayoutViewModel): LayoutResult {
-  return { ok: true, layout }
+function ok(
+  layout: WorkspaceLayoutViewModel,
+  targetEffect?: LayoutTargetEffect
+): LayoutResult {
+  return targetEffect ? { ok: true, layout, targetEffect } : { ok: true, layout }
 }
 
 function reject(reason: CommandRejectionReason, message: string): LayoutResult {
@@ -181,7 +189,10 @@ export function applyLayoutOperation(
         }
         state.root = { kind: 'panel', panelId }
         state.focusedPanelId = panelId
-        return ok(state)
+        return ok(state, {
+          kind: 'selected-agent',
+          agentInstanceId: operation.agentInstanceId
+        })
       }
       if (!state.panels[operation.panelId]) {
         return reject('invalid-target', 'Panel 不存在')
@@ -190,12 +201,18 @@ export function applyLayoutOperation(
       if (owner) {
         state.panels[owner].activeTabId = operation.agentInstanceId
         retargetFocus(state, owner)
-        return ok(state)
+        return ok(state, {
+          kind: 'selected-agent',
+          agentInstanceId: operation.agentInstanceId
+        })
       }
       state.panels[operation.panelId].tabs.push(operation.agentInstanceId)
       state.panels[operation.panelId].activeTabId = operation.agentInstanceId
       retargetFocus(state, operation.panelId)
-      return ok(state)
+      return ok(state, {
+        kind: 'selected-agent',
+        agentInstanceId: operation.agentInstanceId
+      })
     }
 
     case 'activate-tab': {
@@ -206,7 +223,10 @@ export function applyLayoutOperation(
       const state = cloneLayout(layout)
       state.panels[operation.panelId].activeTabId = operation.agentInstanceId
       retargetFocus(state, operation.panelId)
-      return ok(state)
+      return ok(state, {
+        kind: 'selected-agent',
+        agentInstanceId: operation.agentInstanceId
+      })
     }
 
     case 'close-tab': {
@@ -214,6 +234,9 @@ export function applyLayoutOperation(
       if (!panel || !panel.tabs.includes(operation.agentInstanceId)) {
         return reject('invalid-target', 'Tab 不存在')
       }
+      const changesSelectedAgent =
+        layout.focusedPanelId === operation.panelId &&
+        panel.activeTabId === operation.agentInstanceId
       const state = cloneLayout(layout)
       removeTabFromPanel(state, operation.panelId, operation.agentInstanceId)
       // UX-v0.2 §7.2(5) / ADR-0009: when ALL tabs are closed the workspace
@@ -224,12 +247,32 @@ export function applyLayoutOperation(
         0
       )
       if (remainingTabs === 0) {
-        return ok({ root: null, panels: {} })
+        return ok(
+          { root: null, panels: {} },
+          {
+            kind: 'closed-agent',
+            agentInstanceId: operation.agentInstanceId,
+            ...(changesSelectedAgent
+              ? { selectedAgentInstanceId: null }
+              : {})
+          }
+        )
       }
       if (state.panels[operation.panelId].tabs.length === 0) {
         prunePanel(state, operation.panelId)
       }
-      return ok(state)
+      const selectedPanelId = state.focusedPanelId
+      return ok(state, {
+        kind: 'closed-agent',
+        agentInstanceId: operation.agentInstanceId,
+        ...(changesSelectedAgent
+          ? {
+              selectedAgentInstanceId: selectedPanelId
+                ? (state.panels[selectedPanelId]?.activeTabId ?? null)
+                : null
+            }
+          : {})
+      })
     }
 
     case 'move-tab': {
@@ -244,7 +287,10 @@ export function applyLayoutOperation(
       if (owner === operation.targetPanelId) {
         state.panels[owner].activeTabId = operation.agentInstanceId
         retargetFocus(state, owner)
-        return ok(state)
+        return ok(state, {
+          kind: 'selected-agent',
+          agentInstanceId: operation.agentInstanceId
+        })
       }
       removeTabFromPanel(state, owner, operation.agentInstanceId)
       state.panels[operation.targetPanelId].tabs.push(operation.agentInstanceId)
@@ -254,7 +300,10 @@ export function applyLayoutOperation(
       if (state.panels[owner].tabs.length === 0) {
         prunePanel(state, owner)
       }
-      return ok(state)
+      return ok(state, {
+        kind: 'selected-agent',
+        agentInstanceId: operation.agentInstanceId
+      })
     }
 
     case 'split-panel': {
@@ -287,7 +336,10 @@ export function applyLayoutOperation(
         }
         state.root = { kind: 'panel', panelId }
         state.focusedPanelId = panelId
-        return ok(state)
+        return ok(state, {
+          kind: 'selected-agent',
+          agentInstanceId: operation.agentInstanceId
+        })
       }
       const base =
         operation.relativeToPanelId ??
@@ -330,7 +382,10 @@ export function applyLayoutOperation(
         }
       }
       retargetFocus(state, newPanelId)
-      return ok(state)
+      return ok(state, {
+        kind: 'selected-agent',
+        agentInstanceId: operation.agentInstanceId
+      })
     }
 
     case 'close-panel': {
@@ -360,7 +415,15 @@ export function applyLayoutOperation(
         retargetFocus(state, operation.migrateToPanelId)
       }
       prunePanel(state, operation.panelId)
-      return ok(state)
+      return ok(
+        state,
+        panel.tabs.length > 0
+          ? {
+              kind: 'selected-agent',
+              agentInstanceId: panel.tabs[0]
+            }
+          : undefined
+      )
     }
 
     case 'resize-split': {

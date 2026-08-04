@@ -50,6 +50,16 @@ Workspace Layout 的 truth 是可递归的 split tree：内部节点记录横向
 - 关闭最后一个 Tab 后移除空 Panel；整个工作区没有 Tab 时显示空工作区；
 - 切换 Project、移动 Tab、分割比例、焦点和 surface 自动保存到 ProjectStore。
 
+接受布局命令，或创建 Agent 后以当前/新 Panel 打开时，port 可以把同一 Layout reducer
+产生的 Agent 选择/关闭后果附在成功 `CommandResult` 中。renderer 按用户命令顺序结算
+该权威 effect，以处理 Result/Event 任意先后和重叠命令。更新的 deep link 在导航阶段
+先建立 pending target intent，发出 Agent layout 命令时无缝转交；后续操作可取消 UI
+continuation，但不能丢弃已发出命令的待结算 effect。该 issued intent 携带完整新
+deep-link 目标，确保同一 Agent 的不同 Run/Agent 级目标也替换旧 Run；显式离开当前
+上下文的导航仅在接受后清目标，拒绝保持原上下文；notice、one-shot section 等本地
+副作用还要确认该导航仍是当前意图。不得在 renderer 复制 close/move/migration 的
+reducer 规则；被拒绝、后台创建或只有结构变化的命令不产生 Agent target effect。
+
 镜像视图和多主窗口不属于 v0.2。
 
 ### 显式执行与并发

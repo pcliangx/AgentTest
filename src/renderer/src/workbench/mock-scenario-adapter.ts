@@ -7,6 +7,7 @@ import type {
   ConnectionId,
   DispatchPlanRequest,
   DispatchPlanResult,
+  LayoutTargetEffect,
   PanelId,
   PermissionRequestId,
   ProjectId,
@@ -65,6 +66,10 @@ type PostDispatchEvent =
       'revision'
     >
   | Omit<Extract<WorkbenchEvent, { kind: 'attention-changed' }>, 'revision'>
+
+type AcceptedCommandMetadata = {
+  layoutTargetEffect?: LayoutTargetEffect
+}
 
 type ConfigurationDraftEntry =
   WorkbenchViewModel['configurationDrafts'][number]
@@ -289,7 +294,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     //    Follow-up events belong to this dispatch invocation. Keeping them
     //    local prevents a reentrant subscriber command from replacing them.
     const postEvents: PostDispatchEvent[] = []
-    const rejection = this.tryApply(command, postEvents)
+    const acceptedMetadata: AcceptedCommandMetadata = {}
+    const rejection = this.tryApply(command, postEvents, acceptedMetadata)
     if (rejection) return rejection
 
     // 4. Success — bump revision, cache and emit the complete event batch.
@@ -297,7 +303,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     const result: CommandResult = {
       ok: true,
       commandId: command.commandId,
-      acceptedRevision
+      acceptedRevision,
+      ...acceptedMetadata
     }
     this.resultsByCommandId.set(command.commandId, result)
     const events: WorkbenchEvent[] = [
@@ -335,7 +342,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
    */
   private tryApply(
     command: WorkbenchCommand,
-    postEvents: PostDispatchEvent[]
+    postEvents: PostDispatchEvent[],
+    acceptedMetadata: AcceptedCommandMetadata
   ): CommandResult | null {
     switch (command.kind) {
       case 'navigate': {
@@ -429,6 +437,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
         })
         // Creation never produces a Run; opening only changes the layout,
         // through the same shared reducer as any other layout command.
+        const acceptCreatedAgentLayout = (
+          result: ReturnType<typeof applyLayoutOperation>
+        ): void => {
+          if (!result.ok) return
+          project.layout = result.layout
+          if (result.targetEffect) {
+            acceptedMetadata.layoutTargetEffect = result.targetEffect
+          }
+        }
         if (command.open === 'current-panel') {
           // The reducer allocates the first panel when the workspace is
           // empty, so the placeholder panelId is never dereferenced then.
@@ -436,23 +453,25 @@ export class MockScenarioAdapter implements WorkbenchPort {
             project.layout.focusedPanelId ??
             (Object.keys(project.layout.panels)[0] as PanelId | undefined) ??
             id('panel-auto', 'PanelId')
-          const result = applyLayoutOperation(
-            project.layout,
-            { kind: 'open-tab', panelId: targetPanelId, agentInstanceId },
-            this.layoutIds
+          acceptCreatedAgentLayout(
+            applyLayoutOperation(
+              project.layout,
+              { kind: 'open-tab', panelId: targetPanelId, agentInstanceId },
+              this.layoutIds
+            )
           )
-          if (result.ok) project.layout = result.layout
         } else if (command.open === 'new-panel') {
-          const result = applyLayoutOperation(
-            project.layout,
-            {
-              kind: 'open-tab-in-new-panel',
-              agentInstanceId,
-              direction: 'horizontal'
-            },
-            this.layoutIds
+          acceptCreatedAgentLayout(
+            applyLayoutOperation(
+              project.layout,
+              {
+                kind: 'open-tab-in-new-panel',
+                agentInstanceId,
+                direction: 'horizontal'
+              },
+              this.layoutIds
+            )
           )
-          if (result.ok) project.layout = result.layout
         }
         return null
       }
@@ -781,6 +800,9 @@ export class MockScenarioAdapter implements WorkbenchPort {
           return this.reject(command, result.reason, result.message)
         }
         project.layout = result.layout
+        if (result.targetEffect) {
+          acceptedMetadata.layoutTargetEffect = result.targetEffect
+        }
         return null
       }
       case 'send-agent-instruction': {

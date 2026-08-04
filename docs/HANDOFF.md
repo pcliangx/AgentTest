@@ -1,6 +1,6 @@
 # Agent Squad HQ — Claude Code / Codex 续开发文档
 
-> 更新日期：2026-08-03 · 结构化通道基线：`ba49614` · 分支：`main`
+> 更新日期：2026-08-04 · 结构化通道基线：`ba49614` · 分支：`main`
 >
 > 本文是 Claude Code 与 Codex 共用的当前状态说明；实时 HEAD 和工作树状态以
 > `git log` / `git status` 为准。
@@ -194,7 +194,20 @@ turn complete、warning、error 和 process exited。
   执行；状态变化后必须 `stale-revision`，不能静默按新状态重算；
 - `reply-current-run` 不是新 Run，不需要 Dispatch plan。
 
-### 5.6 IPC
+### 5.6 Layout 目标结果合同
+
+布局命令，以及在当前/新 Panel 打开的 `create-agent`，其成功 `CommandResult` 可携带由
+唯一 Layout reducer 生成的 `layoutTargetEffect`（选择 Agent，或关闭 Agent 及其后继
+选择）。renderer 按命令意图顺序结算 effect；较新命令被拒绝时，较早已接受的 effect
+仍须生效。更新的 deep link 在导航阶段先建立 pending target intent，发出 Agent layout
+命令时无缝转交给该命令；后续操作可取消 UI continuation，但不能丢弃已发出命令的待结算
+effect。issued deep-link intent 还携带完整新目标（含 RunId 或明确清空），不能只凭同一
+Agent effect 保留旧 Run；显式离开当前上下文的导航仅在命令被接受后清目标，拒绝保持
+原上下文；notice、Settings one-shot section 等本地副作用还必须确认该导航未被更新意图
+取代。后台创建和 Focus、split、resize 等纯结构操作没有 target effect，renderer 不得
+自行重演 reducer 推断后继 Tab。
+
+### 5.7 IPC
 
 renderer → main：
 

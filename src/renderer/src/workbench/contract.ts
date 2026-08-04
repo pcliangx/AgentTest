@@ -380,6 +380,35 @@ export type LayoutOperation =
   | { kind: 'apply-analysis-preset'; panelId: PanelId }
   | { kind: 'prune-empty-panels' }
 
+/**
+ * Authoritative Agent-target consequence of an accepted layout command.
+ *
+ * The shared reducer emits this alongside its next layout so renderer
+ * consumers never have to duplicate structural transition rules merely to
+ * learn which Agent a close/move/migration selected.
+ */
+export type LayoutTargetEffect =
+  | {
+      kind: 'selected-agent'
+      agentInstanceId: AgentInstanceId | null
+    }
+  | {
+      kind: 'closed-agent'
+      agentInstanceId: AgentInstanceId
+      selectedAgentInstanceId?: AgentInstanceId | null
+    }
+
+/**
+ * Whether an operation can produce a LayoutTargetEffect. This contract-level
+ * classifier lets consumers order only target-relevant pending commands;
+ * structural commands must never block an already accepted target effect.
+ */
+export function layoutOperationMayProduceTargetEffect(
+  operation: LayoutOperation
+): boolean {
+  return 'agentInstanceId' in operation || operation.kind === 'close-panel'
+}
+
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
   | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
@@ -466,6 +495,16 @@ export type WorkbenchCommandBody =
   | { kind: 'request-quit-preview' }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 
+/** Commands whose successful result may carry a LayoutTargetEffect. */
+export function commandMayProduceLayoutTargetEffect(
+  command: WorkbenchCommandBody
+): boolean {
+  if (command.kind === 'change-layout') {
+    return layoutOperationMayProduceTargetEffect(command.operation)
+  }
+  return command.kind === 'create-agent' && command.open !== 'background'
+}
+
 export type WorkbenchCommand = CommandMeta & WorkbenchCommandBody
 
 // ---------------------------------------------------------------------------
@@ -483,7 +522,12 @@ export type CommandRejectionReason =
   | 'scenario-read-only'
 
 export type CommandResult =
-  | { ok: true; commandId: CommandId; acceptedRevision: number }
+  | {
+      ok: true
+      commandId: CommandId
+      acceptedRevision: number
+      layoutTargetEffect?: LayoutTargetEffect
+    }
   | {
       ok: false
       commandId: CommandId
