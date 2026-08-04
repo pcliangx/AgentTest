@@ -531,6 +531,69 @@ describe('ProjectShell — provider recovery', () => {
       expect(screen.queryByText('已阻断')).not.toBeInTheDocument()
     })
   })
+
+  it('revives a blocked provider’s instances in place, end to end (#14)', async () => {
+    const scenario = createStandardScenario()
+    const kimi = scenario.global.providers.find(
+      (p) => p.providerId === 'kimi-code'
+    )
+    if (!kimi) throw new Error('standard scenario has no kimi-code')
+    kimi.status = 'blocked'
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
+    await waitForLoad()
+
+    // Only the blocked provider's agents degrade; every other provider's
+    // instances keep their own state.
+    await user.click(screen.getByRole('button', { name: 'Agent' }))
+    const directory = await screen.findByRole('region', { name: 'Agent 目录' })
+    expect(
+      within(directory).getByRole('button', { name: /^kimi_visual/ })
+    ).toHaveTextContent('不可用')
+    expect(
+      within(directory).getByRole('button', { name: /^kimi_docs/ })
+    ).toHaveTextContent('不可用')
+    expect(
+      within(directory).getByRole('button', { name: /^cx_review/ })
+    ).not.toHaveTextContent('不可用')
+
+    // Recovery stays an explicit global-surface action.
+    await user.click(screen.getByRole('button', { name: 'Provider 健康' }))
+    const health = await screen.findByRole('region', { name: 'Provider 健康' })
+    const kimiRow = within(health).getByText('Kimi Code').closest('li')
+    if (!kimiRow) throw new Error('no Kimi Code provider row')
+    await user.click(within(kimiRow).getByRole('button', { name: '恢复' }))
+    await waitFor(() => {
+      const row = within(
+        screen.getByRole('region', { name: 'Provider 健康' })
+      )
+        .getByText('Kimi Code')
+        .closest('li')
+      expect(row).toHaveTextContent('可用')
+    })
+
+    // Back in the project the revived agent is usable again — readiness and
+    // the composer recover with it, history and tabs survive.
+    await user.click(screen.getByRole('button', { name: '← 返回项目' }))
+    const restoredDirectory = await screen.findByRole('region', {
+      name: 'Agent 目录'
+    })
+    await waitFor(() => {
+      expect(
+        within(restoredDirectory).getByRole('button', { name: /^kimi_docs/ })
+      ).toHaveTextContent('就绪')
+    })
+    await user.click(
+      within(restoredDirectory).getByRole('button', { name: /^kimi_docs/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await waitFor(() => {
+      expect(view).toHaveTextContent('发送首条消息')
+    })
+    expect(
+      within(view).getByRole('textbox', { name: '发送给当前 Agent' })
+    ).toBeEnabled()
+  })
 })
 
 // ---------------------------------------------------------------------------

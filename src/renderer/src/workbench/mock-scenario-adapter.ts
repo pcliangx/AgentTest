@@ -52,6 +52,10 @@ import {
   isAgentBusy,
   isTerminalExecutionSlotOccupied
 } from './dispatchability'
+import {
+  computeEffectiveConfigurations,
+  computeRunReadiness
+} from './run-readiness'
 import { resolveProviderModelSelection } from './provider-capability'
 import { buildDispatchPlan } from './dispatch-planner'
 import { stepQueuePriority } from './queue-priority'
@@ -297,6 +301,18 @@ export class MockScenarioAdapter implements WorkbenchPort {
   ) {
     this.clock = options.now ?? Date.now
     this.snapshot = structuredClone(snapshot)
+    // Provider degradation is authoritative (#14): instances of a blocked
+    // provider degrade to Unavailable in place — history, runs and tabs are
+    // preserved — and only an explicit provider recovery revives them.
+    for (const agent of this.snapshot.agents) {
+      const provider = this.snapshot.global.providers.find(
+        (candidate) => candidate.providerId === agent.providerId
+      )
+      if (provider?.status === 'blocked' && agent.runtimeState !== 'archived') {
+        agent.runtimeState = 'unavailable'
+        agent.doctor = 'blocked'
+      }
+    }
     // Agent runtime states are authoritative. Scenario summary fields are
     // projections and may arrive stale, so repair them before exposing or
     // scheduling against the snapshot (#39).
@@ -315,7 +331,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
   }
 
   async getSnapshot(): Promise<WorkbenchViewModel> {
-    return structuredClone(this.snapshot)
+    return this.withDerivedState(structuredClone(this.snapshot))
   }
 
   async planDispatch(
@@ -356,7 +372,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         kind: 'view-model-updated',
         revision: acceptedRevision,
         correlationId: command.commandId,
-        snapshot: structuredClone(this.snapshot)
+        snapshot: this.withDerivedState(structuredClone(this.snapshot))
       },
       ...postEvents.map((partial) => ({
         ...partial,
@@ -573,7 +589,24 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!provider) {
           return this.reject(command, 'invalid-target', 'Provider 不存在')
         }
+        // Recovery is atomic (#14): the provider flip and the in-place
+        // revival of the instances it degraded share one revision. Only
+        // runtime state and Doctor change — history, runs and tabs survive.
+        // An Agent unavailable on an already-ready provider is never
+        // revived here.
+        const wasBlocked = provider.status === 'blocked'
         provider.status = 'ready'
+        if (wasBlocked) {
+          for (const agent of this.snapshot.agents) {
+            if (
+              agent.providerId === provider.providerId &&
+              agent.runtimeState === 'unavailable'
+            ) {
+              agent.runtimeState = 'ready'
+              agent.doctor = 'ready'
+            }
+          }
+        }
         return null
       }
       case 'merge-agent-changes': {
@@ -2641,6 +2674,20 @@ export class MockScenarioAdapter implements WorkbenchPort {
     return id(uuid, name)
   }
 
+  /**
+   * Attaches the derived facts (#14) to an outgoing snapshot clone. They are
+   * recomputed on every emission, so every published revision carries
+   * consistent effective configuration and readiness; the adapter never
+   * stores them as mutable internal truth.
+   */
+  private withDerivedState(state: WorkbenchViewModel): WorkbenchViewModel {
+    return {
+      ...state,
+      effectiveConfigurations: computeEffectiveConfigurations(state),
+      runReadiness: computeRunReadiness(state)
+    }
+  }
+
   /** Recomputes per-project queuedRunCount and global queuedGlobal. */
   private recomputeQueueCounts(): void {
     for (const project of this.snapshot.projects) {
@@ -3242,7 +3289,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           {
             kind: 'view-model-updated',
             revision,
-            snapshot: structuredClone(this.snapshot)
+            snapshot: this.withDerivedState(structuredClone(this.snapshot))
           },
           ...postEvents.map((partial) => ({ ...partial, revision }))
         )

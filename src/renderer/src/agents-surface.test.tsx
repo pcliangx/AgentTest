@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
@@ -469,6 +469,65 @@ describe('Agents surface — port-driven chat state (#20)', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Provider 不可用')
     expect(view).not.toHaveTextContent('发送首条消息')
+  })
+})
+
+describe('Agents surface — orthogonality (#14)', () => {
+  it('keeps the directory and composer working when the primary connection is disconnected', async () => {
+    const scenario = createStandardScenario()
+    const connection = scenario.global.connections.find(
+      (c) => c.connectionId === 'conn-feishu-primary'
+    )
+    if (!connection) throw new Error('standard scenario has no primary conn')
+    connection.status = 'disconnected'
+    const { user, directory } = await gotoAgentsSurface(
+      new MockScenarioAdapter(scenario)
+    )
+
+    // Connection state is orthogonal to provider/agent runtime: the local
+    // directory keeps working and a ready agent's composer stays usable.
+    expect(directoryNames(directory).length).toBeGreaterThanOrEqual(8)
+    await user.click(
+      within(directory).getByRole('button', { name: /^cx_review/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    await waitFor(() => expect(view).toHaveTextContent('发送首条消息'))
+    expect(
+      within(view).getByRole('textbox', { name: '发送给当前 Agent' })
+    ).toBeEnabled()
+  })
+})
+
+describe('Agents surface — unavailable agent recovery entry (#14)', () => {
+  it('keeps every sub-view visibly read-only and navigates to Provider Health in place', async () => {
+    const { user, directory } = await gotoAgentsSurface()
+    await user.click(
+      within(directory).getByRole('button', { name: /^kimi_docs/ })
+    )
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+
+    // The degraded notice is a banner over the whole Agent view, so every
+    // per-agent sub-view carries the read-only explanation.
+    expect(within(view).getByRole('note')).toHaveTextContent(
+      'Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。'
+    )
+    await user.click(within(view).getByRole('button', { name: '改动' }))
+    expect(within(view).getByRole('note')).toHaveTextContent(
+      'Provider 不可用'
+    )
+    await user.click(within(view).getByRole('button', { name: 'Terminal' }))
+    expect(within(view).getByRole('note')).toHaveTextContent(
+      'Provider 不可用'
+    )
+
+    // The in-place entry only NAVIGATES to the global surface — recovery
+    // itself stays an explicit Provider Health action.
+    await user.click(
+      within(view).getByRole('button', { name: '修复 Provider' })
+    )
+    expect(
+      await screen.findByRole('region', { name: 'Provider 健康' })
+    ).toBeInTheDocument()
   })
 })
 

@@ -12,12 +12,14 @@ import {
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
+import { createStandardScenario } from './workbench/standard-scenario'
 import { id } from './workbench/contract'
 import type {
   CommandResult,
   WorkbenchCommand,
   WorkbenchEvent,
-  WorkbenchPort
+  WorkbenchPort,
+  WorkbenchViewModel
 } from './workbench/contract'
 
 /**
@@ -946,5 +948,265 @@ describe('Settings A — project scoping', () => {
     expect(screen.getByRole('textbox', { name: 'Agent 名称' })).toHaveValue(
       'cc_report'
     )
+  })
+})
+
+/**
+ * Settings B — the read-only policy matrix (#14). It compares applied
+ * configuration across the project's instances and marks adapter-judged
+ * blocked values; editing stays in Settings A's sections above.
+ */
+describe('Settings B — 策略矩阵 (#14)', () => {
+  function appliedConfigOf(scenario: WorkbenchViewModel, name: string) {
+    const agent = scenario.agents.find((a) => a.name === name)
+    if (!agent) throw new Error(`standard scenario has no agent ${name}`)
+    const applied = scenario.appliedConfigurations.find(
+      (c) =>
+        c.owner.kind === 'agent' &&
+        c.owner.agentInstanceId === agent.agentInstanceId
+    )
+    if (!applied) {
+      throw new Error(`standard scenario has no applied config for ${name}`)
+    }
+    return applied
+  }
+
+  it('compares the applied values of multiple instances side by side', async () => {
+    const scenario = createStandardScenario()
+    appliedConfigOf(scenario, 'cc_sql').values['concurrency.priority'] = 'high'
+    appliedConfigOf(scenario, 'kimi_visual').values['budget.maxTokens'] = 50000
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '策略矩阵' }))
+
+    // Columns: Agent Name primary, Provider display name secondary.
+    expect(
+      screen.getByRole('columnheader', { name: /cc_sql/ })
+    ).toHaveTextContent('Claude Code')
+    expect(
+      screen.getByRole('columnheader', { name: /kimi_visual/ })
+    ).toHaveTextContent('Kimi Code')
+
+    // Rows come from the agent catalogue; identity.name is the column
+    // header, never a row.
+    expect(
+      screen.queryByRole('rowheader', { name: 'Agent 名称' })
+    ).not.toBeInTheDocument()
+    const priorityCells = within(
+      screen.getByRole('row', { name: /优先级/ })
+    ).getAllByRole('cell')
+    expect(priorityCells.map((cell) => cell.textContent)).toEqual([
+      '普通',
+      '高',
+      '普通',
+      '普通',
+      '普通',
+      '普通',
+      '普通',
+      '普通'
+    ])
+    const budgetCells = within(
+      screen.getByRole('row', { name: /Token 预算上限/ })
+    ).getAllByRole('cell')
+    expect(budgetCells.map((cell) => cell.textContent)).toEqual([
+      '200000',
+      '200000',
+      '200000',
+      '200000',
+      '200000',
+      '200000',
+      '50000',
+      '200000'
+    ])
+    // An empty applied value renders as 未设置, never a blank cell.
+    const proxyCells = within(
+      screen.getByRole('row', { name: /HTTP 代理/ })
+    ).getAllByRole('cell')
+    expect(new Set(proxyCells.map((cell) => cell.textContent))).toEqual(
+      new Set(['未设置'])
+    )
+    // The view marks itself read-only and points editing at Settings A.
+    expect(screen.getByText(/只读比较视图/)).toBeInTheDocument()
+  })
+
+  it('marks a blocked value with 已阻止 and the adapter-provided reason', async () => {
+    const scenario = createStandardScenario()
+    const claude = scenario.global.providers.find(
+      (p) => p.providerId === 'claude-code'
+    )
+    if (!claude) throw new Error('standard scenario has no claude-code')
+    claude.status = 'blocked'
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '策略矩阵' }))
+
+    // The applied value stays visible; the blocked marker and its reason are
+    // text, never colour alone.
+    const modelRow = screen.getByRole('row', { name: /模型/ })
+    const cells = within(modelRow).getAllByRole('cell')
+    expect(cells[0]).toHaveTextContent('claude-sonnet-4')
+    expect(
+      within(modelRow).getAllByText(
+        '已阻止：Provider Doctor 未通过，该模型当前无法生效'
+      )
+    ).toHaveLength(3)
+    // Instances of a ready provider carry no blocked marker.
+    expect(cells[7]).toHaveTextContent('kimi-k2')
+    expect(cells[7]).not.toHaveTextContent('已阻止')
+  })
+
+  it('shows a Chinese empty-state hint when the project has fewer than two instances', async () => {
+    const scenario = createStandardScenario()
+    scenario.agents = scenario.agents.filter(
+      (a) => a.projectId !== 'proj-sales' || a.name === 'cc_data'
+    )
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '策略矩阵' }))
+    expect(
+      screen.getByText(/只有 1 个 Agent 实例，策略矩阵需要至少 2 个实例进行比较/)
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument()
+  })
+
+  it('shows a Chinese empty-state hint when the project has no instances', async () => {
+    const scenario = createStandardScenario()
+    scenario.agents = scenario.agents.filter((a) => a.projectId !== 'proj-sales')
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '策略矩阵' }))
+    expect(
+      screen.getByText(/尚无 Agent 实例，暂无可比较的配置/)
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Settings C — the read-only next-Run readiness summary (#14). It only
+ * summarises adapter-computed runReadiness and links back to the single edit
+ * locations (Settings A sections or the global Provider Health surface).
+ */
+describe('Settings C — Readiness 摘要 (#14)', () => {
+  it('summarises per-agent readiness with blocker messages and the honest Phase 1 note', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+
+    // kimi_docs is unavailable on a ready provider — the one blocked card.
+    expect(screen.getByText('kimi_docs')).toBeInTheDocument()
+    expect(screen.getByText('已阻止')).toBeInTheDocument()
+    expect(
+      screen.getByText('Agent 当前不可用，修复 Provider 后可恢复')
+    ).toBeInTheDocument()
+    // Every other instance of the project is ready for its next Run.
+    expect(screen.getAllByText('就绪')).toHaveLength(7)
+    // The view marks itself read-only and stays honest about Phase 1.
+    expect(screen.getByText(/只读摘要/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Readiness 汇总基于 mock 场景/)
+    ).toBeInTheDocument()
+    expect(screen.getByText(/不代表真实强制能力/)).toBeInTheDocument()
+  })
+
+  it('links a provider-blocked blocker to the global Provider Health surface', async () => {
+    const scenario = createStandardScenario()
+    const kimi = scenario.global.providers.find(
+      (p) => p.providerId === 'kimi-code'
+    )
+    if (!kimi) throw new Error('standard scenario has no kimi-code')
+    kimi.status = 'blocked'
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+
+    // Both kimi-code instances inherit the provider-blocked blocker.
+    expect(
+      screen.getAllByText('Provider Doctor 未通过，不能启动新 Run')
+    ).toHaveLength(2)
+    await user.click(
+      screen.getAllByRole('button', { name: '前往 Provider 健康' })[0]
+    )
+    expect(
+      await screen.findByRole('region', { name: 'Provider 健康' })
+    ).toBeInTheDocument()
+  })
+
+  it('links a project-degradation blocker back to the general settings section', async () => {
+    const scenario = createStandardScenario()
+    const project = scenario.projects.find((p) => p.projectId === 'proj-sales')
+    if (!project) throw new Error('standard scenario has no proj-sales')
+    project.repositoryReadiness = 'not-ready'
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+
+    // Every instance of the project inherits the repository blocker.
+    expect(
+      screen.getAllByText('Project 尚未初始化或绑定 Git 仓库，不能启动新 Run')
+        .length
+    ).toBeGreaterThan(0)
+    await user.click(
+      screen.getAllByRole('button', { name: '前往「常规」设置' })[0]
+    )
+    // Settings A's general section — the single edit location — appears.
+    expect(
+      await screen.findByRole('textbox', { name: '项目名称' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '常规' })
+    ).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('links a model-unavailable blocker to the instances section with the agent selected', async () => {
+    const scenario = createStandardScenario()
+    const agent = scenario.agents.find((a) => a.name === 'cx_review')
+    if (!agent) throw new Error('standard scenario has no cx_review')
+    const applied = scenario.appliedConfigurations.find(
+      (c) =>
+        c.owner.kind === 'agent' &&
+        c.owner.agentInstanceId === agent.agentInstanceId
+    )
+    if (!applied) throw new Error('standard scenario has no cx_review config')
+    applied.values['model.id'] = 'gpt-4o'
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+
+    expect(
+      screen.getByText('Codex 不支持模型 "gpt-4o"，请选择兼容模型')
+    ).toBeInTheDocument()
+    await user.click(
+      screen.getByRole('button', { name: '前往「Agent 实例」设置' })
+    )
+    // The instances editor opens on exactly the offending instance.
+    expect(await screen.findByRole('combobox', { name: '选择实例' }))
+      .toHaveValue('inst-cx-review')
+    expect(screen.getByRole('textbox', { name: '模型' })).toHaveValue('gpt-4o')
+  })
+})
+
+/**
+ * Settings A — permissions enforcement status (#14). The section stays the
+ * editor; a read-only block reports the adapter-judged effective status of
+ * each permission field. ADR-0012: never claim sandboxing or successful
+ * enforcement — whatever cannot be enforced renders as blocked.
+ */
+describe('Settings A — permissions enforcement status (#14)', () => {
+  it('shows the adapter-judged enforcement status with the honest blocked reason', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '权限' }))
+
+    // The editing rows stay untouched: staging still works from the section.
+    expect(screen.getByRole('combobox', { name: '默认权限策略' }))
+      .toBeInTheDocument()
+    // The read-only enforcement block shows the applied value, the
+    // adapter-judged status and its reason.
+    expect(screen.getByText(/生效状态（只读）/)).toBeInTheDocument()
+    expect(screen.getByText('已阻止')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'PermissionBroker 尚未接入，策略仅记录为意图，无法强制执行'
+      )
+    ).toBeInTheDocument()
+    // ADR-0012 copy rules: no sandbox / enforced / isolated claims anywhere.
+    const region = screen.getByRole('region', { name: '项目设置' })
+    expect(region).not.toHaveTextContent(/沙箱|sandbox|已强制|已隔离/i)
+    // The old forward-looking placeholder is gone.
+    expect(
+      screen.queryByText(/有效策略矩阵与下一次 Run 的 readiness/)
+    ).not.toBeInTheDocument()
   })
 })

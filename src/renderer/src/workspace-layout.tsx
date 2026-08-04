@@ -1181,6 +1181,31 @@ function AgentView({
         </p>
       </header>
 
+      {/* Unavailable (#14): every per-agent sub-view stays read-only; the
+          only in-place action navigates to the global Provider Health
+          surface — recovery itself remains an explicit action there. */}
+      {agent.runtimeState === 'unavailable' && (
+        <div
+          role="note"
+          className="mb-3 flex items-center gap-2 rounded bg-amber-950/40 px-3 py-2 text-xs text-amber-300"
+        >
+          <span className="flex-1">
+            Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
+          </span>
+          <button
+            className="rounded bg-amber-950 px-3 py-1 text-amber-300 hover:bg-amber-900"
+            onClick={() =>
+              void sendCommand({
+                kind: 'navigate-global',
+                surface: 'provider-health'
+              })
+            }
+          >
+            修复 Provider
+          </button>
+        </div>
+      )}
+
       <div className="mb-3 flex gap-1 border-b border-neutral-800">
         {SUB_VIEWS.map(({ view, label }) => (
           <button

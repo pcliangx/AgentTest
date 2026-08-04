@@ -4,26 +4,32 @@ import type {
   CommandResult,
   ConfigurationOwner,
   ProjectViewModel,
+  RunReadinessBlockerTarget,
   WorkbenchViewModel
 } from './workbench/contract'
 import {
+  AGENT_FIELD_PATHS,
   CONFIGURATION_FIELDS,
   fieldDescriptor,
   ownerKey,
   type ConfigurationFieldDescriptor,
   type ConfigurationFieldTiming
 } from './workbench/configuration'
+import { providerLabel } from './agent-display'
 import type { SendCommand } from './agents-surface'
 
 /**
- * Settings A — the single full configuration editor (#13).
+ * Settings A — the single full configuration editor (#13), plus the two
+ * read-only views (#14): the policy matrix (B) and the readiness summary (C).
  *
- * Six stable sections plus the pending-changes summary. Editing only ever
- * stages drafts through the port; applied truth, active Runs and identity
- * change solely via an explicit atomic apply. The renderer owns no
+ * Six stable editing sections plus the pending-changes summary. Editing only
+ * ever stages drafts through the port; applied truth, active Runs and
+ * identity change solely via an explicit atomic apply. The renderer owns no
  * configuration rules: the field catalogue is shared with the adapter
  * (`CONFIGURATION_FIELDS`), and values, versions, drafts and validation
- * errors all come from the WorkbenchViewModel.
+ * errors all come from the WorkbenchViewModel. The read-only views render
+ * adapter-computed `effectiveConfigurations` / `runReadiness` and only ever
+ * link back to the editing sections or the global Provider Health surface.
  */
 
 const TIMING_LABEL: Record<ConfigurationFieldTiming, string> = {
@@ -32,7 +38,7 @@ const TIMING_LABEL: Record<ConfigurationFieldTiming, string> = {
   'new-agent': '新建 Agent 生效'
 }
 
-const SECTIONS = [
+const EDIT_SECTIONS = [
   { key: 'general', label: '常规' },
   { key: 'defaults', label: 'Agent 默认配置' },
   { key: 'instances', label: 'Agent 实例' },
@@ -40,6 +46,16 @@ const SECTIONS = [
   { key: 'permissions', label: '权限' },
   { key: 'storage', label: '存储' }
 ] as const
+
+// Settings B/C (#14): read-only comparison and summary views. They own no
+// editing or navigation logic — every edit path leads back to the sections
+// above, which remain the single edit locations.
+const READONLY_SECTIONS = [
+  { key: 'matrix', label: '策略矩阵' },
+  { key: 'readiness', label: 'Readiness 摘要' }
+] as const
+
+const SECTIONS = [...EDIT_SECTIONS, ...READONLY_SECTIONS]
 
 type SectionKey = (typeof SECTIONS)[number]['key']
 
@@ -49,7 +65,9 @@ const PROJECT_SECTION_FIELDS: Record<SectionKey, string[]> = {
   instances: [],
   integrations: fieldsOf('project', 'integrations'),
   permissions: fieldsOf('project', 'permissions'),
-  storage: []
+  storage: [],
+  matrix: [],
+  readiness: []
 }
 
 const AGENT_SECTION_FIELDS = fieldsOf('agent', 'instances')
@@ -336,6 +354,21 @@ export function SettingsSurface({
     }
   }
 
+  // Settings C deep links (#14): a blocker link only ever sends the user to
+  // the single location that can clear it — a Settings A section (selecting
+  // the instance when the blocker names one) or the global Provider Health
+  // surface. The summary itself edits nothing.
+  const openReadinessTarget = (target: RunReadinessBlockerTarget): void => {
+    if (target.kind === 'provider-health') {
+      void sendCommand({ kind: 'navigate-global', surface: 'provider-health' })
+      return
+    }
+    setSection(target.section)
+    if (target.section === 'instances' && target.agentInstanceId) {
+      setSelectedAgentId(target.agentInstanceId)
+    }
+  }
+
   const renderFieldRows = (owner: ConfigurationOwner, fieldPaths: string[]) => {
     const applied = appliedFor(owner)
     const draft = draftFor(owner)
@@ -373,7 +406,24 @@ export function SettingsSurface({
         aria-label="设置目录"
         className="w-40 shrink-0 space-y-0.5 border-r border-neutral-800 pr-3"
       >
-        {SECTIONS.map(({ key, label }) => (
+        {EDIT_SECTIONS.map(({ key, label }) => (
+          <button
+            key={key}
+            aria-current={section === key ? 'page' : undefined}
+            className={`block w-full rounded px-2 py-1 text-left text-sm ${
+              section === key
+                ? 'bg-neutral-800 text-neutral-100'
+                : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+            }`}
+            onClick={() => setSection(key)}
+          >
+            {label}
+          </button>
+        ))}
+        <p className="px-2 pt-2 text-[10px] uppercase tracking-wide text-neutral-600">
+          只读视图
+        </p>
+        {READONLY_SECTIONS.map(({ key, label }) => (
           <button
             key={key}
             aria-current={section === key ? 'page' : undefined}
@@ -464,10 +514,45 @@ export function SettingsSurface({
               projectOwner,
               PROJECT_SECTION_FIELDS.permissions
             )}
-            <p className="mt-4 text-xs text-neutral-500">
-              仅展示可真正强制的策略；有效策略矩阵与下一次 Run 的 readiness
-              摘要将由后续工作面提供。
-            </p>
+            {/* Enforcement truth (#14): only the adapter-judged effective
+                status is shown. Phase 1 has no PermissionBroker, so a
+                recorded policy is intent only and renders as blocked —
+                never as enforced. The editing rows above stay the editor. */}
+            <div className="mt-4">
+              <h3 className="text-xs font-medium text-neutral-300">
+                生效状态（只读）
+              </h3>
+              <ul className="mt-2 space-y-2">
+                {PROJECT_SECTION_FIELDS.permissions.map((fieldPath) => {
+                  const entry = snapshot.effectiveConfigurations
+                    .find((c) => ownerKey(c.owner) === ownerKey(projectOwner))
+                    ?.entries.find((e) => e.fieldPath === fieldPath)
+                  if (!entry) return null
+                  return (
+                    <li key={fieldPath} className="text-xs">
+                      <span className="text-neutral-400">
+                        {fieldDescriptor(fieldPath)?.label ?? fieldPath}：
+                        {formatValue(fieldPath, entry.applied)}
+                      </span>
+                      <span
+                        className={
+                          entry.status === 'blocked'
+                            ? 'ml-2 text-amber-400'
+                            : 'ml-2 text-emerald-400'
+                        }
+                      >
+                        {entry.status === 'blocked' ? '已阻止' : '可生效'}
+                      </span>
+                      {entry.status === 'blocked' && entry.blockedReason && (
+                        <p className="mt-0.5 text-neutral-500">
+                          {entry.blockedReason}
+                        </p>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
           </div>
         )}
 
@@ -493,6 +578,33 @@ export function SettingsSurface({
                 导入
               </button>
             </div>
+          </div>
+        )}
+
+        {section === 'matrix' && (
+          <div>
+            <p className="mb-3 text-xs text-neutral-500">
+              只读比较视图 · 编辑请回到上方对应设置。
+            </p>
+            <PolicyMatrix
+              agents={projectAgents}
+              snapshot={snapshot}
+              formatValue={formatValue}
+            />
+          </div>
+        )}
+
+        {section === 'readiness' && (
+          <div>
+            <p className="mb-3 text-xs text-neutral-500">
+              只读摘要 · 下一次 Run 的就绪状态由 adapter
+              汇总；配置编辑请回到上方对应设置。
+            </p>
+            <ReadinessSummary
+              agents={projectAgents}
+              snapshot={snapshot}
+              onOpenTarget={openReadinessTarget}
+            />
           </div>
         )}
       </div>
@@ -730,5 +842,201 @@ function ConfigFieldRow({
       </div>
       {error && <p className="pl-[8.75rem] text-xs text-red-400">{error}</p>}
     </li>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Settings B — policy matrix: read-only applied/effective comparison (#14)
+// ---------------------------------------------------------------------------
+
+/** Matrix rows: every agent-scoped catalogue field except the identity name. */
+const MATRIX_FIELD_PATHS = AGENT_FIELD_PATHS.filter(
+  (fieldPath) => fieldPath !== 'identity.name'
+)
+
+function PolicyMatrix({
+  agents,
+  snapshot,
+  formatValue
+}: {
+  agents: AgentInstanceViewModel[]
+  snapshot: WorkbenchViewModel
+  formatValue: (fieldPath: string, value: unknown) => string
+}) {
+  if (agents.length === 0) {
+    return (
+      <p className="text-sm text-neutral-500">
+        当前 Project 尚无 Agent 实例，暂无可比较的配置。
+      </p>
+    )
+  }
+  if (agents.length === 1) {
+    return (
+      <p className="text-sm text-neutral-500">
+        当前 Project 只有 1 个 Agent 实例，策略矩阵需要至少 2
+        个实例进行比较。
+      </p>
+    )
+  }
+
+  const appliedFor = (agent: AgentInstanceViewModel) =>
+    snapshot.appliedConfigurations.find(
+      (c) =>
+        c.owner.kind === 'agent' &&
+        c.owner.agentInstanceId === agent.agentInstanceId
+    )
+  const effectiveEntryFor = (
+    agent: AgentInstanceViewModel,
+    fieldPath: string
+  ) =>
+    snapshot.effectiveConfigurations
+      .find(
+        (c) =>
+          c.owner.kind === 'agent' &&
+          c.owner.agentInstanceId === agent.agentInstanceId
+      )
+      ?.entries.find((entry) => entry.fieldPath === fieldPath)
+
+  return (
+    <table className="border-collapse text-sm">
+      <thead>
+        <tr>
+          <th
+            scope="col"
+            className="border-b border-neutral-800 px-2 py-1.5 text-left text-xs font-normal text-neutral-500"
+          >
+            配置项
+          </th>
+          {agents.map((agent) => (
+            <th
+              key={agent.agentInstanceId}
+              scope="col"
+              className="border-b border-neutral-800 px-2 py-1.5 text-left"
+            >
+              <span className="block font-medium text-neutral-100">
+                {agent.name}
+              </span>
+              <span className="block text-xs font-normal text-neutral-500">
+                {providerLabel(agent.providerId)}
+              </span>
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {MATRIX_FIELD_PATHS.map((fieldPath) => (
+          <tr key={fieldPath}>
+            <th
+              scope="row"
+              className="whitespace-nowrap border-b border-neutral-900 px-2 py-1.5 text-left text-xs font-normal text-neutral-400"
+            >
+              {fieldDescriptor(fieldPath)?.label ?? fieldPath}
+            </th>
+            {agents.map((agent) => {
+              const value = appliedFor(agent)?.values[fieldPath]
+              const entry = effectiveEntryFor(agent, fieldPath)
+              const blocked = entry?.status === 'blocked'
+              return (
+                <td
+                  key={agent.agentInstanceId}
+                  className="border-b border-neutral-900 px-2 py-1.5 align-top text-neutral-300"
+                >
+                  <span>
+                    {value === undefined || value === null || value === ''
+                      ? '未设置'
+                      : formatValue(fieldPath, value)}
+                  </span>
+                  {blocked && (
+                    <span className="mt-0.5 block text-xs text-amber-400">
+                      已阻止：{entry.blockedReason}
+                    </span>
+                  )}
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Settings C — next-Run readiness: read-only adapter summary (#14)
+// ---------------------------------------------------------------------------
+
+function ReadinessSummary({
+  agents,
+  snapshot,
+  onOpenTarget
+}: {
+  agents: AgentInstanceViewModel[]
+  snapshot: WorkbenchViewModel
+  onOpenTarget: (target: RunReadinessBlockerTarget) => void
+}) {
+  const targetLabel = (target: RunReadinessBlockerTarget): string =>
+    target.kind === 'provider-health'
+      ? '前往 Provider 健康'
+      : `前往「${SECTIONS.find((s) => s.key === target.section)?.label ?? target.section}」设置`
+
+  return (
+    <div>
+      <ul className="space-y-2">
+        {agents.map((agent) => {
+          const readiness = snapshot.runReadiness.find(
+            (r) => r.agentInstanceId === agent.agentInstanceId
+          )
+          if (!readiness) return null
+          return (
+            <li
+              key={agent.agentInstanceId}
+              className="rounded border border-neutral-800 px-3 py-2"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-neutral-100">
+                  {agent.name}
+                </span>
+                <span className="text-xs text-neutral-500">
+                  {providerLabel(agent.providerId)}
+                </span>
+                <span
+                  className={`text-xs ${
+                    readiness.status === 'ready'
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }`}
+                >
+                  {readiness.status === 'ready' ? '就绪' : '已阻止'}
+                </span>
+              </div>
+              {readiness.blockers.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {readiness.blockers.map((blocker, index) => (
+                    <li
+                      key={index}
+                      className="flex items-center gap-2 text-xs text-neutral-400"
+                    >
+                      <span>{blocker.message}</span>
+                      {blocker.target && (
+                        <button
+                          className="text-blue-400 hover:text-blue-300"
+                          onClick={() => onOpenTarget(blocker.target!)}
+                        >
+                          {targetLabel(blocker.target)}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <p className="mt-3 text-[11px] text-neutral-600">
+        演示模式：Readiness 汇总基于 mock 场景；权限策略尚未接入
+        PermissionBroker，Readiness 不代表真实强制能力。
+      </p>
+    </div>
   )
 }
