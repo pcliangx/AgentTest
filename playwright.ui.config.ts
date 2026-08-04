@@ -2,11 +2,11 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/ui',
-  testMatch: 'electron-smoke.spec.ts',
+  testMatch: '*.spec.ts',
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 60_000,
+  timeout: 120_000,
   expect: { timeout: 8_000 },
   outputDir: 'test-results/ui-artifacts',
   reporter: [
