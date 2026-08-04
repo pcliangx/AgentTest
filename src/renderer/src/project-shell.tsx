@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   AgentInstanceId,
@@ -14,6 +14,7 @@ import type {
   HandoffImportState,
   HandoffValidationViewModel,
   HandoffViewModel,
+  LayoutOperation,
   LayoutTargetEffect,
   PanelId,
   PermissionDecision,
@@ -33,6 +34,7 @@ import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
+import { ContextPane } from './context-pane'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
 import { KnowledgeSurface } from './knowledge-surface'
@@ -359,6 +361,49 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     new Map<number, RetainedTargetIntent>()
   )
   const activeDeepLinkIntentTokenRef = useRef<number | undefined>(undefined)
+
+  // #66: the fixed context pane (Agent Directory) is a shell-level sibling
+  // of the workspace, so the directory focus targets and the layout notice
+  // lift up from the old Agents surface (hooks stay above the !snapshot
+  // early return).
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(null)
+
+  const directoryAgentButtons = useRef(
+    new Map<AgentInstanceId, HTMLButtonElement>()
+  )
+  const directorySearchInput = useRef<HTMLInputElement>(null)
+  const directoryNewAgentButton = useRef<HTMLButtonElement>(null)
+
+  const registerDirectoryAgentButton = useCallback(
+    (agentInstanceId: AgentInstanceId, element: HTMLButtonElement | null) => {
+      if (element) directoryAgentButtons.current.set(agentInstanceId, element)
+      else directoryAgentButtons.current.delete(agentInstanceId)
+    },
+    []
+  )
+  const focusDirectoryTarget = useCallback(
+    (agentInstanceId?: AgentInstanceId) => {
+      const target =
+        (agentInstanceId
+          ? directoryAgentButtons.current.get(agentInstanceId)
+          : undefined) ??
+        directorySearchInput.current ??
+        directoryNewAgentButton.current
+      target?.focus()
+    },
+    []
+  )
+
+  const openAttentionTargets = useMemo(() => {
+    const set = new Set<string>()
+    for (const item of snapshot?.attentionItems ?? []) {
+      if (item.state === 'open' && item.target.kind === 'agent') {
+        set.add(item.target.agentInstanceId)
+      }
+    }
+    return set
+  }, [snapshot?.attentionItems])
+
   const updateRetainedDeepLink = (target: AttentionTarget | null): void => {
     retainedDeepLinkEpochRef.current += 1
     retainedTargetIntentsRef.current.clear()
@@ -728,7 +773,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // target effects are settled by command intent order, not response order.
   // Rejections and structural effects are neutral. Deep-link-owned layout
   // commands use raw sendCommand above and never invalidate themselves.
-  const sendLayoutCommand: SendCommand = (body, expectedRevision) => {
+  const sendCommandWithLayoutIntent: SendCommand = (body, expectedRevision) => {
     const mayProduceTargetEffect = commandMayProduceLayoutTargetEffect(body)
     if (body.kind !== 'change-layout' && !mayProduceTargetEffect) {
       return sendCommand(body, expectedRevision)
@@ -747,6 +792,30 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           : { kind: 'rejected' }
       )
     })
+    return result
+  }
+
+  // The shell's single layout-command path (#66): shared by the context
+  // pane and the Agents workspace, so a rejection always restores the
+  // authoritative layout and surfaces a recoverable notice (Issue #4 AC4).
+  const sendLayout = async (
+    operation: LayoutOperation,
+    expectedRevision?: number
+  ): Promise<CommandResult> => {
+    // Callers (the context pane and the workspace) render only when a
+    // Project exists — the guard just narrows the type.
+    if (!project) throw new Error('sendLayout requires an active project')
+    const result = await sendCommandWithLayoutIntent(
+      {
+        kind: 'change-layout',
+        projectId: project.projectId,
+        operation
+      },
+      expectedRevision ?? snapshot.revision
+    )
+    if (!result.ok) {
+      setLayoutNotice(`布局操作被拒绝（${result.message}），已恢复最新布局。`)
+    }
     return result
   }
 
@@ -817,36 +886,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
       {/* Window-level entries keep their pre-#65 positions and accessible
           names (连接 / Provider 健康 / 全局设置 / Global Attention /
-          派发给 Agent / 关闭窗口 / 退出). */}
+          派发给 Agent / 关闭窗口 / 退出). The 切换项目 select moved into
+          the context pane's Project switch card in #66. */}
       <header
         inert={showPicker ? true : undefined}
         className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-paper px-3"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <select
-            aria-label="切换项目"
-            className="h-[29px] max-w-44 rounded-lg border border-line bg-paper px-2 text-[11px] text-ink"
-            value={project?.projectId ?? ''}
-            disabled={!project}
-            onChange={(e) => {
-              const targetId = id(e.target.value, 'ProjectId')
-              const target = snapshot.projects.find(
-                (p) => p.projectId === targetId
-              )
-              if (!target) return
-              void sendExplicitNavigation(
-                () => navigate(targetId, target.currentSurface),
-                () => setPermissionsNavNonce(0)
-              )
-            }}
-          >
-            {snapshot.projects.length === 0 && <option value="" />}
-            {snapshot.projects.map((p) => (
-              <option key={p.projectId} value={p.projectId}>
-                {p.name}
-              </option>
-            ))}
-          </select>
           <div className="flex items-center gap-1">
             {GLOBAL_ENTRIES.map(({ surface, label }) => {
               const isActive =
@@ -916,7 +962,22 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
       <div
         inert={showPicker ? true : undefined}
-        className="flex min-h-0 flex-1"
+        className="relative flex min-h-0 flex-1"
+        onKeyDown={(e) => {
+          // Escape is the keyboard exit from temporary Focus — normalised
+          // to the same focus-panel command as the 退出 Focus button. It
+          // lives on the shell row because the context-pane directory is a
+          // sibling of the workspace: Escape must work even when focus is
+          // inside the directory (#24 round-3 review; lifted in #66).
+          if (
+            e.key === 'Escape' &&
+            project?.currentSurface === 'agents' &&
+            project.layout.temporaryFocusPanelId
+          ) {
+            e.preventDefault()
+            void sendLayout({ kind: 'focus-panel' })
+          }
+        }}
       >
         {/* 82px icon rail of the frozen A shell (#65): brand mark, six
             workspace surfaces, then Attention and Settings at the bottom. */}
@@ -972,7 +1033,33 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           )}
           </main>
         ) : project ? (
-          <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
+          <>
+            {/* Fixed 244px context directory pane of the frozen A shell
+                (#66) — visible on every Project surface; today it carries
+                the Project switch card and the single Agent Directory. */}
+            <ContextPane
+              key={project.projectId}
+              project={project}
+              snapshot={snapshot}
+              agents={projectAgents}
+              openAttentionTargets={openAttentionTargets}
+              sendCommand={sendCommandWithLayoutIntent}
+              sendLayout={sendLayout}
+              onSwitchProject={(targetId) => {
+                const target = snapshot.projects.find(
+                  (p) => p.projectId === targetId
+                )
+                if (!target) return
+                void sendExplicitNavigation(
+                  () => navigate(targetId, target.currentSurface),
+                  () => setPermissionsNavNonce(0)
+                )
+              }}
+              registerAgentButton={registerDirectoryAgentButton}
+              searchInputRef={directorySearchInput}
+              newAgentButtonRef={directoryNewAgentButton}
+            />
+            <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
             {deepLinkNotice && (
               <div
                 role="alert"
@@ -1009,9 +1096,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 key={project.projectId}
                 project={project}
                 snapshot={snapshot}
+                openAttentionTargets={openAttentionTargets}
                 planDispatch={planDispatch}
-                sendCommand={sendLayoutCommand}
-                onDispatch={() => setShowPicker(true)}
+                sendCommand={sendCommandWithLayoutIntent}
+                sendLayout={sendLayout}
+                onFocusExitFallback={focusDirectoryTarget}
               />
             )}
             {project.currentSurface === 'settings' && (
@@ -1108,10 +1197,26 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 />
               )}
           </main>
+          </>
         ) : (
           <main className="flex min-h-0 flex-1 items-center justify-center bg-wash text-muted">
             没有可用的 Project
           </main>
+        )}
+        {layoutNotice && (
+          <div
+            role="status"
+            className="absolute right-2 top-2 z-20 flex items-center gap-2 rounded-lg border border-amber bg-amber-soft px-3 py-1.5 text-xs text-amber"
+          >
+            <span>{layoutNotice}</span>
+            <button
+              aria-label="关闭提示"
+              className="rounded px-1 text-amber hover:bg-amber-soft"
+              onClick={() => setLayoutNotice(null)}
+            >
+              ×
+            </button>
+          </div>
         )}
       </div>
 
