@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
@@ -135,7 +135,9 @@ describe('ProjectShell — quit preview (#12 AC3/AC4)', () => {
 
     await user.click(screen.getByRole('button', { name: '退出' }))
 
-    const dialog = await screen.findByRole('dialog', { name: '退出 Agent Squad HQ' })
+    const dialog = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
     // Active Run visible
     expect(dialog).toHaveTextContent('cc_data')
     // Active Terminal visible
@@ -166,7 +168,81 @@ describe('ProjectShell — quit preview (#12 AC3/AC4)', () => {
     expect(ccData.runtimeState).toBe('permission-requested')
   })
 
-  it('force-quit provides an unblockable exit entry', async () => {
+  it('stop-runs advances the same dialog to the final Handoff phase', async () => {
+    const user = userEvent.setup()
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const handoffCountBefore = before.handoffs.length
+    render(<ProjectShell port={adapter} />)
+    await waitForLoad()
+
+    await user.click(screen.getByRole('button', { name: '退出' }))
+    const preview = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
+    await user.click(within(preview).getByRole('button', { name: '停止 Run' }))
+
+    const finalPhase = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
+    expect(finalPhase).toHaveTextContent('活动执行已处理')
+    expect(
+      within(finalPhase).queryByRole('button', { name: '停止 Run' })
+    ).toBeNull()
+    await user.click(
+      within(finalPhase).getByRole('button', { name: '生成最终 Handoff' })
+    )
+
+    expect(
+      screen.queryByRole('dialog', { name: '退出 Agent Squad HQ' })
+    ).toBeNull()
+    expect((await adapter.getSnapshot()).handoffs.length).toBeGreaterThan(
+      handoffCountBefore
+    )
+  })
+
+  it('rebuilds a stale quit preview before allowing the action to be retried', async () => {
+    const user = userEvent.setup()
+    const adapter = new MockScenarioAdapter()
+    render(<ProjectShell port={adapter} />)
+    await waitForLoad()
+
+    await user.click(screen.getByRole('button', { name: '退出' }))
+    const preview = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
+    const previewed = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'navigate',
+      commandId: id('cmd-ui-quit-drift', 'CommandId'),
+      expectedRevision: previewed.revision,
+      projectId: id('proj-sales', 'ProjectId'),
+      surface: 'agents'
+    })
+    const drifted = await adapter.getSnapshot()
+
+    await user.click(within(preview).getByRole('button', { name: '停止 Run' }))
+    await waitFor(async () => {
+      expect((await adapter.getSnapshot()).revision).toBeGreaterThan(
+        drifted.revision
+      )
+    })
+    expect((await adapter.getSnapshot()).global.concurrency.activeGlobal).toBe(
+      drifted.global.concurrency.activeGlobal
+    )
+
+    const refreshed = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
+    await user.click(
+      within(refreshed).getByRole('button', { name: '停止 Run' })
+    )
+    expect(
+      await screen.findByText(/活动执行已处理/)
+    ).toBeVisible()
+  })
+
+  it('force-quit uses the shared confirmation contract before stopping work', async () => {
     const user = userEvent.setup()
     const adapter = new MockScenarioAdapter()
     render(<ProjectShell port={adapter} />)
@@ -175,19 +251,47 @@ describe('ProjectShell — quit preview (#12 AC3/AC4)', () => {
     await user.click(screen.getByRole('button', { name: '退出' }))
     const dialog = await screen.findByRole('dialog', { name: '退出 Agent Squad HQ' })
 
-    // Force-quit button is present
     const forceButton = within(dialog).getByRole('button', { name: '强制退出' })
     await user.click(forceButton)
 
-    // Dialog dismissed
-    await expect(
+    const confirmation = await screen.findByRole('dialog', {
+      name: '强制退出 Agent Squad HQ'
+    })
+    expect(
       screen.queryByRole('dialog', { name: '退出 Agent Squad HQ' })
     ).toBeNull()
+    expect(confirmation).toHaveTextContent(
+      '所有活动 Run、Terminal 与 handoff-dirty Agent'
+    )
+    expect(confirmation).toHaveTextContent('不可跳过')
+    expect(
+      within(confirmation).getByRole('button', { name: '确认' })
+    ).toHaveFocus()
 
-    // Runs stopped
-    const snap = await adapter.getSnapshot()
+    // The first click only requests confirmation; execution is untouched.
+    let snap = await adapter.getSnapshot()
+    expect(
+      snap.agents.find((agent) => agent.name === 'cc_data')!.runtimeState
+    ).toBe('permission-requested')
+
+    await user.click(within(confirmation).getByRole('button', { name: '取消' }))
+    const restored = await screen.findByRole('dialog', {
+      name: '退出 Agent Squad HQ'
+    })
+    expect(restored).toBeVisible()
+
+    await user.click(within(restored).getByRole('button', { name: '强制退出' }))
+    const confirmedDialog = await screen.findByRole('dialog', {
+      name: '强制退出 Agent Squad HQ'
+    })
+    await user.click(
+      within(confirmedDialog).getByRole('button', { name: '确认' })
+    )
+
+    snap = await adapter.getSnapshot()
     const ccData = snap.agents.find((a) => a.name === 'cc_data')!
     expect(ccData.runtimeState).toBe('interrupted')
+    expect(snap.quitPreview).toBeUndefined()
   })
 
   it('close-window does NOT show quit preview', async () => {

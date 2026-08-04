@@ -639,6 +639,32 @@ describe('MockScenarioAdapter — execute-confirmed mock execution (review P1)',
     if (!result.ok) expect(result.reason).toBe('unavailable')
   })
 
+  it('rejects request-execute atomically when the Project is not dispatchable', async () => {
+    const scenario = createStandardScenario()
+    const project = scenario.projects.find(
+      (candidate) => candidate.projectId === PROJECT_RESEARCH
+    )!
+    project.repositoryReadiness = 'not-ready'
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+
+    const result = await adapter.dispatch({
+      kind: 'import-handoff',
+      commandId: cmdId(30),
+      expectedRevision: before.revision,
+      projectId: PROJECT_RESEARCH,
+      handoffId: CROSS_HANDOFF,
+      targetAgentInstanceId: CC_REPORT,
+      mode: 'request-execute'
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'unavailable'
+    })
+    expect(await adapter.getSnapshot()).toEqual(before)
+  })
+
   it('execute-confirmed via command-direct also produces mock Run', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
@@ -714,6 +740,15 @@ describe('MockScenarioAdapter — quit flow fingerprint & phases (review P1)', (
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('stale-revision')
+
+    expect(await adapter.getSnapshot()).toEqual(afterNav)
+    const retry = await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(902),
+      expectedRevision: afterNav.revision
+    })
+    expect(retry.ok).toBe(true)
+    expect((await adapter.getSnapshot()).quitPreview).toBeDefined()
   })
 
   it('stop-runs resolves linked permission Attention and recomputes project activity', async () => {
@@ -768,8 +803,71 @@ describe('MockScenarioAdapter — quit flow fingerprint & phases (review P1)', (
     expect(interruptedActivities.length).toBe(activeCount)
   })
 
-  it('request-final-handoff creates complete handoffs for clean agents, fallback for failed ones', async () => {
+  it('rejects final Handoff generation until Runs and Terminals are resolved', async () => {
     const adapter = new MockScenarioAdapter()
+    await requestQuitPreview(adapter)
+    const previewed = await adapter.getSnapshot()
+
+    const result = await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(914),
+      expectedRevision: previewed.revision,
+      action: 'request-final-handoff'
+    })
+
+    expect(result).toMatchObject({ ok: false, reason: 'busy' })
+    expect(await adapter.getSnapshot()).toEqual(previewed)
+  })
+
+  it('stop-runs advances the quit plan to final Handoff generation', async () => {
+    const adapter = new MockScenarioAdapter()
+    await requestQuitPreview(adapter)
+    const previewed = await adapter.getSnapshot()
+
+    const stopResult = await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(915),
+      expectedRevision: previewed.revision,
+      action: 'stop-runs'
+    })
+    expect(stopResult.ok).toBe(true)
+
+    const stopped = await adapter.getSnapshot()
+    expect(stopped.quitPreview).toMatchObject({
+      phase: 'request-final-handoff',
+      activeRuns: [],
+      activeTerminals: []
+    })
+    const dirtyCount = stopped.quitPreview!.handoffDirtyAgents.length
+    const handoffCountBefore = stopped.handoffs.length
+
+    const handoffResult = await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(916),
+      expectedRevision: stopped.revision,
+      action: 'request-final-handoff'
+    })
+    expect(handoffResult.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    expect(after.quitPreview).toBeUndefined()
+    expect(after.handoffs).toHaveLength(handoffCountBefore + dirtyCount)
+  })
+
+  it('request-final-handoff creates complete handoffs for clean agents, fallback for failed ones', async () => {
+    const scenario = createStandardScenario()
+    for (const agent of scenario.agents) {
+      if (
+        ['starting', 'running', 'finishing', 'needs-input', 'permission-requested'].includes(
+          agent.runtimeState
+        )
+      ) {
+        agent.runtimeState = 'ready'
+        delete agent.activeRunId
+      }
+      agent.terminalState = 'closed'
+    }
+    const adapter = new MockScenarioAdapter(scenario)
     await requestQuitPreview(adapter)
     const mid = await adapter.getSnapshot()
     const dirtyCount = mid.quitPreview!.handoffDirtyAgents.length
@@ -821,6 +919,109 @@ describe('MockScenarioAdapter — quit flow fingerprint & phases (review P1)', (
       (t) => t.agentName
     )
     expect(terminalNames).toContain('cx_review')
+  })
+
+  it('stop-runs invalidates a pending Handoff confirmation instead of letting it restart work', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const request = await adapter.dispatch({
+      kind: 'import-handoff',
+      commandId: cmdId(910),
+      expectedRevision: before.revision,
+      projectId: PROJECT_RESEARCH,
+      handoffId: id('handoff-cross-002', 'HandoffId'),
+      targetAgentInstanceId: id('inst-cc-report', 'AgentInstanceId'),
+      mode: 'request-execute'
+    })
+    expect(request.ok).toBe(true)
+    const withConfirmation = await adapter.getSnapshot()
+    const confirmationId = withConfirmation.pendingConfirmation!.confirmationId
+
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(911),
+      expectedRevision: withConfirmation.revision
+    })
+    const previewed = await adapter.getSnapshot()
+    expect(
+      previewed.quitPreview!.handoffDirtyAgents.map((agent) => agent.agentName)
+    ).toContain('cc_report')
+
+    await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(912),
+      expectedRevision: previewed.revision,
+      action: 'stop-runs'
+    })
+    const stopped = await adapter.getSnapshot()
+    expect(stopped.pendingConfirmation).toBeUndefined()
+    expect(
+      stopped.quitPreview!.handoffDirtyAgents.find(
+        (agent) => agent.agentName === 'cc_report'
+      )?.reasons
+    ).toEqual(expect.arrayContaining(['pending-confirmation']))
+
+    const staleConfirmation = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(913),
+      expectedRevision: stopped.revision,
+      confirmationId
+    })
+    expect(staleConfirmation).toMatchObject({
+      ok: false,
+      reason: 'invalid-target'
+    })
+    expect((await adapter.getSnapshot()).global.concurrency.activeGlobal).toBe(0)
+  })
+
+  it('marks every Agent in a multi-owner pending confirmation as dirty', async () => {
+    const adapter = new MockScenarioAdapter()
+    const ccData = id('inst-cc-data', 'AgentInstanceId')
+    const ccSql = id('inst-cc-sql', 'AgentInstanceId')
+    let snapshot = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'stage-configuration',
+      commandId: cmdId(920),
+      expectedRevision: snapshot.revision,
+      owner: { kind: 'agent', agentInstanceId: ccData },
+      fieldPath: 'identity.name',
+      value: 'cc_data_next'
+    })
+    snapshot = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'stage-configuration',
+      commandId: cmdId(921),
+      expectedRevision: snapshot.revision,
+      owner: { kind: 'agent', agentInstanceId: ccSql },
+      fieldPath: 'identity.name',
+      value: 'cc_sql_next'
+    })
+    snapshot = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'discard-configuration',
+      commandId: cmdId(922),
+      expectedRevision: snapshot.revision,
+      owners: [
+        { kind: 'agent', agentInstanceId: ccData },
+        { kind: 'agent', agentInstanceId: ccSql }
+      ]
+    })
+    snapshot = await adapter.getSnapshot()
+    expect(snapshot.pendingConfirmation).toBeDefined()
+
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(923),
+      expectedRevision: snapshot.revision
+    })
+    const previewed = await adapter.getSnapshot()
+    for (const agentInstanceId of [ccData, ccSql]) {
+      expect(
+        previewed.quitPreview!.handoffDirtyAgents.find(
+          (agent) => agent.agentInstanceId === agentInstanceId
+        )?.reasons
+      ).toEqual(expect.arrayContaining(['pending-confirmation']))
+    }
   })
 })
 
@@ -919,6 +1120,117 @@ describe('MockScenarioAdapter — request-quit-preview (#12 AC3/AC4)', () => {
     expect(dirtyIds).toContain(ccEtl.agentInstanceId)
   })
 
+  it('includes a successful round completed after the Agent\'s latest Handoff', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(2),
+      expectedRevision: before.revision
+    })
+
+    const after = await adapter.getSnapshot()
+    const ccReport = after.quitPreview!.handoffDirtyAgents.find(
+      (agent) => agent.agentName === 'cc_report'
+    )
+    expect(ccReport).toMatchObject({
+      reasons: expect.arrayContaining(['successful-round'])
+    })
+  })
+
+  it('includes an active structured Run even when its worktree is clean', async () => {
+    const scenario = createStandardScenario()
+    const agent = scenario.agents.find(
+      (candidate) => candidate.name === 'cx_review'
+    )!
+    agent.runtimeState = 'needs-input'
+    agent.activeRunId = id('run-clean-needs-input', 'RunId')
+    scenario.changes = scenario.changes.filter(
+      (change) => change.agentInstanceId !== agent.agentInstanceId
+    )
+    scenario.activity = scenario.activity.filter(
+      (entry) => entry.agentInstanceId !== agent.agentInstanceId
+    )
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(3),
+      expectedRevision: before.revision
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.quitPreview!.handoffDirtyAgents.find(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      )
+    ).toMatchObject({ reasons: expect.arrayContaining(['active-run']) })
+  })
+
+  it('includes an active Terminal even when its worktree is clean', async () => {
+    const scenario = createStandardScenario()
+    const agent = scenario.agents.find(
+      (candidate) => candidate.name === 'cx_review'
+    )!
+    agent.runtimeState = 'ready'
+    agent.terminalState = 'active'
+    delete agent.activeRunId
+    scenario.changes = scenario.changes.filter(
+      (change) => change.agentInstanceId !== agent.agentInstanceId
+    )
+    scenario.activity = scenario.activity.filter(
+      (entry) => entry.agentInstanceId !== agent.agentInstanceId
+    )
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(5),
+      expectedRevision: before.revision
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.quitPreview!.handoffDirtyAgents.find(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      )
+    ).toMatchObject({ reasons: expect.arrayContaining(['active-terminal']) })
+  })
+
+  it('includes adapter-projected unsynced tasks and manual dirty marks', async () => {
+    const scenario = createStandardScenario()
+    for (const agent of scenario.agents) {
+      agent.runtimeState = 'ready'
+      agent.terminalState = 'closed'
+      delete agent.activeRunId
+    }
+    scenario.changes = []
+    scenario.activity = []
+    const marked = scenario.agents.find(
+      (candidate) => candidate.name === 'cc_report'
+    )!
+    marked.handoffDirtyFlags = {
+      unsyncedTaskCount: 2,
+      manuallyMarked: true
+    }
+    const adapter = new MockScenarioAdapter(scenario)
+    const before = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'request-quit-preview',
+      commandId: cmdId(4),
+      expectedRevision: before.revision
+    })
+
+    const after = await adapter.getSnapshot()
+    expect(
+      after.quitPreview!.handoffDirtyAgents.find(
+        (candidate) => candidate.agentInstanceId === marked.agentInstanceId
+      )
+    ).toMatchObject({
+      reasons: expect.arrayContaining(['unsynced-task', 'manual'])
+    })
+  })
+
   it('quit preview for an idle scenario shows empty lists', async () => {
     const scenario = createStandardScenario()
     // Reset all agents to ready, clear changes
@@ -928,6 +1240,7 @@ describe('MockScenarioAdapter — request-quit-preview (#12 AC3/AC4)', () => {
       delete agent.activeRunId
     }
     scenario.changes = []
+    scenario.activity = []
     const adapter = new MockScenarioAdapter(scenario)
     const snap = await adapter.getSnapshot()
 
@@ -995,7 +1308,11 @@ describe('MockScenarioAdapter — execute-quit (#12 AC3/AC4)', () => {
     expect(result.ok).toBe(true)
 
     const after = await adapter.getSnapshot()
-    expect(after.quitPreview).toBeUndefined()
+    expect(after.quitPreview).toMatchObject({
+      phase: 'request-final-handoff',
+      activeRuns: [],
+      activeTerminals: []
+    })
     // All previously active structured runs are now interrupted
     const previouslyActive = mid.agents.filter((a) =>
       ['starting', 'running', 'finishing', 'needs-input', 'permission-requested'].includes(
@@ -1027,14 +1344,21 @@ describe('MockScenarioAdapter — execute-quit (#12 AC3/AC4)', () => {
   it('request-final-handoff creates handoff records for dirty agents (complete or incomplete)', async () => {
     const adapter = new MockScenarioAdapter()
     await requestQuitPreview(adapter)
-    const mid = await adapter.getSnapshot()
-    const dirtyCount = mid.quitPreview!.handoffDirtyAgents.length
-    const handoffCountBefore = mid.handoffs.length
+    const previewed = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(30),
+      expectedRevision: previewed.revision,
+      action: 'stop-runs'
+    })
+    const stopped = await adapter.getSnapshot()
+    const dirtyCount = stopped.quitPreview!.handoffDirtyAgents.length
+    const handoffCountBefore = stopped.handoffs.length
 
     const result = await adapter.dispatch({
       kind: 'execute-quit',
       commandId: cmdId(1),
-      expectedRevision: mid.revision,
+      expectedRevision: stopped.revision,
       action: 'request-final-handoff'
     })
     expect(result.ok).toBe(true)
@@ -1057,30 +1381,85 @@ describe('MockScenarioAdapter — execute-quit (#12 AC3/AC4)', () => {
     expect(incompleteCount).toBeGreaterThan(0) // at least one fallback
   })
 
-  it('force-quit stops runs and generates fallback snapshots in one step', async () => {
+  it('force-quit requires the shared non-bypassable confirmation before stopping work', async () => {
     const adapter = new MockScenarioAdapter()
     await requestQuitPreview(adapter)
-    const mid = await adapter.getSnapshot()
-    const handoffCountBefore = mid.handoffs.length
+    const previewed = await adapter.getSnapshot()
+    const handoffCountBefore = previewed.handoffs.length
+    const activeBefore = previewed.global.concurrency.activeGlobal
 
-    const result = await adapter.dispatch({
+    const request = await adapter.dispatch({
       kind: 'execute-quit',
-      commandId: cmdId(1),
-      expectedRevision: mid.revision,
+      commandId: cmdId(20),
+      expectedRevision: previewed.revision,
       action: 'force-quit'
     })
-    expect(result.ok).toBe(true)
+    expect(request.ok).toBe(true)
+
+    const requested = await adapter.getSnapshot()
+    expect(requested.pendingConfirmation).toMatchObject({
+      action: '强制退出 Agent Squad HQ',
+      target: '所有活动 Run、Terminal 与 handoff-dirty Agent'
+    })
+    expect(requested.pendingConfirmation!.impact).toBeTruthy()
+    expect(requested.pendingConfirmation!.nonBypassableReason).toBeTruthy()
+    expect(requested.global.concurrency.activeGlobal).toBe(activeBefore)
+    expect(requested.handoffs).toHaveLength(handoffCountBefore)
+
+    const confirmation = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(21),
+      expectedRevision: requested.revision,
+      confirmationId: requested.pendingConfirmation!.confirmationId
+    })
+    expect(confirmation.ok).toBe(true)
 
     const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeUndefined()
     expect(after.quitPreview).toBeUndefined()
     expect(after.global.concurrency.activeGlobal).toBe(0)
-    // Fallback snapshots created for dirty agents
-    const newHandoffs = after.handoffs.slice(handoffCountBefore)
-    expect(newHandoffs.length).toBeGreaterThan(0)
-    for (const h of newHandoffs) {
-      expect(h.provenance.origin).toBe('quit-snapshot')
-      expect(h.completeness).toBe('incomplete')
-    }
+    const forcedHandoffs = after.handoffs.slice(handoffCountBefore)
+    expect(forcedHandoffs.length).toBeGreaterThan(0)
+    expect(forcedHandoffs.every((handoff) => handoff.completeness === 'incomplete')).toBe(true)
+  })
+
+  it('cancelling force-quit restores a usable quit preview without stopping work', async () => {
+    const adapter = new MockScenarioAdapter()
+    await requestQuitPreview(adapter)
+    const previewed = await adapter.getSnapshot()
+    const activeBefore = previewed.global.concurrency.activeGlobal
+
+    await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(1),
+      expectedRevision: previewed.revision,
+      action: 'force-quit'
+    })
+    const requested = await adapter.getSnapshot()
+    expect(requested.pendingConfirmation).toBeDefined()
+
+    const dismissed = await adapter.dispatch({
+      kind: 'dismiss-confirmation',
+      commandId: cmdId(2),
+      expectedRevision: requested.revision
+    })
+    expect(dismissed.ok).toBe(true)
+
+    const restored = await adapter.getSnapshot()
+    expect(restored.pendingConfirmation).toBeUndefined()
+    expect(restored.quitPreview?.phase).toBe('resolve-active-work')
+    expect(restored.global.concurrency.activeGlobal).toBe(activeBefore)
+
+    const stopped = await adapter.dispatch({
+      kind: 'execute-quit',
+      commandId: cmdId(3),
+      expectedRevision: restored.revision,
+      action: 'stop-runs'
+    })
+    expect(stopped.ok).toBe(true)
+    expect((await adapter.getSnapshot()).quitPreview?.phase).toBe(
+      'request-final-handoff'
+    )
   })
 
   it('execute-quit without a prior request-quit-preview is rejected', async () => {

@@ -160,6 +160,14 @@ export interface AgentInstanceViewModel {
   /** Epoch ms of the instance's latest known activity, for recency ordering. */
   lastActivityAt?: number
   /**
+   * Adapter-owned handoff facts that cannot be derived from runtime, Activity
+   * or worktree projections. Renderer consumers display these facts verbatim.
+   */
+  handoffDirtyFlags?: {
+    unsyncedTaskCount: number
+    manuallyMarked: boolean
+  }
+  /**
    * The applied configuration version this instance's active Run started
    * with (Run 配置快照). Applying newer configuration never rewrites it —
    * run configuration only takes effect on the next Run (US-91).
@@ -346,7 +354,19 @@ export interface HandoffViewModel {
 // Quit preview (#12)
 // ---------------------------------------------------------------------------
 
+export type HandoffDirtyReason =
+  | 'successful-round'
+  | 'worktree-changes'
+  | 'active-run'
+  | 'active-terminal'
+  | 'failed-run'
+  | 'interrupted-run'
+  | 'pending-confirmation'
+  | 'unsynced-task'
+  | 'manual'
+
 export interface QuitPreviewViewModel {
+  phase: 'resolve-active-work' | 'request-final-handoff'
   activeRuns: Array<{
     projectId: ProjectId
     agentInstanceId: AgentInstanceId
@@ -364,6 +384,7 @@ export interface QuitPreviewViewModel {
     agentInstanceId: AgentInstanceId
     agentName: string
     changeSummary: string
+    reasons: HandoffDirtyReason[]
   }>
 }
 

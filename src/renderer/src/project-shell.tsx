@@ -945,12 +945,21 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <CloseWindowNotice onClose={() => setShowCloseNotice(false)} />
       )}
 
-      {snapshot.quitPreview && (
+      {snapshot.quitPreview && !snapshot.pendingConfirmation && (
         <QuitPreviewDialog
           preview={snapshot.quitPreview}
-          onAction={(action) =>
-            void sendCommand({ kind: 'execute-quit', action })
-          }
+          onAction={(action) => {
+            void sendCommand({ kind: 'execute-quit', action }).then(
+              (result) => {
+                if (!result.ok && result.reason === 'stale-revision') {
+                  void sendCommand(
+                    { kind: 'request-quit-preview' },
+                    result.latestRevision
+                  )
+                }
+              }
+            )
+          }}
         />
       )}
     </div>
@@ -1492,7 +1501,11 @@ function QuitPreviewDialog({
 }: {
   preview: WorkbenchViewModel['quitPreview']
   onAction: (
-    action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
+    action:
+      | 'wait-for-runs'
+      | 'stop-runs'
+      | 'request-final-handoff'
+      | 'force-quit'
   ) => void
 }) {
   const quitRef = useRef<HTMLButtonElement>(null)
@@ -1519,9 +1532,21 @@ function QuitPreviewDialog({
           退出 Agent Squad HQ
         </h3>
 
+        {preview!.phase === 'resolve-active-work' ? (
+          <p className="text-sm text-neutral-400">
+            请先等待或停止活动 Run 与 Terminal，再生成最终 Handoff。
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-400">
+            活动执行已处理。请为 handoff-dirty Agent 生成最终 Handoff。
+          </p>
+        )}
+
         {preview!.activeRuns.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">活动 Run（{preview!.activeRuns.length}）</h4>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              活动 Run（{preview!.activeRuns.length}）
+            </h4>
             <ul className="space-y-1 text-xs text-neutral-500">
               {preview!.activeRuns.map((run) => (
                 <li key={run.runId}>
@@ -1534,7 +1559,9 @@ function QuitPreviewDialog({
 
         {preview!.activeTerminals.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">活动 Terminal（{preview!.activeTerminals.length}）</h4>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              活动 Terminal（{preview!.activeTerminals.length}）
+            </h4>
             <ul className="space-y-1 text-xs text-neutral-500">
               {preview!.activeTerminals.map((term) => (
                 <li key={term.agentInstanceId}>{term.agentName}</li>
@@ -1545,7 +1572,9 @@ function QuitPreviewDialog({
 
         {preview!.handoffDirtyAgents.length > 0 && (
           <div>
-            <h4 className="mb-1 text-sm text-neutral-400">有未提交改动的 Agent（{preview!.handoffDirtyAgents.length}）</h4>
+            <h4 className="mb-1 text-sm text-neutral-400">
+              需最终 Handoff 的 Agent（{preview!.handoffDirtyAgents.length}）
+            </h4>
             <ul className="space-y-1 text-xs text-neutral-500">
               {preview!.handoffDirtyAgents.map((agent) => (
                 <li key={agent.agentInstanceId}>
@@ -1560,7 +1589,7 @@ function QuitPreviewDialog({
           preview!.activeTerminals.length === 0 &&
           preview!.handoffDirtyAgents.length === 0 && (
             <p className="text-sm text-neutral-500">
-              没有活动 Run、Terminal 或未提交改动，可以安全退出。
+              没有活动 Run、Terminal 或待交接状态，可以安全退出。
             </p>
           )}
 
@@ -1570,20 +1599,25 @@ function QuitPreviewDialog({
             className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
             onClick={() => onAction('wait-for-runs')}
           >
-            等待 Run 完成
+            {preview!.phase === 'resolve-active-work'
+              ? '等待 Run 完成'
+              : '取消退出'}
           </button>
-          <button
-            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
-            onClick={() => onAction('stop-runs')}
-          >
-            停止 Run
-          </button>
-          <button
-            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
-            onClick={() => onAction('request-final-handoff')}
-          >
-            生成最终 Handoff
-          </button>
+          {preview!.phase === 'resolve-active-work' ? (
+            <button
+              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+              onClick={() => onAction('stop-runs')}
+            >
+              停止 Run
+            </button>
+          ) : (
+            <button
+              className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+              onClick={() => onAction('request-final-handoff')}
+            >
+              生成最终 Handoff
+            </button>
+          )}
           <button
             className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
             onClick={() => onAction('force-quit')}
