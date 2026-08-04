@@ -1,4 +1,4 @@
-import { id } from './contract'
+import { id, stripKnowledgeContainerState } from './contract'
 import type {
   AgentInstanceViewModel,
   AgentProviderId,
@@ -654,7 +654,7 @@ export function createKnowledgeBoundaryScenario(
   )
   if (!online) throw new Error('standard scenario online Knowledge is missing')
 
-  const { state: _state, cache: _cache, ...identityBoundary } = online
+  const identityBoundary = stripKnowledgeContainerState(online)
   scenario.knowledge.splice(1, 0, {
     ...identityBoundary,
     knowledgeResourceId: id(

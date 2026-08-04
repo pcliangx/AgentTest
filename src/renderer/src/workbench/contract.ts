@@ -147,7 +147,7 @@ export type KnowledgeSecurityAction =
  * carries display identities only: browser/Connector credentials, cookies,
  * profiles and raw authentication material never cross the WorkbenchPort.
  */
-interface KnowledgeContainerBaseViewModel {
+export interface KnowledgeContainerBaseViewModel {
   projectId: ProjectId
   knowledgeResourceId?: KnowledgeResourceId
   label?: string
@@ -187,6 +187,19 @@ export type KnowledgeContainerViewModel =
       state: Exclude<KnowledgeContainerState, 'cached'>
       cache?: never
     })
+
+/**
+ * Removes the discriminant payload before a projection changes state.
+ * Keeping this transition shape in one place prevents stale cache metadata
+ * from leaking into non-cached variants.
+ */
+export function stripKnowledgeContainerState({
+  state: _state,
+  cache: _cache,
+  ...base
+}: KnowledgeContainerViewModel): KnowledgeContainerBaseViewModel {
+  return base
+}
 
 export interface ProjectViewModel {
   projectId: ProjectId

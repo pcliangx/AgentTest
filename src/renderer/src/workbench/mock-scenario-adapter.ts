@@ -25,7 +25,7 @@ import type {
   WorkbenchPort,
   WorkbenchViewModel
 } from './contract'
-import { id } from './contract'
+import { id, stripKnowledgeContainerState } from './contract'
 import {
   applyLayoutOperation,
   type LayoutIdGenerator
@@ -3264,7 +3264,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
     if (index < 0) {
       throw new Error('Knowledge container is not part of the snapshot')
     }
-    const { state: _state, cache: _cache, ...base } = container
+    const base = stripKnowledgeContainerState(container)
     const transitioned: WorkbenchViewModel['knowledge'][number] = {
       ...base,
       state

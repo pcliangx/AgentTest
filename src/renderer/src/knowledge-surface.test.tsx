@@ -23,7 +23,7 @@ import type {
   WorkbenchCommand,
   WorkbenchViewModel
 } from './workbench/contract'
-import { id } from './workbench/contract'
+import { id, stripKnowledgeContainerState } from './workbench/contract'
 
 class RejectingKnowledgeAdapter extends MockScenarioAdapter {
   constructor(
@@ -217,7 +217,7 @@ function setPrimaryKnowledgeState(
   snapshot: WorkbenchViewModel,
   state: Exclude<KnowledgeContainerState, 'cached'>
 ): void {
-  const { state: _state, cache: _cache, ...container } = snapshot.knowledge[0]
+  const container = stripKnowledgeContainerState(snapshot.knowledge[0])
   snapshot.knowledge[0] = { ...container, state }
 }
 
@@ -225,7 +225,7 @@ function setPrimaryKnowledgeCache(
   snapshot: WorkbenchViewModel,
   cache?: KnowledgeCacheViewModel
 ): void {
-  const { state: _state, cache: _cache, ...container } = snapshot.knowledge[0]
+  const container = stripKnowledgeContainerState(snapshot.knowledge[0])
   snapshot.knowledge[0] = cache
     ? { ...container, state: 'cached', cache }
     : ({ ...container, state: 'cached' } as unknown as KnowledgeContainerViewModel)
@@ -235,12 +235,8 @@ function routeAttentionToSecondKnowledgeResource(
   scenario: WorkbenchViewModel
 ): void {
   const primary = scenario.knowledge[0]
-  const {
-    state: _state,
-    cache: _cache,
-    unsyncedChanges,
-    ...sharedBoundary
-  } = primary
+  const { unsyncedChanges, ...sharedBoundary } =
+    stripKnowledgeContainerState(primary)
   delete primary.unsyncedChanges
   const secondResourceId = id('know-002', 'KnowledgeResourceId')
   scenario.knowledge.push({

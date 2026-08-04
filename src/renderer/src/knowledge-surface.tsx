@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import type {
   CommandRejectionReason,
   CommandResult,
-  KnowledgeCacheViewModel,
   KnowledgeContainerViewModel,
   KnowledgeContainerState,
   KnowledgeResourceId,
@@ -84,15 +83,18 @@ function hasValidKnowledgeCache(
   if (container.state !== 'cached') return false
   // The port is a runtime boundary. Keep a defensive guard even though the
   // discriminated union rejects malformed cached projections at compile time.
-  const cache = (container as { cache?: KnowledgeCacheViewModel }).cache
-  return Boolean(
-    cache &&
-      cache.readOnly === true &&
-      typeof cache.version === 'string' &&
-      cache.version.trim().length > 0 &&
-      typeof cache.cachedAt === 'number' &&
-      Number.isFinite(cache.cachedAt) &&
-      Number.isFinite(new Date(cache.cachedAt).getTime())
+  const cache: unknown = container.cache
+  if (typeof cache !== 'object' || cache === null) return false
+  return (
+    'readOnly' in cache &&
+    cache.readOnly === true &&
+    'version' in cache &&
+    typeof cache.version === 'string' &&
+    cache.version.trim().length > 0 &&
+    'cachedAt' in cache &&
+    typeof cache.cachedAt === 'number' &&
+    Number.isFinite(cache.cachedAt) &&
+    Number.isFinite(new Date(cache.cachedAt).getTime())
   )
 }
 
