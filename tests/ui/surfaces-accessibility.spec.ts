@@ -226,6 +226,22 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
       ).toBeVisible()
     })
 
+    await recordedStep(evidence, 'B policy matrix renders comparison table', async () => {
+      const settingsNav = page.getByLabel('设置目录')
+      await settingsNav.getByRole('button', { name: '策略矩阵', exact: true }).click()
+      // The sales project has 2+ agents — a comparison table renders.
+      await expect(main().getByRole('table')).toBeVisible()
+    })
+
+    await recordedStep(evidence, 'C readiness summary renders per-agent status', async () => {
+      const settingsNav = page.getByLabel('设置目录')
+      await settingsNav.getByRole('button', { name: 'Readiness 摘要', exact: true }).click()
+      // Per-agent readiness labels (就绪 / 已阻止) are visible.
+      await expect(
+        main().getByText(/就绪|已阻止/).first()
+      ).toBeVisible()
+    })
+
     // ------------------------------------------------------------------
     // C — Palette (Dispatch Picker) dialog
     // ------------------------------------------------------------------
@@ -349,14 +365,17 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     await recordedStep(evidence, 'focus enter and return on Focus dialog', async () => {
       const panels = page.getByRole('group', { name: 'Agent 面板' })
       const firstPanel = panels.first()
-      // Click Focus button.
-      await firstPanel.getByRole('button', { name: 'Focus 此 Panel' }).click()
+      // Capture the trigger button for focus-return verification.
+      const focusBtn = firstPanel.getByRole('button', { name: 'Focus 此 Panel' })
+      await focusBtn.click()
       // Focus exit button should be focused on entry.
       const exitBtn = page.getByRole('button', { name: '退出 Focus' })
       await expect(exitBtn).toBeFocused()
       // Escape restores.
       await page.keyboard.press('Escape')
       await expect(exitBtn).toBeHidden()
+      // Focus returns to the trigger button (AC3 focus return).
+      await expect(focusBtn).toBeFocused()
     })
 
     await recordedStep(evidence, 'loading state is shown before snapshot', async () => {

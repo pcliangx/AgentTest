@@ -196,10 +196,11 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       await dialog.getByRole('button', { name: '确认派发' }).click()
       await expect(dialog).toBeHidden()
 
-      // The dispatch is visible in Activity.
+      // The dispatch creates a visible activity entry.
       await nav().getByRole('button', { name: '活动', exact: true }).click()
-      // Activity feed updated — at least the original entries are there.
-      await expect(main().getByText('活动')).toBeVisible()
+      await expect(
+        main().getByText('cx_review 收到派发：验证 Q2 数据口径')
+      ).toBeVisible()
     })
 
     // ==================================================================
