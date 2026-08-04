@@ -296,9 +296,10 @@ export interface DispatchViewModel {
    * Planner-bound lifecycle: a task dispatch starts ('active') or queues
    * ('queued') exactly as the confirmed plan projects; 'completed' only
    * ever comes from the explicit mock completion transition that also
-   * produces the Execution Result.
+   * produces the Execution Result; 'cancelled' means its queue item was
+   * cancelled before it ever started — no result will follow.
    */
-  status: 'active' | 'queued' | 'completed'
+  status: 'active' | 'queued' | 'completed' | 'cancelled'
   createdAt: number
 }
 

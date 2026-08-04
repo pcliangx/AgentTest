@@ -160,6 +160,11 @@ export function TasksSurface({
                     排队中
                   </span>
                 )}
+                {dispatch.status === 'cancelled' && (
+                  <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                    已取消
+                  </span>
+                )}
               </div>
               {result && (
                 <div className="mt-1 space-y-1">

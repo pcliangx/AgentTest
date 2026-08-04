@@ -1610,6 +1610,17 @@ export class MockScenarioAdapter implements WorkbenchPort {
               }
               agent.lastActivityAt = cancelledAt
             }
+            // A queued task dispatch dies with its QueueItem (#10): it can
+            // never start or produce a result, and must not dangle.
+            for (const dispatch of this.snapshot.dispatches) {
+              if (
+                dispatch.status === 'queued' &&
+                dispatch.agentInstanceId === item.agentInstanceId &&
+                dispatch.projectId === item.projectId
+              ) {
+                dispatch.status = 'cancelled'
+              }
+            }
             this.snapshot.activity = [
               {
                 activityId: this.freshId('ActivityId'),
@@ -1895,9 +1906,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
           reviewState: 'pending-review',
           createdAt: now
         })
-        // The explicit mock completion also frees the execution slot.
+        // The explicit mock completion also frees the execution slot —
+        // but queued work keeps the agent in the queued state, never ready.
         if (agent && isActiveStructuredRunState(agent.runtimeState)) {
-          agent.runtimeState = 'ready'
+          agent.runtimeState = agent.queueDepth > 0 ? 'queued' : 'ready'
           delete agent.activeRunId
           delete agent.activeRunConfigVersion
           agent.lastActivityAt = now
