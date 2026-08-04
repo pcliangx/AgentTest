@@ -969,7 +969,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     render(<ProjectShell port={port} />)
 
     await user.click(await screen.findByRole('button', { name: '任务' }))
-    expect(await screen.findByText(/任务 工作面尚未实现/)).toBeVisible()
+    expect(await screen.findByRole('region', { name: '任务' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Global Attention' }))
     const drawer = await screen.findByRole('complementary', {

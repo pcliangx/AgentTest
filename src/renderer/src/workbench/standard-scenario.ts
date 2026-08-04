@@ -283,6 +283,175 @@ export function createStandardScenario(
         priority: 'low'
       }
     ],
+    projectTasks: [
+      {
+        projectTaskId: id('ptask-001', 'ProjectTaskId'),
+        projectId,
+        title: '月度报表',
+        status: 'open',
+        dispatchIds: [id('disp-003', 'DispatchId')]
+      }
+    ],
+    externalTasks: [
+      {
+        // Feishu owns the business fields; this is only the projection (#10).
+        // Currently in conflict with a local pending write.
+        externalTaskId: id('ext-task-001', 'ExternalTaskId'),
+        projectId,
+        title: 'Q2 销售目标',
+        externalId: 'FS-T-1024',
+        version: 3,
+        syncState: 'conflict',
+        businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: [id('disp-001', 'DispatchId'), id('disp-002', 'DispatchId')]
+      },
+      {
+        // Offline projection: external writes fail and keep their proposal.
+        externalTaskId: id('ext-task-002', 'ExternalTaskId'),
+        projectId,
+        title: '客户回访清单',
+        externalId: 'FS-T-2048',
+        version: 1,
+        syncState: 'offline',
+        businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: []
+      },
+      {
+        // Synced projection with its own dispatch history (#10).
+        externalTaskId: id('ext-task-003', 'ExternalTaskId'),
+        projectId,
+        title: '渠道拓展计划',
+        externalId: 'FS-T-3072',
+        version: 2,
+        syncState: 'synced',
+        businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: [id('disp-004', 'DispatchId')]
+      },
+      {
+        // Synced projection without dispatches yet.
+        externalTaskId: id('ext-task-004', 'ExternalTaskId'),
+        projectId,
+        title: '门店巡检',
+        externalId: 'FS-T-4096',
+        version: 1,
+        syncState: 'synced',
+        businessStatus: 'open',
+        lifecycle: 'active',
+        dispatchIds: []
+      }
+    ],
+    dispatches: [
+      {
+        dispatchId: id('disp-001', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccData,
+        agentNameSnapshot: 'cc_data',
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-001', 'ExternalTaskId')
+        },
+        instruction: '分析 Q2 销售流水缺口',
+        status: 'completed',
+        createdAt: now - 1_500_000
+      },
+      {
+        dispatchId: id('disp-002', 'DispatchId'),
+        projectId,
+        agentInstanceId: cxReview,
+        agentNameSnapshot: 'cx_review',
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-001', 'ExternalTaskId')
+        },
+        instruction: '复核 Q2 目标口径',
+        status: 'completed',
+        createdAt: now - 1_200_000
+      },
+      {
+        dispatchId: id('disp-003', 'DispatchId'),
+        projectId,
+        agentInstanceId: kimiViz,
+        agentNameSnapshot: 'kimi_visual',
+        taskRef: {
+          kind: 'project-task',
+          projectTaskId: id('ptask-001', 'ProjectTaskId')
+        },
+        instruction: '生成本月报表初稿',
+        status: 'completed',
+        createdAt: now - 900_000
+      },
+      {
+        dispatchId: id('disp-004', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccEtl,
+        agentNameSnapshot: 'cc_etl',
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-003', 'ExternalTaskId')
+        },
+        instruction: '评估华东渠道缺口',
+        status: 'completed',
+        createdAt: now - 700_000
+      }
+    ],
+    executionResults: [
+      {
+        resultId: id('res-001', 'ExecutionResultId'),
+        dispatchId: id('disp-001', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccData,
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-001', 'ExternalTaskId')
+        },
+        summary: '找到 6 月缺失的 3 个数据源，建议补采后重跑',
+        reviewState: 'pending-review',
+        createdAt: now - 1_400_000
+      },
+      {
+        resultId: id('res-002', 'ExecutionResultId'),
+        dispatchId: id('disp-002', 'DispatchId'),
+        projectId,
+        agentInstanceId: cxReview,
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-001', 'ExternalTaskId')
+        },
+        summary: '口径与财务一致，可以归档',
+        reviewState: 'accepted',
+        createdAt: now - 1_100_000,
+        reviewedAt: now - 600_000
+      },
+      {
+        resultId: id('res-003', 'ExecutionResultId'),
+        dispatchId: id('disp-003', 'DispatchId'),
+        projectId,
+        agentInstanceId: kimiViz,
+        taskRef: {
+          kind: 'project-task',
+          projectTaskId: id('ptask-001', 'ProjectTaskId')
+        },
+        summary: '报表初稿已生成，缺华东区分页',
+        reviewState: 'pending-review',
+        createdAt: now - 800_000
+      },
+      {
+        resultId: id('res-004', 'ExecutionResultId'),
+        dispatchId: id('disp-004', 'DispatchId'),
+        projectId,
+        agentInstanceId: ccEtl,
+        taskRef: {
+          kind: 'external-task',
+          externalTaskId: id('ext-task-003', 'ExternalTaskId')
+        },
+        summary: '华东 3 城渠道覆盖不足，建议先试点苏州',
+        reviewState: 'pending-review',
+        createdAt: now - 650_000
+      }
+    ],
     permissionRequests: [
       {
         // Actionable request holding cc_data's active Run (#9): the Run stays

@@ -212,15 +212,19 @@ describe('Global Attention — deep links (#9)', () => {
   it.each([
     {
       title: '本地任务「月度报表」已完成',
-      retained: '已保留目标：Project Task ptask-001'
+      surface: '任务'
     },
     {
       title: '飞书任务「Q2 销售目标」存在版本冲突',
-      retained: '已保留目标：External Task ext-task-001'
+      surface: '任务'
+    },
+    {
+      title: '销售知识库有未同步的修改',
+      surface: 'Knowledge'
     }
   ])(
-    'keeps the undelivered target on an explicit placeholder page: $retained',
-    async ({ title, retained }) => {
+    'navigates to the target surface from attention: $title',
+    async ({ title, surface }) => {
       const { user } = await renderShell()
       const { drawer } = await openDrawer(user)
       await user.click(
@@ -229,8 +233,9 @@ describe('Global Attention — deep links (#9)', () => {
       expect(
         screen.queryByRole('complementary', { name: 'Global Attention' })
       ).toBeNull()
-      expect(await screen.findByText(/工作面尚未实现/)).toBeVisible()
-      expect(screen.getByText(new RegExp(retained))).toBeVisible()
+      // Tasks (#10) and Knowledge (#11) surfaces are now implemented — the
+      // deep link lands on real content instead of a placeholder page.
+      expect(await screen.findByRole('region', { name: surface })).toBeVisible()
     }
   )
 
@@ -689,18 +694,16 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     // While the deep link's first command result is still in flight, the
     // user navigates manually — this supersedes the whole deep link.
     await user.click(screen.getByRole('button', { name: '任务' }))
-    await screen.findByText(/任务 工作面尚未实现/)
-    await act(async () => {
-      port.releaseNavigation()
-      await Promise.resolve()
-    })
+    await screen.findByRole('region', { name: '任务' })
+    // Let the deferred result land, then observe.
+    await new Promise((resolve) => setTimeout(resolve, 60))
 
     // No stale continuation: no follow-up layout command, no notice, no
     // retained target — the page the user actually chose stays clean.
     expect(commands.some((c) => c.kind === 'change-layout')).toBe(false)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByText(/已保留目标/)).toBeNull()
-    expect(screen.getByText(/任务 工作面尚未实现/)).toBeVisible()
+    expect(screen.getByRole('region', { name: '任务' })).toBeVisible()
   })
 })
 

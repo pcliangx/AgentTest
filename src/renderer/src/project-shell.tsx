@@ -21,6 +21,7 @@ import type {
   ProjectId,
   ProjectSurface,
   ProjectViewModel,
+  TaskRef,
   WorkbenchCommand,
   WorkbenchCommandBody,
   WorkbenchPort,
@@ -35,6 +36,7 @@ import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
 import { KnowledgeSurface } from './knowledge-surface'
+import { TasksSurface } from './tasks-surface'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -276,6 +278,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // The unified Dispatch Picker lives at shell level so all Project surfaces
   // open the same dispatcher instead of owning divergent implementations.
   const [showPicker, setShowPicker] = useState(false)
+  // Task-linked dispatch context (#10): set when the picker opens from the
+  // Tasks surface so its confirmation creates task-linked Dispatch/Result
+  // records instead of a bare dispatch.
+  const [pickerTask, setPickerTask] = useState<{
+    ref: TaskRef
+    title: string
+  } | null>(null)
   // Global Attention Center (#9): one shell-level drawer over every surface.
   const [showAttention, setShowAttention] = useState(false)
   // Close-window notice: shows that background state is preserved (#12 AC3).
@@ -759,7 +768,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {project && (
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200 hover:bg-neutral-700"
-              onClick={() => setShowPicker(true)}
+              onClick={() => {
+                setPickerTask(null)
+                setShowPicker(true)
+              }}
             >
               派发给 Agent
             </button>
@@ -961,6 +973,26 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
+            {project.currentSurface === 'tasks' && (
+              <TasksSurface
+                key={project.projectId}
+                project={project}
+                snapshot={snapshot}
+                sendCommand={sendCommand}
+                highlightTaskRef={
+                  retainedDeepLink &&
+                  (retainedDeepLink.kind === 'project-task' ||
+                    retainedDeepLink.kind === 'external-task') &&
+                  retainedDeepLink.projectId === project.projectId
+                    ? retainedDeepLink
+                    : null
+                }
+                onDispatchTask={(taskRef, title) => {
+                  setPickerTask({ ref: taskRef, title })
+                  setShowPicker(true)
+                }}
+              />
+            )}
             {project.currentSurface === 'handoffs' && (
               <HandoffsSurface
                 snapshot={snapshot}
@@ -979,6 +1011,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               project.currentSurface !== 'agents' &&
               project.currentSurface !== 'knowledge' &&
               project.currentSurface !== 'settings' &&
+              project.currentSurface !== 'tasks' &&
               project.currentSurface !== 'handoffs' && (
                 <PlaceholderSurface
                   surface={project.currentSurface}
@@ -1007,7 +1040,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           snapshot={snapshot}
           planDispatch={planDispatch}
           sendCommand={sendCommand}
-          onClose={() => setShowPicker(false)}
+          taskContext={pickerTask}
+          onClose={() => {
+            setPickerTask(null)
+            setShowPicker(false)
+          }}
         />
       )}
 
