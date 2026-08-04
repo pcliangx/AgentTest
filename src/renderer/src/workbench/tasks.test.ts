@@ -1310,7 +1310,8 @@ describe('MockScenarioAdapter — dispatch queue lifecycle (#10 review)', () => 
     )!
     task.proposedChange = {
       summary: '标记为「已完成」',
-      failureReason: '连接离线，无法写入飞书'
+      failureReason: '连接离线，无法写入飞书',
+      action: 'complete'
     }
     // A legitimate independent reminder on the same task.
     scenario.attentionItems.push({
@@ -1357,7 +1358,8 @@ describe('MockScenarioAdapter — dispatch queue lifecycle (#10 review)', () => 
     )!
     task.proposedChange = {
       summary: '标记为「已完成」',
-      failureReason: '连接离线，无法写入飞书'
+      failureReason: '连接离线，无法写入飞书',
+      action: 'complete'
     }
     const adapter = new MockScenarioAdapter(scenario)
     const snap = await adapter.getSnapshot()
@@ -1382,5 +1384,167 @@ describe('MockScenarioAdapter — dispatch queue lifecycle (#10 review)', () => 
     )
     expect(entry).toBeDefined()
     expect(entry!.summary).toContain('已放弃')
+  })
+})
+
+describe('MockScenarioAdapter — proposal-aware conflict overwrite (#10 review)', () => {
+  async function conflictWithProposal(
+    proposal: { summary: string; failureReason: string; action: 'complete' | 'change-members' | 'change-permissions' | 'delete' | 'batch-delete' }
+  ): Promise<{ adapter: MockScenarioAdapter; snap: WorkbenchViewModel }> {
+    // Drive ext-task-002 into conflict with a specific proposal.
+    const scenario = createStandardScenario()
+    const task = scenario.externalTasks.find(
+      (candidate) => candidate.title === '客户回访清单'
+    )!
+    task.syncState = 'conflict'
+    task.proposedChange = proposal
+    const driven = new MockScenarioAdapter(scenario)
+    return { adapter: driven, snap: await driven.getSnapshot() }
+  }
+
+  it('applies a change-members proposal without marking the task completed', async () => {
+    const { adapter, snap } = await conflictWithProposal({
+      summary: '变更飞书任务成员',
+      failureReason: '连接离线，无法写入飞书',
+      action: 'change-members'
+    })
+    const task = externalTask(snap, 'ext-task-002')
+    expect(task.syncState).toBe('conflict')
+
+    await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'overwrite'
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    const confirmed = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    expect(confirmed.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    // The proposal was about members — never a business completion.
+    expect(updated.businessStatus).toBe('open')
+    expect(updated.syncState).toBe('synced')
+    expect(updated.proposedChange).toBeUndefined()
+    expect(updated.version).toBe(task.version + 1)
+    // The conflict attention settles.
+    expect(
+      after.attentionItems.some(
+        (item) =>
+          item.state === 'open' &&
+          item.kind === 'connection-conflict' &&
+          item.target.kind === 'external-task' &&
+          item.target.externalTaskId === task.externalTaskId
+      )
+    ).toBe(false)
+  })
+
+  it('applies a delete proposal as a tombstone with attention settlement', async () => {
+    const { adapter, snap } = await conflictWithProposal({
+      summary: '删除飞书任务',
+      failureReason: '连接离线，无法写入飞书',
+      action: 'delete'
+    })
+    const task = externalTask(snap, 'ext-task-002')
+
+    await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'overwrite'
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    const confirmed = await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    expect(confirmed.ok).toBe(true)
+
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    // The proposal was a deletion — the task tombstones, never completes.
+    expect(updated.lifecycle).toBe('deleted')
+    expect(updated.businessStatus).toBe('open')
+    expect(updated.syncState).toBe('synced')
+    expect(updated.proposedChange).toBeUndefined()
+  })
+
+  it('keeps completing the task only when the proposal was a completion', async () => {
+    const { adapter, snap } = await conflictWithProposal({
+      summary: '标记为「已完成」',
+      failureReason: '连接离线，无法写入飞书',
+      action: 'complete'
+    })
+    const task = externalTask(snap, 'ext-task-002')
+    await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'overwrite'
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    const after = await adapter.getSnapshot()
+    const updated = externalTask(after, 'ext-task-002')
+    expect(updated.businessStatus).toBe('completed')
+    expect(updated.lifecycle).toBe('active')
+    expect(updated.syncState).toBe('synced')
+  })
+
+  it('records the actual proposal action on every failure path', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const offline = externalTask(snap, 'ext-task-002')
+    // update-external-task-status failure records action 'complete'.
+    await adapter.dispatch({
+      kind: 'update-external-task-status',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: offline.externalTaskId,
+      status: 'completed',
+      expectedVersion: offline.version
+    })
+    let after = await adapter.getSnapshot()
+    expect(
+      externalTask(after, 'ext-task-002').proposedChange!.action
+    ).toBe('complete')
+
+    // An offline operation failure records the operation as the action.
+    const adapter2 = new MockScenarioAdapter()
+    const snap2 = await adapter2.getSnapshot()
+    await adapter2.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap2.revision,
+      projectId: PROJECT,
+      operation: 'change-members',
+      externalTaskIds: [id('ext-task-002', 'ExternalTaskId')]
+    })
+    after = await adapter2.getSnapshot()
+    const proposal = externalTask(after, 'ext-task-002').proposedChange!
+    expect(proposal.action).toBe('change-members')
   })
 })

@@ -350,8 +350,17 @@ export interface ExternalTaskViewModel {
    */
   lifecycle: 'active' | 'deleted'
   dispatchIds: DispatchId[]
-  /** A failed external write keeps the proposal and its reason (US-055). */
-  proposedChange?: { summary: string; failureReason: string }
+  /** A failed external write keeps the proposal and its reason (Issue #10). */
+  proposedChange?: {
+    summary: string
+    failureReason: string
+    /**
+     * What the failed write actually intended, so a later explicit
+     * conflict overwrite applies the REAL proposal instead of assuming a
+     * business completion (#10 review).
+     */
+    action: 'complete' | ExternalTaskOperation
+  }
 }
 
 export type ActivityKind =

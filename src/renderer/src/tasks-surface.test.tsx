@@ -225,7 +225,8 @@ describe('Tasks surface — review and acceptance (#10)', () => {
     )!
     conflicted.proposedChange = {
       summary: '标记为「已完成」',
-      failureReason: '连接离线，无法写入飞书'
+      failureReason: '连接离线，无法写入飞书',
+      action: 'complete'
     }
     const { user } = await renderShell(scenario)
     await gotoTasks(user)
@@ -265,7 +266,8 @@ describe('Tasks surface — review and acceptance (#10)', () => {
     )!
     conflicted.proposedChange = {
       summary: '标记为「已完成」',
-      failureReason: '连接离线，无法写入飞书'
+      failureReason: '连接离线，无法写入飞书',
+      action: 'complete'
     }
     const { user } = await renderShell(scenario)
     await gotoTasks(user)

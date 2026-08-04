@@ -15,6 +15,7 @@ import type {
   PermissionRequestId,
   ProjectId,
   TaskRef,
+  TaskSyncState,
   WorkbenchCommand,
   WorkbenchEvent,
   WorkbenchPort,
@@ -260,7 +261,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         targets: Array<{
           externalTaskId: ExternalTaskId
           expectedVersion: number
-          expectedSyncState: string
+          expectedSyncState: TaskSyncState
         }>
       }
     | {
@@ -666,23 +667,18 @@ export class MockScenarioAdapter implements WorkbenchPort {
           task.proposedChange = undefined
           this.snapshot.pendingConfirmation = undefined
           this.pendingAction = null
-          this.snapshot.activity = [
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'external-task-write',
-              summary: `飞书任务「${task.title}」已标记完成（v${task.version}）`
-            },
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'dangerous-action-confirmed',
-              summary: `已确认: ${action}（${target}）`
-            },
-            ...this.snapshot.activity
-          ]
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'dangerous-action-confirmed',
+            summary: `已确认: ${action}（${target}）`
+          })
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'external-task-write',
+            summary: `飞书任务「${task.title}」已标记完成（v${task.version}）`
+          })
           return null
         }
 
@@ -727,21 +723,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
             for (const task of affected) {
               task.version += 1
             }
-            this.snapshot.activity = [
-              {
-                activityId: this.freshId('ActivityId'),
-                projectId: activityProjectId,
-                timestamp: this.clock(),
-                kind: 'external-task-write',
-                summary: `${action}：${target}`
-              },
-              ...this.snapshot.activity
-            ]
+            this.prependActivity({
+              projectId: activityProjectId,
+              timestamp: this.clock(),
+              kind: 'external-task-write',
+              summary: `${action}：${target}`
+            })
           }
           this.snapshot.pendingConfirmation = undefined
           this.pendingAction = null
-          this.snapshot.activity.unshift({
-            activityId: this.freshId('ActivityId'),
+          this.prependActivity({
             projectId: activityProjectId,
             timestamp: this.clock(),
             kind: 'dangerous-action-confirmed',
@@ -767,32 +758,47 @@ export class MockScenarioAdapter implements WorkbenchPort {
               '冲突预览已过期：版本或状态已变化，请重新预览'
             )
           }
-          // Apply the frozen proposal atomically with the conflict's
-          // settlement: sync state, proposal and Attention move together.
-          task.businessStatus = 'completed'
-          task.version += 1
-          task.syncState = 'synced'
-          task.proposedChange = undefined
-          this.resolveTaskConflictAttention(task, postEvents)
+          // Apply the REAL frozen proposal — never a blanket business
+          // completion. A failed completion completes the task; a failed
+          // deletion tombstones it; failed member/permission writes apply
+          // as a version bump. Sync state, proposal and Attention always
+          // settle atomically with the application.
+          const proposalAction = task.proposedChange?.action ?? 'complete'
+          const proposalSummary = task.proposedChange?.summary ?? ''
+          if (proposalAction === 'complete') {
+            task.businessStatus = 'completed'
+            task.version += 1
+            task.syncState = 'synced'
+            task.proposedChange = undefined
+            this.resolveTaskConflictAttention(task, postEvents)
+          } else if (
+            proposalAction === 'delete' ||
+            proposalAction === 'batch-delete'
+          ) {
+            task.lifecycle = 'deleted'
+            task.syncState = 'synced'
+            task.proposedChange = undefined
+            this.resolveTaskAttention(task, postEvents)
+          } else {
+            task.version += 1
+            task.syncState = 'synced'
+            task.proposedChange = undefined
+            this.resolveTaskConflictAttention(task, postEvents)
+          }
           this.snapshot.pendingConfirmation = undefined
           this.pendingAction = null
-          this.snapshot.activity = [
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'external-task-write',
-              summary: `飞书任务「${task.title}」冲突已由本地拟议修改覆盖（v${task.version}）`
-            },
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'dangerous-action-confirmed',
-              summary: `已确认: ${action}（${target}）`
-            },
-            ...this.snapshot.activity
-          ]
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'dangerous-action-confirmed',
+            summary: `已确认: ${action}（${target}）`
+          })
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'external-task-write',
+            summary: `飞书任务「${task.title}」冲突已按本地拟议修改解决（${proposalSummary}，v${task.version}）`
+          })
           return null
         }
 
@@ -1930,17 +1936,13 @@ export class MockScenarioAdapter implements WorkbenchPort {
           agent.runtimeState = 'ready'
           this.promoteQueuedWork(dispatch.projectId)
         }
-        this.snapshot.activity = [
-          {
-            activityId: this.freshId('ActivityId'),
-            projectId: dispatch.projectId,
-            agentInstanceId: dispatch.agentInstanceId,
-            timestamp: now,
-            kind: 'run-completed',
-            summary: `${dispatch.agentNameSnapshot} 完成了任务派发：${dispatch.instruction}`
-          },
-          ...this.snapshot.activity
-        ]
+        this.prependActivity({
+          projectId: dispatch.projectId,
+          agentInstanceId: dispatch.agentInstanceId,
+          timestamp: now,
+          kind: 'run-completed',
+          summary: `${dispatch.agentNameSnapshot} 完成了任务派发：${dispatch.instruction}`
+        })
         return null
       }
       case 'review-execution-result': {
@@ -1961,37 +1963,31 @@ export class MockScenarioAdapter implements WorkbenchPort {
         const agent = this.snapshot.agents.find(
           (candidate) => candidate.agentInstanceId === result.agentInstanceId
         )
-        this.snapshot.activity = [
-          {
-            activityId: this.freshId('ActivityId'),
-            projectId: result.projectId,
-            agentInstanceId: result.agentInstanceId,
-            timestamp: this.clock(),
-            kind: 'execution-result-reviewed',
-            summary: `${agent?.name ?? result.agentInstanceId} 的执行结果${command.decision === 'accept' ? '已验收' : '已提出修订'}：${result.summary}`
-          },
-          ...this.snapshot.activity
-        ]
+        this.prependActivity({
+          projectId: result.projectId,
+          agentInstanceId: result.agentInstanceId,
+          timestamp: this.clock(),
+          kind: 'execution-result-reviewed',
+          summary: `${agent?.name ?? result.agentInstanceId} 的执行结果${command.decision === 'accept' ? '已验收' : '已提出修订'}：${result.summary}`
+        })
         return null
       }
       case 'update-external-task-status': {
         const busy = this.rejectIfConfirmationPending(command)
         if (busy) return busy
-        const task = this.snapshot.externalTasks.find(
-          (candidate) =>
-            candidate.externalTaskId === command.externalTaskId &&
-            candidate.projectId === command.projectId
+        const task = this.findExternalTask(
+          command.projectId,
+          command.externalTaskId
         )
-        if (!task || task.lifecycle !== 'active') {
+        if (!task) {
           return this.reject(command, 'invalid-target', 'External Task 不存在')
         }
-        if (command.expectedVersion !== task.version) {
-          return this.reject(
-            command,
-            'stale-revision',
-            '任务投影版本已过期，请刷新后重试'
-          )
-        }
+        const stale = this.rejectIfStaleExternalTaskVersion(
+          command,
+          task,
+          command.expectedVersion
+        )
+        if (stale) return stale
         // A conflict can never be silently overwritten by the normal flow
         // (ADR-0010): it needs the explicit version-bound resolution first.
         if (task.syncState === 'conflict') {
@@ -2003,25 +1999,22 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         // A failed external write is itself an authoritative outcome: the
         // business status stays untouched while the proposal and its reason
-        // are kept for the user (US-055).
+        // are kept for the user (Issue #10 acceptance criteria).
         if (task.syncState === 'offline' || task.syncState === 'unavailable') {
           task.proposedChange = {
             summary: '标记为「已完成」',
             failureReason:
               task.syncState === 'offline'
                 ? '连接离线，无法写入飞书'
-                : '飞书端不可用，无法写入'
+                : '飞书端不可用，无法写入',
+            action: 'complete'
           }
-          this.snapshot.activity = [
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'external-task-write-failed',
-              summary: `飞书任务「${task.title}」写入失败：${task.proposedChange.failureReason}`
-            },
-            ...this.snapshot.activity
-          ]
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'external-task-write-failed',
+            summary: `飞书任务「${task.title}」写入失败：${task.proposedChange.failureReason}`
+          })
           return null
         }
         // The explicit business write is a high-risk external action and
@@ -2041,21 +2034,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'resolve-external-task-conflict': {
-        const task = this.snapshot.externalTasks.find(
-          (candidate) =>
-            candidate.externalTaskId === command.externalTaskId &&
-            candidate.projectId === command.projectId
+        const task = this.findExternalTask(
+          command.projectId,
+          command.externalTaskId
         )
-        if (!task || task.lifecycle !== 'active') {
+        if (!task) {
           return this.reject(command, 'invalid-target', 'External Task 不存在')
         }
-        if (command.expectedVersion !== task.version) {
-          return this.reject(
-            command,
-            'stale-revision',
-            '任务投影版本已过期，请刷新后重试'
-          )
-        }
+        const stale = this.rejectIfStaleExternalTaskVersion(
+          command,
+          task,
+          command.expectedVersion
+        )
+        if (stale) return stale
         if (task.syncState !== 'conflict') {
           return this.reject(command, 'invalid-target', '任务当前没有冲突')
         }
@@ -2065,16 +2056,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
           task.proposedChange = undefined
           task.syncState = 'synced'
           this.resolveTaskConflictAttention(task, postEvents)
-          this.snapshot.activity = [
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: task.projectId,
-              timestamp: this.clock(),
-              kind: 'external-task-conflict-resolved',
-              summary: `已放弃飞书任务「${task.title}」的本地拟议修改`
-            },
-            ...this.snapshot.activity
-          ]
+          this.prependActivity({
+            projectId: task.projectId,
+            timestamp: this.clock(),
+            kind: 'external-task-conflict-resolved',
+            summary: `已放弃飞书任务「${task.title}」的本地拟议修改`
+          })
           return null
         }
         // Overwrite is its own high-risk action (ADR-0010) and goes through
@@ -2103,12 +2090,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         const tasks = []
         for (const externalTaskId of command.externalTaskIds) {
-          const task = this.snapshot.externalTasks.find(
-            (candidate) =>
-              candidate.externalTaskId === externalTaskId &&
-              candidate.projectId === command.projectId
-          )
-          if (!task || task.lifecycle !== 'active') {
+          const task = this.findExternalTask(command.projectId, externalTaskId)
+          if (!task) {
             return this.reject(command, 'invalid-target', 'External Task 不存在')
           }
           tasks.push(task)
@@ -2159,19 +2142,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
               failureReason:
                 task.syncState === 'offline'
                   ? '连接离线，无法写入飞书'
-                  : '飞书端不可用，无法写入'
+                  : '飞书端不可用，无法写入',
+              action: command.operation
             }
           }
-          this.snapshot.activity = [
-            {
-              activityId: this.freshId('ActivityId'),
-              projectId: tasks[0].projectId,
-              timestamp: this.clock(),
-              kind: 'external-task-write-failed',
-              summary: `${action} 写入失败：${unreachable[0].proposedChange!.failureReason}`
-            },
-            ...this.snapshot.activity
-          ]
+          this.prependActivity({
+            projectId: tasks[0].projectId,
+            timestamp: this.clock(),
+            kind: 'external-task-write-failed',
+            summary: `${action} 写入失败：${unreachable[0].proposedChange!.failureReason}`
+          })
           return null
         }
         // Freeze exactly what the user previews: every target's version and
@@ -2195,12 +2175,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         return null
       }
       case 'apply-external-task-update': {
-        const task = this.snapshot.externalTasks.find(
-          (candidate) =>
-            candidate.externalTaskId === command.externalTaskId &&
-            candidate.projectId === command.projectId
+        const task = this.findExternalTask(
+          command.projectId,
+          command.externalTaskId
         )
-        if (!task || task.lifecycle !== 'active') {
+        if (!task) {
           return this.reject(command, 'invalid-target', 'External Task 不存在')
         }
         if (command.version <= task.version) {
@@ -2211,7 +2190,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           )
         }
         // External updates only ever refresh the projection or create an
-        // Attention item — they never start an Agent (US-055).
+        // Attention item — they never start an Agent (spec story 55).
         task.version = command.version
         if (task.proposedChange) {
           task.syncState = 'conflict'
@@ -2403,6 +2382,52 @@ export class MockScenarioAdapter implements WorkbenchPort {
       })
     }
     this.recomputeAttentionCounts()
+  }
+
+  /** Resolves an ACTIVE External Task projection within the given Project. */
+  private findExternalTask(
+    projectId: ProjectId,
+    externalTaskId: ExternalTaskId
+  ): WorkbenchViewModel['externalTasks'][number] | undefined {
+    const task = this.snapshot.externalTasks.find(
+      (candidate) =>
+        candidate.externalTaskId === externalTaskId &&
+        candidate.projectId === projectId
+    )
+    return task?.lifecycle === 'active' ? task : undefined
+  }
+
+  /** Stale-version guard shared by every version-bound External Task write. */
+  private rejectIfStaleExternalTaskVersion(
+    command: WorkbenchCommand,
+    task: WorkbenchViewModel['externalTasks'][number],
+    expectedVersion: number
+  ): CommandResult | null {
+    if (task.version !== expectedVersion) {
+      return this.reject(
+        command,
+        'stale-revision',
+        '任务投影版本已过期，请刷新后重试'
+      )
+    }
+    return null
+  }
+
+  /** Prepends one audit entry with a fresh ID — the single activity shape. */
+  private prependActivity(entry: {
+    projectId?: ProjectId
+    agentInstanceId?: AgentInstanceId
+    timestamp: number
+    kind: Exclude<
+      WorkbenchViewModel['activity'][number]['kind'],
+      'queue-cancelled'
+    >
+    summary: string
+  }): void {
+    this.snapshot.activity = [
+      { activityId: this.freshId('ActivityId'), ...entry },
+      ...this.snapshot.activity
+    ]
   }
 
   /** Resolves a TaskRef to its task record within the given Project. */
