@@ -29,6 +29,7 @@ import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
+import { KnowledgeSurface } from './knowledge-surface'
 
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
@@ -76,11 +77,17 @@ function useWorkbench(port: WorkbenchPort) {
         expectedRevision: expectedRevision ?? revisionRef.current
       } as WorkbenchCommand
       const result = port.dispatch(command)
-      void result.then((r) => {
-        if (!r.ok && r.reason === 'stale-revision') {
-          void port.getSnapshot().then(applySnapshot)
+      void result.then(
+        (r) => {
+          if (!r.ok && r.reason === 'stale-revision') {
+            void port.getSnapshot().then(applySnapshot)
+          }
+        },
+        () => {
+          // The returned Promise remains authoritative for caller-owned UI;
+          // this observer only refreshes stale revisions.
         }
-      })
+      )
       return result
     },
     [port, applySnapshot]
@@ -412,6 +419,27 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         (c) => c.connectionId === project.primaryConnectionId
       )
     : undefined
+  const knowledgeTargetId =
+    project &&
+    retainedDeepLink?.kind === 'knowledge' &&
+    retainedDeepLink.projectId === project.projectId
+      ? retainedDeepLink.knowledgeResourceId
+      : undefined
+  const projectKnowledge = project
+    ? snapshot.knowledge.filter(
+        (candidate) => candidate.projectId === project.projectId
+      )
+    : []
+  const targetedKnowledgeContainer = projectKnowledge.find(
+    (candidate) => candidate.knowledgeResourceId === knowledgeTargetId
+  )
+  const missingKnowledgeTargetId =
+    knowledgeTargetId && !targetedKnowledgeContainer
+      ? knowledgeTargetId
+      : undefined
+  const knowledgeContainer = knowledgeTargetId
+    ? targetedKnowledgeContainer
+    : projectKnowledge[0]
   const projectActivity = project
     ? snapshot.activity
         .filter((a) => a.projectId === project.projectId)
@@ -569,21 +597,28 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     const intentToken = registerAbsoluteRetainedTargetIntent()
     const attempt = supersedeActiveDeepLinkIntent()
     const result = navigateAway()
-    void result.then((outcome) => {
-      settleRetainedTargetIntent(
-        intentToken,
-        outcome.ok
-          ? {
-              kind: 'accepted-target',
-              target: null
-            }
-          : { kind: 'rejected' }
-      )
-      if (outcome.ok && deepLinkAttemptRef.current === attempt) {
-        setDeepLinkNotice(null)
-        onAcceptedCurrent?.()
+    void result.then(
+      (outcome) => {
+        settleRetainedTargetIntent(
+          intentToken,
+          outcome.ok
+            ? {
+                kind: 'accepted-target',
+                target: null
+              }
+            : { kind: 'rejected' }
+        )
+        if (outcome.ok && deepLinkAttemptRef.current === attempt) {
+          setDeepLinkNotice(null)
+          onAcceptedCurrent?.()
+        }
+      },
+      () => {
+        // Transport failure is surfaced by the caller; the target ledger must
+        // still release this failed navigation barrier.
+        settleRetainedTargetIntent(intentToken, { kind: 'rejected' })
       }
-    })
+    )
     return result
   }
 
@@ -845,9 +880,42 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
+            {project.currentSurface === 'knowledge' && (
+              <KnowledgeSurface
+                key={`${project.projectId}:${
+                  missingKnowledgeTargetId ??
+                  knowledgeContainer?.knowledgeResourceId ??
+                  'empty'
+                }`}
+                project={project}
+                container={knowledgeContainer}
+                missingTargetId={missingKnowledgeTargetId}
+                onOpenConnections={() =>
+                  sendExplicitNavigation(() =>
+                    navigateGlobal('connections')
+                  )
+                }
+                onRecoverConnection={(knowledgeResourceId) =>
+                  sendCommand({
+                    kind: 'recover-knowledge-connection',
+                    projectId: project.projectId,
+                    knowledgeResourceId
+                  })
+                }
+                onPreviewSecurityEvent={(knowledgeResourceId, action) =>
+                  sendCommand({
+                    kind: 'preview-knowledge-security-event',
+                    projectId: project.projectId,
+                    knowledgeResourceId,
+                    action
+                  })
+                }
+              />
+            )}
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
               project.currentSurface !== 'agents' &&
+              project.currentSurface !== 'knowledge' &&
               project.currentSurface !== 'settings' && (
                 <PlaceholderSurface
                   surface={project.currentSurface}

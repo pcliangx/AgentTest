@@ -219,10 +219,6 @@ describe('Global Attention — deep links (#9)', () => {
       retained: '已保留目标：External Task ext-task-001'
     },
     {
-      title: '销售知识库有未同步的修改',
-      retained: '已保留目标：Knowledge know-001'
-    },
-    {
       title: '交接包不完整：缺少验证结果',
       retained: '已保留目标：Handoff handoff-001'
     }

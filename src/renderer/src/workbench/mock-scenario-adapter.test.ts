@@ -1251,6 +1251,78 @@ describe('MockScenarioAdapter — confirmation flow', () => {
     expect(updated.primaryConnectionId).toBeUndefined()
   })
 
+  it('moves affected Knowledge to unconnected without making the Project unavailable', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const knowledge = snap.knowledge.find(
+      (candidate) => candidate.connectionId === snap.global.connections[0].connectionId
+    )!
+    const resourceId = knowledge.knowledgeResourceId
+
+    await adapter.dispatch(
+      requestDeletion(
+        cmdId(1),
+        snap.revision,
+        snap.global.connections[0].connectionId
+      )
+    )
+    const preview = await adapter.getSnapshot()
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: preview.revision,
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    const after = await adapter.getSnapshot()
+    const updatedKnowledge = after.knowledge.find(
+      (candidate) => candidate.knowledgeResourceId === resourceId
+    )!
+    const project = after.projects.find(
+      (candidate) => candidate.projectId === knowledge.projectId
+    )!
+    expect(updatedKnowledge.state).toBe('unconnected')
+    expect(updatedKnowledge.connectionId).toBeUndefined()
+    expect(updatedKnowledge.resourceBindingId).toBeUndefined()
+    expect(updatedKnowledge.humanBrowserIdentity).toBeUndefined()
+    expect(updatedKnowledge.connectorIdentity).toBeUndefined()
+    expect(project.lifecycle).toBe('active')
+    expect(project.rootAvailability).toBe('available')
+  })
+
+  it('includes a Knowledge-only connection reference in deletion impact and cleanup', async () => {
+    const scenario = createStandardScenario()
+    const project = scenario.projects[0]
+    const connectionId = scenario.knowledge[0].connectionId!
+    project.primaryConnectionId = undefined
+    project.resourceBindings = []
+    const applied = scenario.appliedConfigurations.find(
+      (candidate) =>
+        candidate.owner.kind === 'project' &&
+        candidate.owner.projectId === project.projectId
+    )!
+    applied.values['integrations.primaryConnectionId'] = null
+    applied.values['integrations.resourceScope'] = ''
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+
+    await adapter.dispatch(
+      requestDeletion(cmdId(1), snap.revision, connectionId)
+    )
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation!.impact).toContain(project.name)
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: preview.revision,
+      confirmationId: preview.pendingConfirmation!.confirmationId
+    })
+
+    expect((await adapter.getSnapshot()).knowledge[0].state).toBe(
+      'unconnected'
+    )
+  })
+
   it('produces unique ActivityIds across multiple confirmations', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()

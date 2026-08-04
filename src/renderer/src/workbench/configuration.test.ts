@@ -789,6 +789,14 @@ describe('apply-configuration — primary connection', () => {
     expect(after.pendingConfirmation).toBeUndefined()
     expect(after.projects[0].primaryConnectionId).toBe(CONN_PRODUCT)
     expect(after.projects[0].resourceBindings).toEqual([])
+    const knowledge = after.knowledge.find(
+      (candidate) => candidate.projectId === projectOwner.projectId
+    )!
+    expect(knowledge.state).toBe('unavailable')
+    expect(knowledge.connectionId).toBeUndefined()
+    expect(knowledge.resourceBindingId).toBeUndefined()
+    expect(knowledge.humanBrowserIdentity).toBeUndefined()
+    expect(knowledge.connectorIdentity).toBeUndefined()
     expect(
       appliedOf(after, projectOwner).values['integrations.primaryConnectionId']
     ).toBe(CONN_PRODUCT)
@@ -1054,6 +1062,12 @@ describe('apply-configuration — primary connection', () => {
 
     const after = await adapter.getSnapshot()
     expect(after.projects[0].resourceBindings).toEqual([trustedBinding])
+    const knowledge = after.knowledge.find(
+      (candidate) => candidate.projectId === projectOwner.projectId
+    )!
+    expect(knowledge.state).toBe('unavailable')
+    expect(knowledge.connectionId).toBe(CONN_PRIMARY)
+    expect(knowledge.resourceBindingId).toBeUndefined()
     expect(
       appliedOf(after, projectOwner).values['integrations.resourceScope']
     ).toBe('销售团队任务清单')
