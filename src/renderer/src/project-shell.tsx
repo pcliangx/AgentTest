@@ -11,6 +11,9 @@ import type {
   ConnectionId,
   GlobalSurface,
   HandoffId,
+  HandoffImportState,
+  HandoffValidationViewModel,
+  HandoffViewModel,
   LayoutTargetEffect,
   PanelId,
   PermissionDecision,
@@ -1209,18 +1212,18 @@ function GlobalSettingsSurface() {
 // Handoffs surface (#12 AC1)
 // ---------------------------------------------------------------------------
 
-const COMPLETENESS_LABEL: Record<string, string> = {
+const COMPLETENESS_LABEL: Record<'complete' | 'incomplete', string> = {
   complete: '完整',
   incomplete: '不完整'
 }
 
-const VALIDATION_LABEL: Record<string, string> = {
+const VALIDATION_LABEL: Record<HandoffValidationViewModel['status'], string> = {
   pass: '验证通过',
   fail: '验证失败',
   pending: '验证待完成'
 }
 
-const IMPORT_STATE_LABEL: Record<string, string> = {
+const IMPORT_STATE_LABEL: Record<HandoffImportState, string> = {
   'not-imported': '未导入',
   'inspect-only': '已检查',
   'execute-confirmed': '已确认执行'
@@ -1392,7 +1395,10 @@ function HandoffsSurface({
   )
 }
 
-const PROVENANCE_ORIGIN_LABEL: Record<string, string> = {
+const PROVENANCE_ORIGIN_LABEL: Record<
+  HandoffViewModel['provenance']['origin'],
+  string
+> = {
   local: '本地 · ',
   imported: '导入 · ',
   'cross-project': '跨项目 · ',
@@ -1514,7 +1520,12 @@ function QuitPreviewDialog({
   }, [])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onAction('wait-for-runs')
+      if (e.key === 'Escape') {
+        // In both phases, Escape dismisses the quit dialog. The contract
+        // has no dedicated "cancel-quit" action — `wait-for-runs` is the
+        // canonical dismiss path (clears quitPreview, preserves state).
+        onAction('wait-for-runs')
+      }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)

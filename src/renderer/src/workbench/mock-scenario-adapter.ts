@@ -1787,35 +1787,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
           // Passive import: creates a NEW canonical Handoff record in the
           // target Project with the chosen target agent and imported
           // provenance. No Run, no runtime state change (US-090).
-          const importedId = this.freshId('HandoffId')
-          this.snapshot.handoffs.push({
-            handoffId: importedId,
-            projectId: command.projectId,
-            source: { ...handoff.source },
-            target: {
-              agentInstanceId: targetAgent.agentInstanceId,
-              agentName: targetAgent.name
-            },
-            provenance: {
-              origin: 'imported',
-              createdAt: this.clock(),
-              ...(handoff.provenance.origin === 'cross-project'
-                ? { sourceProjectName: handoff.provenance.sourceProjectName }
-                : {})
-            },
-            goal: handoff.goal,
-            summary: handoff.summary,
-            baseCommit: handoff.baseCommit,
-            changeSummary: handoff.changeSummary,
-            artifacts: handoff.artifacts.map((a) => ({ ...a })),
-            validation: { ...handoff.validation },
-            completeness: handoff.completeness,
-            ...(handoff.incompleteReason
-              ? { incompleteReason: handoff.incompleteReason }
-              : {}),
-            recoveryActions: [...handoff.recoveryActions],
-            importState: 'inspect-only'
-          })
+          const imported = this.cloneHandoffForTarget(
+            handoff,
+            targetAgent,
+            'inspect-only'
+          )
+          this.snapshot.handoffs.push(imported)
           this.snapshot.activity = [
             {
               activityId: this.freshId('ActivityId'),
@@ -1830,7 +1807,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           postEvents.push({
             kind: 'handoff-imported',
             correlationId: command.commandId,
-            handoffId: importedId,
+            handoffId: imported.handoffId,
             mode: 'inspect-only'
           })
           return null
@@ -1989,16 +1966,15 @@ export class MockScenarioAdapter implements WorkbenchPort {
                 stoppedPreview.handoffDirtyAgents.push(previewed)
                 continue
               }
+              // Merge structured reasons (deduplicated), then rebuild the
+              // human-readable summary from the reason set — never split
+              // a display string to reconstruct data.
               stopped.reasons = [
                 ...new Set([...previewed.reasons, ...stopped.reasons])
               ]
-              stopped.changeSummary = [
-                ...new Set(
-                  `${previewed.changeSummary}；${stopped.changeSummary}`
-                    .split('；')
-                    .filter(Boolean)
-                )
-              ].join('；')
+              stopped.changeSummary = stopped.reasons
+                .map((reason) => this.handoffDirtyReasonLabel(reason))
+                .join('；')
             }
             this.snapshot.quitPreview = stoppedPreview
             // The stopped-state preview is published by this accepted command.
@@ -2127,6 +2103,29 @@ export class MockScenarioAdapter implements WorkbenchPort {
     ).length
   }
 
+  /** Human-readable label for a single HandoffDirtyReason code. */
+  private static readonly DIRTY_REASON_LABELS: Record<HandoffDirtyReason, string> = {
+    'successful-round': '最近一次 Handoff 后有成功回合',
+    'worktree-changes': '有文件变更',
+    'active-run': '活动 Run',
+    'active-terminal': '活动 Terminal',
+    'failed-run': '运行失败',
+    'interrupted-run': '运行中断',
+    'pending-confirmation': '存在待确认操作',
+    'unsynced-task': '有未同步任务',
+    manual: '已人工标记为需要 Handoff'
+  }
+
+  /** Runtime states that carry unsaved context needing handoff on quit. */
+  private static readonly DIRTY_RUNTIME_STATES: readonly AgentRuntimeState[] = [
+    'failed',
+    'interrupted'
+  ]
+
+  private handoffDirtyReasonLabel(reason: HandoffDirtyReason): string {
+    return MockScenarioAdapter.DIRTY_REASON_LABELS[reason]
+  }
+
   /**
    * Builds the quit preview from authoritative Agent states and changes.
    * Active Runs are agents with an active structured Run state; active
@@ -2176,10 +2175,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         )
         .map((entry) => entry.agentInstanceId!)
     )
-    const dirtyRuntimeStates: AgentRuntimeState[] = [
-      'failed',
-      'interrupted'
-    ]
+    const dirtyRuntimeStates = MockScenarioAdapter.DIRTY_RUNTIME_STATES
     const pendingAgentInstanceIds = new Set<AgentInstanceId>()
     if (this.pendingAction?.type === 'handoff-execute') {
       pendingAgentInstanceIds.add(this.pendingAction.targetAgentInstanceId)
@@ -2365,7 +2361,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
     forced = false
   ): void {
     const now = this.clock()
-    const dirtyRuntimeStates: AgentRuntimeState[] = ['failed', 'interrupted']
+    const dirtyRuntimeStates = MockScenarioAdapter.DIRTY_RUNTIME_STATES
     for (const dirtyEntry of dirtyEntries) {
       const agent = this.snapshot.agents.find(
         (candidate) =>
@@ -2768,35 +2764,12 @@ export class MockScenarioAdapter implements WorkbenchPort {
     correlationId: CommandId
   ): void {
     // Create the target-side canonical Handoff record.
-    const importedId = this.freshId('HandoffId')
-    this.snapshot.handoffs.push({
-      handoffId: importedId,
-      projectId: targetAgent.projectId,
-      source: { ...sourceHandoff.source },
-      target: {
-        agentInstanceId: targetAgent.agentInstanceId,
-        agentName: targetAgent.name
-      },
-      provenance: {
-        origin: 'imported',
-        createdAt: this.clock(),
-        ...(sourceHandoff.provenance.origin === 'cross-project'
-          ? { sourceProjectName: sourceHandoff.provenance.sourceProjectName }
-          : {})
-      },
-      goal: sourceHandoff.goal,
-      summary: sourceHandoff.summary,
-      baseCommit: sourceHandoff.baseCommit,
-      changeSummary: sourceHandoff.changeSummary,
-      artifacts: sourceHandoff.artifacts.map((a) => ({ ...a })),
-      validation: { ...sourceHandoff.validation },
-      completeness: sourceHandoff.completeness,
-      ...(sourceHandoff.incompleteReason
-        ? { incompleteReason: sourceHandoff.incompleteReason }
-        : {}),
-      recoveryActions: [...sourceHandoff.recoveryActions],
-      importState: 'execute-confirmed'
-    })
+    const imported = this.cloneHandoffForTarget(
+      sourceHandoff,
+      targetAgent,
+      'execute-confirmed'
+    )
+    this.snapshot.handoffs.push(imported)
     this.snapshot.pendingConfirmation = undefined
     this.pendingAction = null
     // Produce exactly one mock execution via the same dispatchability/planner
@@ -2821,9 +2794,49 @@ export class MockScenarioAdapter implements WorkbenchPort {
     postEvents.push({
       kind: 'handoff-imported',
       correlationId,
-      handoffId: importedId,
+      handoffId: imported.handoffId,
       mode: 'execute-confirmed'
     })
+  }
+
+  /**
+   * Clones a source Handoff into a target-side canonical record with a new
+   * stable HandoffId, imported provenance, the chosen target agent and the
+   * specified import state. Used by both inspect-only and execute-confirmed.
+   */
+  private cloneHandoffForTarget(
+    source: WorkbenchViewModel['handoffs'][number],
+    targetAgent: WorkbenchViewModel['agents'][number],
+    importState: 'inspect-only' | 'execute-confirmed'
+  ): WorkbenchViewModel['handoffs'][number] {
+    return {
+      handoffId: this.freshId('HandoffId'),
+      projectId: targetAgent.projectId,
+      source: { ...source.source },
+      target: {
+        agentInstanceId: targetAgent.agentInstanceId,
+        agentName: targetAgent.name
+      },
+      provenance: {
+        origin: 'imported',
+        createdAt: this.clock(),
+        ...(source.provenance.origin === 'cross-project'
+          ? { sourceProjectName: source.provenance.sourceProjectName }
+          : {})
+      },
+      goal: source.goal,
+      summary: source.summary,
+      baseCommit: source.baseCommit,
+      changeSummary: source.changeSummary,
+      artifacts: source.artifacts.map((a) => ({ ...a })),
+      validation: { ...source.validation },
+      completeness: source.completeness,
+      ...(source.incompleteReason
+        ? { incompleteReason: source.incompleteReason }
+        : {}),
+      recoveryActions: [...source.recoveryActions],
+      importState
+    }
   }
 
   /**
