@@ -661,3 +661,95 @@ describe('Global Attention — stale and in-surface supersession (#9 review)', (
     expect(screen.getByRole('tab', { name: /cc_sql/ })).toBeVisible()
   })
 })
+
+describe('Global Attention — retained target lifetime (#9 review)', () => {
+  async function deepLinkToRun(user: User) {
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_etl 的上一次 Run 被中断'
+      })
+    )
+    return screen.findByText(/已保留目标：Run run-etl-001/)
+  }
+
+  it('keeps the retained Run target across Focus and split operations', async () => {
+    const { user } = await renderShell()
+    expect(await deepLinkToRun(user)).toBeVisible()
+
+    const panels = () => screen.getAllByRole('group', { name: 'Agent 面板' })
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+    )
+    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    // Neither operation switched the target: the Run context and the tab
+    // both stay.
+    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
+    expect(screen.getByRole('tab', { name: /cc_etl/ })).toBeVisible()
+  })
+
+  it('clears the retained Run target only after a successful target switch', async () => {
+    const { user } = await renderShell()
+    expect(await deepLinkToRun(user)).toBeVisible()
+
+    // Opening a different Agent abandons the retained Run context.
+    const directory = screen.getByRole('region', { name: 'Agent 目录' })
+    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
+    await screen.findByRole('tab', { name: /cc_sql/ })
+    expect(screen.queryByText(/已保留目标：Run run-etl-001/)).toBeNull()
+
+    // Re-link, then closing the owning tab clears it too.
+    expect(await deepLinkToRun(user)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '关闭标签 cc_etl' }))
+    expect(screen.queryByText(/已保留目标：Run run-etl-001/)).toBeNull()
+  })
+
+  it('keeps the retained target when the layout command is rejected', async () => {
+    class StaleSplitPort extends MockScenarioAdapter {
+      private rejected = false
+      override async dispatch(
+        command: WorkbenchCommand
+      ): Promise<CommandResult> {
+        if (
+          command.kind === 'change-layout' &&
+          command.operation.kind === 'split-panel' &&
+          !this.rejected
+        ) {
+          this.rejected = true
+          const latest = await this.getSnapshot()
+          return {
+            ok: false,
+            commandId: command.commandId,
+            reason: 'stale-revision',
+            latestRevision: latest.revision,
+            message: 'revision 已过期'
+          }
+        }
+        return super.dispatch(command)
+      }
+    }
+    const user = userEvent.setup()
+    render(<ProjectShell port={new StaleSplitPort()} />)
+    await screen.findByRole('button', { name: '概览' })
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：cc_etl 的上一次 Run 被中断'
+      })
+    )
+    await screen.findByText(/已保留目标：Run run-etl-001/)
+
+    const panels = () => screen.getAllByRole('group', { name: 'Agent 面板' })
+    await user.click(
+      within(panels()[0]).getByRole('button', { name: '向右分割' })
+    )
+    // The command was rejected — the delivered target must not be cleared
+    // early.
+    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
+  })
+})

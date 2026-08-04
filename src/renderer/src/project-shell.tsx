@@ -399,13 +399,37 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // switches: they supersede an in-flight deep link and clear its
   // leftovers. The deep link's own layout commands deliberately use the
   // raw sendCommand above so they never invalidate themselves.
+  // Agent Directory, Tab and Panel gestures supersede an in-flight deep
+  // link continuation, so every user-driven change-layout bumps the
+  // generation token up front. Clearing a DELIVERED retained Run target is
+  // a separate concern: Focus/split/resize are not target switches and
+  // rejected commands change nothing, so the banner is cleared only after
+  // a command that genuinely switches the target succeeds. The deep link's
+  // own layout commands deliberately use the raw sendCommand above so they
+  // never invalidate themselves.
   const sendLayoutCommand: SendCommand = (body, expectedRevision) => {
-    if (body.kind === 'change-layout') {
-      deepLinkAttemptRef.current += 1
-      setRetainedDeepLink(null)
-      setDeepLinkNotice(null)
+    if (body.kind !== 'change-layout') {
+      return sendCommand(body, expectedRevision)
     }
-    return sendCommand(body, expectedRevision)
+    deepLinkAttemptRef.current += 1
+    setDeepLinkNotice(null)
+    const result = sendCommand(body, expectedRevision)
+    void result.then((outcome) => {
+      if (!outcome.ok) return
+      const { operation } = body
+      setRetainedDeepLink((current) => {
+        if (current?.kind !== 'run') return current
+        const switchesTarget =
+          ((operation.kind === 'open-tab' ||
+            operation.kind === 'activate-tab' ||
+            operation.kind === 'open-tab-in-new-panel') &&
+            operation.agentInstanceId !== current.agentInstanceId) ||
+          (operation.kind === 'close-tab' &&
+            operation.agentInstanceId === current.agentInstanceId)
+        return switchesTarget ? null : current
+      })
+    })
+    return result
   }
 
   return (
