@@ -27,7 +27,9 @@ async function gotoAgentsSurface(port?: WorkbenchPort) {
   render(<ProjectShell port={port ?? new MockScenarioAdapter()} />)
   await screen.findByRole('button', { name: '概览' })
   await user.click(screen.getByRole('button', { name: 'Agent' }))
-  await screen.findByRole('region', { name: 'Agent 目录' })
+  // #66: the Agent 目录 pane is visible on every Project surface, so it can
+  // no longer be the navigation sync point — wait for the workspace itself.
+  await screen.findByRole('region', { name: 'Agent 工作区' })
   return { user }
 }
 

@@ -1086,13 +1086,20 @@ describe('Settings C — Readiness 摘要 (#14)', () => {
     await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
 
     // kimi_docs is unavailable on a ready provider — the one blocked card.
-    expect(screen.getByText('kimi_docs')).toBeInTheDocument()
+    // (#66: scoped to main — the context pane also lists kimi_docs.)
+    expect(
+      within(screen.getByRole('main')).getByText('kimi_docs')
+    ).toBeInTheDocument()
     expect(screen.getByText('已阻止')).toBeInTheDocument()
     expect(
       screen.getByText('Agent 当前不可用，修复 Provider 后可恢复')
     ).toBeInTheDocument()
     // Every other instance of the project is ready for its next Run.
-    expect(screen.getAllByText('就绪')).toHaveLength(7)
+    // (#66: scoped to main — the context pane's state-filter <option>
+    // also renders a standalone 就绪.)
+    expect(
+      within(screen.getByRole('main')).getAllByText('就绪')
+    ).toHaveLength(7)
     // The view marks itself read-only and stays honest about Phase 1.
     expect(screen.getByText(/只读摘要/)).toBeInTheDocument()
     expect(

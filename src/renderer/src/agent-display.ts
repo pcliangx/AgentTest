@@ -17,6 +17,22 @@ export function providerLabel(providerId: AgentProviderId): string {
   return PROVIDER_LABEL[providerId] ?? providerId
 }
 
+/**
+ * Two-letter Provider abbreviations for the context-pane avatar (#66),
+ * mirroring the frozen prototype's `providerCode` (CC / CX / KM). Unknown
+ * providers fall back to their first two letters, uppercased.
+ */
+export const PROVIDER_CODE: Record<string, string> = {
+  'claude-code': 'CC',
+  codex: 'CX',
+  'kimi-code': 'KM',
+  'gemini-cli': 'GM'
+}
+
+export function providerCode(providerId: AgentProviderId): string {
+  return PROVIDER_CODE[providerId] ?? providerId.slice(0, 2).toUpperCase()
+}
+
 export const RUNTIME_STATE_LABEL: Record<AgentRuntimeState, string> = {
   ready: '就绪',
   queued: '排队中',
