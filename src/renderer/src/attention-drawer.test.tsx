@@ -211,14 +211,6 @@ describe('Global Attention — deep links (#9)', () => {
 
   it.each([
     {
-      title: '本地任务「月度报表」已完成',
-      retained: '已保留目标：Project Task ptask-001'
-    },
-    {
-      title: '飞书任务「Q2 销售目标」存在版本冲突',
-      retained: '已保留目标：External Task ext-task-001'
-    },
-    {
       title: '销售知识库有未同步的修改',
       retained: '已保留目标：Knowledge know-001'
     }
@@ -683,7 +675,7 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     // While the deep link's first command result is still in flight, the
     // user navigates manually — this supersedes the whole deep link.
     await user.click(screen.getByRole('button', { name: '任务' }))
-    await screen.findByText(/任务 工作面尚未实现/)
+    await screen.findByRole('region', { name: '任务' })
     // Let the deferred result land, then observe.
     await new Promise((resolve) => setTimeout(resolve, 60))
 
@@ -692,7 +684,7 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     expect(commands.some((c) => c.kind === 'change-layout')).toBe(false)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByText(/已保留目标/)).toBeNull()
-    expect(screen.getByText(/任务 工作面尚未实现/)).toBeVisible()
+    expect(screen.getByRole('region', { name: '任务' })).toBeVisible()
   })
 })
 
