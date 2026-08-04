@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type {
   AttentionTarget,
   CommandResult,
@@ -73,6 +73,21 @@ export function TasksSurface({
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(
     new Set()
   )
+
+  // Tombstoned tasks lose their checkboxes, so prune them from the
+  // selection: a settled batch must never leave ghost selections behind
+  // that can only error on the next click.
+  useEffect(() => {
+    const activeIds = new Set(
+      snapshot.externalTasks
+        .filter((candidate) => candidate.lifecycle === 'active')
+        .map((candidate) => candidate.externalTaskId as string)
+    )
+    setSelectedForBatch((current) => {
+      const pruned = new Set([...current].filter((id) => activeIds.has(id)))
+      return pruned.size === current.size ? current : pruned
+    })
+  }, [snapshot.externalTasks])
 
   const act = async (body: WorkbenchCommandBody): Promise<CommandResult> => {
     const result = await sendCommand(body)

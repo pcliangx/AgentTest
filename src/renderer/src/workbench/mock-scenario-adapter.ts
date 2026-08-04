@@ -5,6 +5,7 @@ import type {
   CommandRejectionReason,
   CommandResult,
   ConnectionId,
+  DispatchId,
   DispatchPlanRequest,
   DispatchPlanResult,
   ExternalTaskId,
@@ -715,10 +716,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
           if (operation === 'delete' || operation === 'batch-delete') {
             // External deletion is a tombstone: the projection stays so
             // local Dispatch/Result audit and Attention deep links remain
-            // reachable, while related Attention resolves atomically.
+            // reachable, while ALL reminders targeting it settle atomically.
             for (const task of affected) {
               task.lifecycle = 'deleted'
-              this.resolveTaskConflictAttention(task, postEvents)
+              this.resolveTaskAttention(task, postEvents)
             }
           } else {
             // change-members / change-permissions: mock records the external
@@ -1610,15 +1611,14 @@ export class MockScenarioAdapter implements WorkbenchPort {
               }
               agent.lastActivityAt = cancelledAt
             }
-            // A queued task dispatch dies with its QueueItem (#10): it can
-            // never start or produce a result, and must not dangle.
-            for (const dispatch of this.snapshot.dispatches) {
-              if (
-                dispatch.status === 'queued' &&
-                dispatch.agentInstanceId === item.agentInstanceId &&
-                dispatch.projectId === item.projectId
-              ) {
-                dispatch.status = 'cancelled'
+            // The linked task Dispatch dies with exactly this QueueItem
+            // (#10): sibling dispatches keep their own queue entries.
+            if (item.dispatchId) {
+              const linked = this.snapshot.dispatches.find(
+                (dispatch) => dispatch.dispatchId === item.dispatchId
+              )
+              if (linked?.status === 'queued') {
+                linked.status = 'cancelled'
               }
             }
             this.snapshot.activity = [
@@ -1805,6 +1805,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!task) {
           return this.reject(command, 'invalid-target', '任务不存在')
         }
+        // A tombstoned projection is read-only audit — it never produces new
+        // Runs or Results.
+        if (
+          command.taskRef.kind === 'external-task' &&
+          'lifecycle' in task &&
+          task.lifecycle !== 'active'
+        ) {
+          return this.reject(
+            command,
+            'invalid-target',
+            'External Task 已删除，不能派发'
+          )
+        }
         if (
           command.instruction === undefined ||
           command.instruction.trim().length === 0
@@ -1844,7 +1857,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
           })
           task.dispatchIds.push(dispatchId)
           if (entry.outcome === 'queue') {
-            this.enqueue(agent)
+            this.enqueue(agent, 'normal', dispatchId)
           } else {
             this.startMockRun(agent, command.projectId)
           }
@@ -1906,14 +1919,16 @@ export class MockScenarioAdapter implements WorkbenchPort {
           reviewState: 'pending-review',
           createdAt: now
         })
-        // The explicit mock completion also frees the execution slot —
-        // but queued work keeps the agent in the queued state, never ready.
+        // The explicit mock completion frees the execution slot and
+        // atomically promotes queued work in project position order while
+        // capacity allows (ADR-0009): dequeue it, start its mock Run and
+        // flip its precisely linked Dispatch to active.
         if (agent && isActiveStructuredRunState(agent.runtimeState)) {
-          agent.runtimeState = agent.queueDepth > 0 ? 'queued' : 'ready'
           delete agent.activeRunId
           delete agent.activeRunConfigVersion
           agent.lastActivityAt = now
-          this.recomputeActiveRunCounts()
+          agent.runtimeState = 'ready'
+          this.promoteQueuedWork(dispatch.projectId)
         }
         this.snapshot.activity = [
           {
@@ -2055,7 +2070,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
               activityId: this.freshId('ActivityId'),
               projectId: task.projectId,
               timestamp: this.clock(),
-              kind: 'external-task-write',
+              kind: 'external-task-conflict-resolved',
               summary: `已放弃飞书任务「${task.title}」的本地拟议修改`
             },
             ...this.snapshot.activity
@@ -2333,9 +2348,10 @@ export class MockScenarioAdapter implements WorkbenchPort {
   }
 
   /**
-   * Atomically resolves every open Attention item targeting this External
-   * Task and recomputes the projections. Used by conflict settlement and
-   * tombstoning, so no Attention ever deep-links into a stale context.
+   * Atomically resolves this task's open CONNECTION-CONFLICT Attention
+   * items and recomputes the projections. Used by conflict settlement
+   * only — independent reminders (completed, failed, …) are separate
+   * facts and must survive.
    */
   private resolveTaskConflictAttention(
     task: WorkbenchViewModel['externalTasks'][number],
@@ -2344,7 +2360,37 @@ export class MockScenarioAdapter implements WorkbenchPort {
     for (const item of this.snapshot.attentionItems) {
       if (
         item.state !== 'open' ||
+        item.kind !== 'connection-conflict' ||
         item.target.kind !== 'external-task' ||
+        item.target.projectId !== task.projectId ||
+        item.target.externalTaskId !== task.externalTaskId
+      ) {
+        continue
+      }
+      item.state = 'resolved'
+      postEvents.push({
+        kind: 'attention-changed',
+        attentionItemId: item.attentionItemId,
+        state: 'resolved'
+      })
+    }
+    this.recomputeAttentionCounts()
+  }
+
+  /**
+   * Resolves EVERY open Attention item targeting this task, regardless of
+   * kind. Used only by tombstoning, where the projection's deletion would
+   * otherwise strand every reminder on a read-only target.
+   */
+  private resolveTaskAttention(
+    task: WorkbenchViewModel['externalTasks'][number],
+    postEvents: PostDispatchEvent[]
+  ): void {
+    for (const item of this.snapshot.attentionItems) {
+      if (
+        item.state !== 'open' ||
+        item.target.kind !== 'external-task' ||
+        item.target.projectId !== task.projectId ||
         item.target.externalTaskId !== task.externalTaskId
       ) {
         continue
@@ -2524,7 +2570,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
    */
   private enqueue(
     agent: WorkbenchViewModel['agents'][number],
-    priority: 'low' | 'normal' | 'high' = 'normal'
+    priority: 'low' | 'normal' | 'high' = 'normal',
+    dispatchId?: DispatchId
   ): void {
     const project = this.snapshot.projects.find(
       (p) => p.projectId === agent.projectId
@@ -2554,12 +2601,71 @@ export class MockScenarioAdapter implements WorkbenchPort {
       projectId: agent.projectId,
       agentInstanceId: agent.agentInstanceId,
       position,
-      priority
+      priority,
+      ...(dispatchId ? { dispatchId } : {})
     })
     project.queuedRunCount = this.snapshot.queue.filter(
       (q) => q.projectId === project.projectId
     ).length
     this.snapshot.global.concurrency.queuedGlobal = this.snapshot.queue.length
+  }
+
+  /**
+   * Promotes queued work in project position order while per-instance,
+   * Project and Global capacity allow: each promotable item is dequeued,
+   * its mock Run starts, and its precisely linked Dispatch flips to
+   * active. Busy agents' items stay queued behind.
+   */
+  private promoteQueuedWork(projectId: ProjectId): void {
+    const limits = this.snapshot.global.concurrency
+    const activeProject = (): number =>
+      this.snapshot.agents.filter(
+        (agent) =>
+          agent.projectId === projectId &&
+          isActiveStructuredRunState(agent.runtimeState)
+      ).length
+    const activeGlobal = (): number =>
+      this.snapshot.agents.filter((agent) =>
+        isActiveStructuredRunState(agent.runtimeState)
+      ).length
+    const ordered = this.snapshot.queue
+      .filter((item) => item.projectId === projectId)
+      .sort((a, b) => a.position - b.position)
+    for (const item of ordered) {
+      if (
+        activeProject() >= limits.projectLimit ||
+        activeGlobal() >= limits.globalLimit
+      ) {
+        break
+      }
+      const agent = this.snapshot.agents.find(
+        (candidate) => candidate.agentInstanceId === item.agentInstanceId
+      )
+      if (
+        !agent ||
+        isActiveStructuredRunState(agent.runtimeState) ||
+        isTerminalExecutionSlotOccupied(agent.terminalState)
+      ) {
+        continue
+      }
+      this.snapshot.queue = this.snapshot.queue.filter(
+        (candidate) => candidate.queueItemId !== item.queueItemId
+      )
+      agent.queueDepth = this.snapshot.queue.filter(
+        (candidate) => candidate.agentInstanceId === agent.agentInstanceId
+      ).length
+      this.startMockRun(agent, projectId)
+      if (item.dispatchId) {
+        const promoted = this.snapshot.dispatches.find(
+          (candidate) => candidate.dispatchId === item.dispatchId
+        )
+        if (promoted?.status === 'queued') {
+          promoted.status = 'active'
+        }
+      }
+    }
+    this.renumberProjectQueue(projectId)
+    this.recomputeQueueCounts()
   }
 
   /** A single shared confirmation slot cannot be replaced while pending. */

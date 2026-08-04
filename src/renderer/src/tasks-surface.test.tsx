@@ -461,3 +461,32 @@ describe('Tasks surface — attention deep links (#10)', () => {
     expect(taskCard('月度报表')).toHaveTextContent('深链目标')
   })
 })
+
+describe('Tasks surface — batch selection hygiene (#10 review)', () => {
+  it('prunes the selection after a successful batch delete', async () => {
+    const { user } = await renderShell()
+    await gotoTasks(user)
+    await user.click(screen.getByLabelText('选择 渠道拓展计划'))
+    await user.click(screen.getByLabelText('选择 门店巡检'))
+    await user.click(
+      screen.getByRole('button', { name: '批量删除（2）' })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: '批量删除飞书任务'
+    })
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
+    // Both cards tombstone and the batch control resets instead of keeping
+    // ghost selections that can only error.
+    await waitFor(() => {
+      expect(taskCard('渠道拓展计划')).toHaveTextContent('已删除')
+      expect(taskCard('门店巡检')).toHaveTextContent('已删除')
+    })
+    const batchButton = screen.getByRole('button', {
+      name: /批量删除（0）/
+    })
+    expect(batchButton).toBeDisabled()
+    // No stale rejection alert from clicking a ghost batch.
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})

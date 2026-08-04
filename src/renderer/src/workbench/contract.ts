@@ -199,6 +199,12 @@ export interface QueueItemViewModel {
   agentInstanceId: AgentInstanceId
   position: number
   priority: 'low' | 'normal' | 'high'
+  /**
+   * Exact link to the task Dispatch this queue item belongs to (#10). Only
+   * task-linked queue entries carry it; cancelling the item cancels exactly
+   * this Dispatch — never a sibling's.
+   */
+  dispatchId?: DispatchId
 }
 
 export interface PermissionRequestViewModel {
@@ -362,6 +368,7 @@ export type ActivityKind =
   | 'execution-result-reviewed'
   | 'external-task-write'
   | 'external-task-write-failed'
+  | 'external-task-conflict-resolved'
   | 'queue-cancelled'
   | 'dangerous-action-confirmed'
 

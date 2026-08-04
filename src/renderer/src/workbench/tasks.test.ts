@@ -1092,25 +1092,24 @@ describe('MockScenarioAdapter — tasks scenario data (#10)', () => {
   })
 })
 
-describe('MockScenarioAdapter — dispatch queue lifecycle (#10 self-review)', () => {
-  it('restores the queued state when a completed agent still has queued work', async () => {
-    const adapter = new MockScenarioAdapter()
+describe('MockScenarioAdapter — dispatch queue lifecycle (#10 review)', () => {
+  it('promotes the next queued dispatch atomically when the slot frees', async () => {
+    // Isolate the queue so cx_review's item is the only one waiting.
+    const scenario = createStandardScenario()
+    scenario.queue = []
+    const forecast = scenario.agents.find((a) => a.name === 'cx_forecast')!
+    forecast.runtimeState = 'ready'
+    forecast.queueDepth = 0
+    scenario.projects[0].queuedRunCount = 0
+    scenario.global.concurrency.queuedGlobal = 0
+    const adapter = new MockScenarioAdapter(scenario)
     const snap = await adapter.getSnapshot()
     const cxReview = snap.agents.find((a) => a.name === 'cx_review')!
-    await adapter.dispatch({
-      kind: 'dispatch-task',
-      commandId: cmdId(1),
-      expectedRevision: snap.revision,
-      projectId: PROJECT,
-      taskRef: LOCAL_TASK,
-      targets: [cxReview.agentInstanceId],
-      instruction: '先跑这个'
-    })
-    let after = await adapter.getSnapshot()
-    expect(after.agents.find((a) => a.name === 'cx_review')!.runtimeState).toBe(
-      'running'
+    // Active task dispatch first, then a queued one on the same agent.
+    await adapter.dispatch(
+      dispatchTask(cmdId(1), snap.revision, LOCAL_TASK, [cxReview.agentInstanceId], '先跑这个')
     )
-    // More work queues behind the active run.
+    let after = await adapter.getSnapshot()
     await adapter.dispatch({
       kind: 'send-agent-instruction',
       commandId: cmdId(2),
@@ -1121,26 +1120,49 @@ describe('MockScenarioAdapter — dispatch queue lifecycle (#10 self-review)', (
       mode: 'start-or-queue'
     })
     after = await adapter.getSnapshot()
-    expect(
-      after.agents.find((a) => a.name === 'cx_review')!.queueDepth
-    ).toBe(1)
-    const dispatch = after.dispatches[after.dispatches.length - 1]
-    await adapter.dispatch({
+    const agentBefore = after.agents.find((a) => a.name === 'cx_review')!
+    expect(agentBefore.runtimeState).toBe('running')
+    expect(agentBefore.queueDepth).toBe(1)
+    const activeDispatch = after.dispatches.find(
+      (dispatch) => dispatch.status === 'active'
+    )!
+
+    const completed = await adapter.dispatch({
       kind: 'complete-dispatch',
       commandId: cmdId(3),
       expectedRevision: after.revision,
       projectId: PROJECT,
-      dispatchId: dispatch.dispatchId
+      dispatchId: activeDispatch.dispatchId
     })
+    expect(completed.ok).toBe(true)
+
     after = await adapter.getSnapshot()
-    const finished = after.agents.find((a) => a.name === 'cx_review')!
-    // The freed slot still holds queued work — it must not read as ready.
-    expect(finished.runtimeState).toBe('queued')
-    expect(finished.queueDepth).toBe(1)
+    const agent = after.agents.find((a) => a.name === 'cx_review')!
+    // The freed slot dequeues and starts the next item atomically.
+    expect(agent.runtimeState).toBe('running')
+    expect(agent.queueDepth).toBe(0)
+    expect(
+      after.queue.some(
+        (item) => item.agentInstanceId === agent.agentInstanceId
+      )
+    ).toBe(false)
+    expect(
+      after.dispatches.some(
+        (dispatch) => dispatch.status === 'queued'
+      )
+    ).toBe(false)
   })
 
-  it('marks a task dispatch cancelled when its queue item is cancelled', async () => {
-    const adapter = new MockScenarioAdapter()
+  it('promotes a queued task dispatch to active and lets it complete with a result', async () => {
+    // Isolate the queue so kimi_visual's task dispatch is next in line.
+    const scenario = createStandardScenario()
+    scenario.queue = []
+    const forecast = scenario.agents.find((a) => a.name === 'cx_forecast')!
+    forecast.runtimeState = 'ready'
+    forecast.queueDepth = 0
+    scenario.projects[0].queuedRunCount = 0
+    scenario.global.concurrency.queuedGlobal = 0
+    const adapter = new MockScenarioAdapter(scenario)
     const snap = await adapter.getSnapshot()
     const targets = ['cx_review', 'kimi_visual'].map(
       (name) => snap.agents.find((a) => a.name === name)!.agentInstanceId
@@ -1149,34 +1171,216 @@ describe('MockScenarioAdapter — dispatch queue lifecycle (#10 self-review)', (
       dispatchTask(cmdId(1), snap.revision, SYNCED_TASK, targets, '并行')
     )
     let after = await adapter.getSnapshot()
-    const queuedDispatch = after.dispatches.find(
+    const queued = after.dispatches.find(
       (dispatch) => dispatch.status === 'queued'
     )!
-    const queueItem = after.queue.find(
-      (item) => item.agentInstanceId === queuedDispatch.agentInstanceId
+    const active = after.dispatches.find(
+      (dispatch) =>
+        dispatch.status === 'active' &&
+        dispatch.agentNameSnapshot === 'cx_review'
     )!
     await adapter.dispatch({
-      kind: 'manage-queue',
+      kind: 'complete-dispatch',
       commandId: cmdId(2),
       expectedRevision: after.revision,
       projectId: PROJECT,
-      queueItemId: queueItem.queueItemId,
-      operation: 'cancel'
+      dispatchId: active.dispatchId
     })
     after = await adapter.getSnapshot()
-    const cancelled = after.dispatches.find(
-      (dispatch) => dispatch.dispatchId === queuedDispatch.dispatchId
+    // kimi_visual's queued dispatch is promoted to active with its run.
+    const promoted = after.dispatches.find(
+      (dispatch) => dispatch.dispatchId === queued.dispatchId
     )!
-    expect(cancelled.status).toBe('cancelled')
-    // A cancelled dispatch can never produce a result.
-    const completed = await adapter.dispatch({
+    expect(promoted.status).toBe('active')
+    const kimi = after.agents.find((a) => a.name === 'kimi_visual')!
+    expect(kimi.runtimeState).toBe('running')
+    expect(kimi.queueDepth).toBe(0)
+
+    // And now it can complete with its own independent result.
+    const done = await adapter.dispatch({
       kind: 'complete-dispatch',
       commandId: cmdId(3),
       expectedRevision: after.revision,
       projectId: PROJECT,
-      dispatchId: cancelled.dispatchId
+      dispatchId: promoted.dispatchId
     })
-    expect(completed.ok).toBe(false)
-    if (!completed.ok) expect(completed.reason).toBe('invalid-target')
+    expect(done.ok).toBe(true)
+    after = await adapter.getSnapshot()
+    expect(
+      after.executionResults.some(
+        (candidate) => candidate.dispatchId === promoted.dispatchId
+      )
+    ).toBe(true)
+  })
+
+  it('cancels only the dispatch precisely linked to the cancelled queue item', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const kimi = snap.agents.find((a) => a.name === 'kimi_visual')!
+    const cxReview = snap.agents.find((a) => a.name === 'cx_review')!
+    // Two queued task dispatches on the same agent behind full capacity.
+    await adapter.dispatch(
+      dispatchTask(cmdId(1), snap.revision, SYNCED_TASK, [
+        cxReview.agentInstanceId,
+        kimi.agentInstanceId
+      ], '第一批')
+    )
+    let after = await adapter.getSnapshot()
+    await adapter.dispatch(
+      dispatchTask(cmdId(2), after.revision, SYNCED_TASK, [kimi.agentInstanceId], '第二批')
+    )
+    after = await adapter.getSnapshot()
+    const queuedDispatches = after.dispatches.filter(
+      (dispatch) => dispatch.status === 'queued'
+    )
+    expect(queuedDispatches).toHaveLength(2)
+    const kimiItems = after.queue.filter(
+      (item) => item.agentInstanceId === kimi.agentInstanceId
+    )
+    expect(kimiItems).toHaveLength(2)
+
+    // Cancel only the first queue item: only its own dispatch dies.
+    await adapter.dispatch({
+      kind: 'manage-queue',
+      commandId: cmdId(3),
+      expectedRevision: after.revision,
+      projectId: PROJECT,
+      queueItemId: kimiItems[0].queueItemId,
+      operation: 'cancel'
+    })
+    after = await adapter.getSnapshot()
+    const statuses = after.dispatches
+      .filter((dispatch) =>
+        queuedDispatches.some(
+          (queued) => queued.dispatchId === dispatch.dispatchId
+        )
+      )
+      .map((dispatch) => dispatch.status)
+    expect(statuses.sort()).toEqual(['cancelled', 'queued'])
+    expect(
+      after.queue.filter(
+        (item) => item.agentInstanceId === kimi.agentInstanceId
+      )
+    ).toHaveLength(1)
+  })
+
+  it('rejects dispatch-task to a tombstoned External Task', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Tombstone ext-task-003 first.
+    await adapter.dispatch({
+      kind: 'request-external-task-operation',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      operation: 'delete',
+      externalTaskIds: [id('ext-task-003', 'ExternalTaskId')]
+    })
+    const pending = (await adapter.getSnapshot()).pendingConfirmation!
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: (await adapter.getSnapshot()).revision,
+      confirmationId: pending.confirmationId
+    })
+    snap = await adapter.getSnapshot()
+    expect(externalTask(snap, 'ext-task-003').lifecycle).toBe('deleted')
+
+    const result = await adapter.dispatch(
+      dispatchTask(cmdId(3), snap.revision, SYNCED_TASK, [
+        snap.agents.find((a) => a.name === 'cx_review')!.agentInstanceId
+      ])
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('invalid-target')
+    // Nothing was created for the tombstone.
+    expect(
+      (await adapter.getSnapshot()).dispatches.filter(
+        (dispatch) =>
+          dispatch.taskRef.kind === 'external-task' &&
+          dispatch.taskRef.externalTaskId === id('ext-task-003', 'ExternalTaskId')
+      )
+    ).toHaveLength(1) // only the seeded history disp-004
+  })
+
+  it('settles only the conflict attention when resolving a conflict', async () => {
+    const scenario = createStandardScenario()
+    const task = scenario.externalTasks.find(
+      (candidate) => candidate.title === 'Q2 销售目标'
+    )!
+    task.proposedChange = {
+      summary: '标记为「已完成」',
+      failureReason: '连接离线，无法写入飞书'
+    }
+    // A legitimate independent reminder on the same task.
+    scenario.attentionItems.push({
+      attentionItemId: id('att-ext-completed', 'AttentionItemId'),
+      kind: 'completed',
+      target: {
+        kind: 'external-task',
+        projectId: PROJECT,
+        externalTaskId: id('ext-task-001', 'ExternalTaskId')
+      },
+      state: 'open',
+      title: '飞书任务「Q2 销售目标」的派发已完成'
+    })
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'discard'
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    // The conflict reminder resolves; the independent completed one stays.
+    expect(
+      after.attentionItems.find(
+        (item) => item.attentionItemId === id('att-006', 'AttentionItemId')
+      )!.state
+    ).toBe('resolved')
+    expect(
+      after.attentionItems.find(
+        (item) => item.attentionItemId === id('att-ext-completed', 'AttentionItemId')
+      )!.state
+    ).toBe('open')
+  })
+
+  it('records a discarded proposal as a local resolution, not an external write', async () => {
+    const scenario = createStandardScenario()
+    const task = scenario.externalTasks.find(
+      (candidate) => candidate.title === 'Q2 销售目标'
+    )!
+    task.proposedChange = {
+      summary: '标记为「已完成」',
+      failureReason: '连接离线，无法写入飞书'
+    }
+    const adapter = new MockScenarioAdapter(scenario)
+    const snap = await adapter.getSnapshot()
+    const writesBefore = snap.activity.filter(
+      (entry) => entry.kind === 'external-task-write'
+    ).length
+    await adapter.dispatch({
+      kind: 'resolve-external-task-conflict',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: PROJECT,
+      externalTaskId: task.externalTaskId,
+      expectedVersion: task.version,
+      resolution: 'discard'
+    })
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.filter((entry) => entry.kind === 'external-task-write')
+    ).toHaveLength(writesBefore)
+    const entry = after.activity.find(
+      (candidate) => candidate.kind === 'external-task-conflict-resolved'
+    )
+    expect(entry).toBeDefined()
+    expect(entry!.summary).toContain('已放弃')
   })
 })
