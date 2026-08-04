@@ -278,7 +278,8 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       await expect(main().getByText('放弃拟议修改')).toBeVisible()
 
       // Click "放弃拟议修改" (discard proposed change) to resolve the conflict.
-      await main().getByText('放弃拟议修改').click()
+      const discardBtn = main().getByRole('button', { name: '放弃拟议修改' })
+      await discardBtn.click()
 
       // After resolving, the conflict state should change — the
       // proposed-change panel (including the resolve buttons) disappears.
@@ -364,15 +365,50 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: stale-revision rejection triggers snapshot refresh', async () => {
-      // Use the smoke test hook to dispatch a command with a deliberately
-      // stale revision. This triggers the 'stale-revision' rejection path,
+      // Dispatch a command with a deliberately stale revision through the
+      // WorkbenchPort found in React's fiber tree — no test-only global on
+      // window is needed. This triggers the 'stale-revision' rejection path,
       // which the useWorkbench hook handles by refreshing the snapshot.
       const staleResult = await page.evaluate(async () => {
-        const adapter = (globalThis as unknown as { __smokeAdapter: {
+        // Locate the adapter (WorkbenchPort) by traversing React's internal
+        // fiber tree from the root container element.
+        // page.evaluate runs in the browser, but tsconfig.node.json omits
+        // DOM libs — access DOM through globalThis with inline types.
+        interface DOMElement { [key: string]: unknown }
+        interface DOMDocument {
+          getElementById(id: string): DOMElement | null
+        }
+        const doc = (globalThis as unknown as { document: DOMDocument }).document
+        const root = doc.getElementById('root')
+        if (!root) throw new Error('React root element not found')
+
+        const containerKey = Object.keys(root).find(
+          (k) => k.startsWith('__reactContainer$')
+        )
+        if (!containerKey) throw new Error('React fiber container key not found')
+
+        type Fiber = {
+          child: Fiber | null
+          sibling: Fiber | null
+          memoizedProps: { port?: unknown } | null
+          current?: Fiber
+        }
+        // React 19: __reactContainer$ may hold a FiberRootNode (.current) or a Fiber.
+        const rootFiber = (root[containerKey] as Fiber).current ?? (root[containerKey] as Fiber)
+
+        function findPort(fiber: Fiber | null, visited = new Set<Fiber>()): unknown | null {
+          if (!fiber || visited.has(fiber)) return null
+          visited.add(fiber)
+          if (fiber.memoizedProps?.port) return fiber.memoizedProps.port
+          return findPort(fiber.child, visited) ?? findPort(fiber.sibling, visited)
+        }
+
+        const adapter = findPort(rootFiber) as {
           dispatch: (cmd: Record<string, unknown>) => Promise<{ ok: boolean; reason?: string }>
           getSnapshot: () => Promise<{ revision: number }>
-        } }).__smokeAdapter
-        if (!adapter) throw new Error('smoke adapter not exposed')
+        } | null
+        if (!adapter) throw new Error('WorkbenchPort not found in React fiber tree')
+
         const snap = await adapter.getSnapshot()
         // Dispatch a navigate command with revision 0 (always stale after
         // any prior operation has bumped the revision).

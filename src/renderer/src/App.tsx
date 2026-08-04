@@ -26,10 +26,6 @@ if (scenario === UI_SMOKE_SCENARIO.id) {
   console.info(
     `Agent Squad HQ renderer scenario: ${UI_SMOKE_SCENARIO.id}@${UI_SMOKE_SCENARIO.clock}`
   )
-  // Expose the adapter so Playwright specs can trigger edge-case commands
-  // (e.g. stale-revision rejection) that are impossible to reach through
-  // normal UI gestures alone.
-  Object.assign(window, { __smokeAdapter: adapter })
 }
 
 export default function App() {
