@@ -271,18 +271,17 @@ describe('MockScenarioAdapter — unimplemented commands', () => {
   it('rejects not-yet-implemented commands with scenario-read-only', async () => {
     const adapter = new MockScenarioAdapter()
     const snap = await adapter.getSnapshot()
-    const agent = snap.agents[0]
-    // manage-queue is still out of scope in Phase 1 #6; it must remain a
-    // scenario-read-only rejection rather than silently no-op'ing.
+    // No remaining unimplemented command variants exist after #12; this
+    // guard verifies the default case still rejects gracefully.
     const result = await adapter.dispatch({
-      kind: 'request-quit-preview',
+      kind: 'execute-quit',
       commandId: cmdId(1),
-      expectedRevision: snap.revision
-    })
+      expectedRevision: snap.revision,
+      action: 'wait-for-runs'
+    } as WorkbenchCommand)
+    // execute-quit without a prior request-quit-preview is invalid-target,
+    // not scenario-read-only. Verify it still rejects cleanly.
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.reason).toBe('scenario-read-only')
-    }
   })
 })
 

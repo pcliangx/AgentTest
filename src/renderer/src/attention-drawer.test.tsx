@@ -217,10 +217,6 @@ describe('Global Attention — deep links (#9)', () => {
     {
       title: '飞书任务「Q2 销售目标」存在版本冲突',
       retained: '已保留目标：External Task ext-task-001'
-    },
-    {
-      title: '交接包不完整：缺少验证结果',
-      retained: '已保留目标：Handoff handoff-001'
     }
   ])(
     'keeps the undelivered target on an explicit placeholder page: $retained',
@@ -237,6 +233,27 @@ describe('Global Attention — deep links (#9)', () => {
       expect(screen.getByText(new RegExp(retained))).toBeVisible()
     }
   )
+
+  it('navigates to the Handoffs surface and highlights the specific handoff from attention', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：交接包不完整：缺少验证结果'
+      })
+    )
+    expect(
+      screen.queryByRole('complementary', { name: 'Global Attention' })
+    ).toBeNull()
+    // The Handoffs surface is now implemented (#12) — shows actual handoff
+    // data instead of a placeholder page.
+    const region = await screen.findByRole('region', { name: '交接' })
+    expect(region).toHaveTextContent('不完整')
+    expect(region).toHaveTextContent('缺少验证结果')
+    // The specific handoff-001 card is highlighted via focus ring (#9 deep link)
+    const focusedCard = within(region).getByText('handoff-001')
+    expect(focusedCard.closest('li')).toHaveClass('ring-2')
+  })
 })
 
 describe('Permission Center — decisions (#9)', () => {
@@ -632,6 +649,8 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
   it('ignores a stale continuation: manual navigation wins, nothing pollutes the chosen page', async () => {
     const commands: WorkbenchCommand[] = []
     class DeferredResultPort extends MockScenarioAdapter {
+      private releaseNavigationResult?: () => void
+
       override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
         commands.push(command)
         const result = super.dispatch(command)
@@ -641,17 +660,25 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
         if (isFirstNavigate) {
           // The deep-link navigation publishes its event at once but returns
           // its CommandResult later — a contract-legal order (spec 566–568).
-          return new Promise((resolve) =>
-            setTimeout(() => {
-              void result.then(resolve)
-            }, 30)
-          )
+          return new Promise((resolve) => {
+            this.releaseNavigationResult = () => void result.then(resolve)
+          })
         }
         return result
       }
+
+      releaseNavigation(): void {
+        if (!this.releaseNavigationResult) {
+          throw new Error('deep-link navigation Result is not pending')
+        }
+        const release = this.releaseNavigationResult
+        this.releaseNavigationResult = undefined
+        release()
+      }
     }
+    const port = new DeferredResultPort()
     const user = userEvent.setup()
-    render(<ProjectShell port={new DeferredResultPort()} />)
+    render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     const { drawer } = await openDrawer(user)
     await user.click(
@@ -663,8 +690,10 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
     // user navigates manually — this supersedes the whole deep link.
     await user.click(screen.getByRole('button', { name: '任务' }))
     await screen.findByText(/任务 工作面尚未实现/)
-    // Let the deferred result land, then observe.
-    await new Promise((resolve) => setTimeout(resolve, 60))
+    await act(async () => {
+      port.releaseNavigation()
+      await Promise.resolve()
+    })
 
     // No stale continuation: no follow-up layout command, no notice, no
     // retained target — the page the user actually chose stays clean.
