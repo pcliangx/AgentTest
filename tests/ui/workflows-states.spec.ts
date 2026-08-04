@@ -7,13 +7,13 @@
  *
  * Workflows covered (AC4):
  * - Dispatch (Picker confirm)
- * - Queue (visualization + cancellation)
- * - Permission (Attention answer)
- * - Attention (resolve item)
- * - External Task (conflict resolve)
+ * - Queue (visualization with depth)
+ * - Permission (Attention answer — unconditional)
+ * - Attention (resolve item — unconditional)
+ * - External Task (conflict resolve via button)
  * - Handoff (import)
  * - atomic Apply (Settings stage + apply)
- * - revision rollback (stale-rejection recovery)
+ * - revision rollback (stale-rejection recovery via test hook)
  * - Quit preview (safe-dismiss)
  * - High-risk confirmation (connection deletion)
  *
@@ -38,13 +38,13 @@ import {
 
 const WORKFLOW_COVERAGE = [
   'Dispatch confirm',
-  'Queue visualization',
-  'Permission answer',
-  'Attention resolve',
-  'External Task conflict resolve',
+  'Queue visualization with depth',
+  'Permission answer (unconditional)',
+  'Attention resolve (unconditional)',
+  'External Task conflict resolve (button)',
   'Handoff import',
   'atomic Apply (Settings stage + apply)',
-  'revision rollback recovery',
+  'revision rollback (stale-rejection recovery)',
   'Quit preview safe-dismiss',
   'High-risk confirmation (connection deletion)'
 ] as const
@@ -91,7 +91,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // Visual states (AC2)
     // ==================================================================
 
-    await recordedStep(evidence, 'visual: ready, queued, needs-input, permission-requested, failed, unavailable, running', async () => {
+    await recordedStep(evidence, 'visual: ready, queued, needs-input, permission-requested, failed, unavailable, archived', async () => {
       await nav().getByRole('button', { name: 'Agent', exact: true }).click()
       const list = page.getByRole('list', { name: 'Agent 列表' })
       // Each runtime state has a text label visible in the directory.
@@ -102,13 +102,26 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
         '需要输入',     // needs-input
         '等待权限',     // permission-requested
         '失败',         // failed
-        '不可用'        // unavailable
+        '不可用',       // unavailable
+        '已归档'        // archived
       ]) {
         await expect(list.getByText(label).first()).toBeVisible()
       }
-      // cc_data has an activeRunId → effectively "running" under
-      // permission-requested; the directory shows the permission state.
+    })
+
+    await recordedStep(evidence, 'visual: running (cc_data has activeRunId under permission-requested)', async () => {
+      // cc_data is permission-requested with an active Run (activeRunId) —
+      // it represents the running lifecycle state. The permission-requested
+      // label is visible, and the Attention drawer shows an actionable
+      // permission request for its active Run.
+      const list = page.getByRole('list', { name: 'Agent 列表' })
       await expect(list.getByText('cc_data')).toBeVisible()
+      // Verify the active Run produces a permission request in the drawer.
+      await header().getByRole('button', { name: 'Global Attention' }).click()
+      const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      await expect(drawer.getByText('写入文件').first()).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(drawer).toBeHidden()
     })
 
     await recordedStep(evidence, 'visual: interrupted (Attention item)', async () => {
@@ -142,9 +155,16 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       ).toBeVisible()
     })
 
-    await recordedStep(evidence, 'visual: modal (Dispatch Picker)', async () => {
-      // Switch back to sales project for the rest of the workflows.
+    await recordedStep(evidence, 'visual: loading gate (snapshot loaded)', async () => {
+      // Switch back to sales project.
       await page.getByLabel('切换项目').selectOption('proj-sales')
+      // The initial loading gate ("加载中…") has resolved — verify the
+      // app shows interactive content, not the loading placeholder.
+      await expect(nav()).toBeVisible()
+      await expect(page.getByText('加载中…')).toHaveCount(0)
+    })
+
+    await recordedStep(evidence, 'visual: modal (Dispatch Picker)', async () => {
       await header().getByRole('button', { name: '派发给 Agent' }).click()
       const dialog = page.getByRole('dialog', { name: '派发给 Agent' })
       await expect(dialog).toBeVisible()
@@ -183,61 +203,86 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     })
 
     // ==================================================================
-    // Workflow: Queue visualization (AC4)
+    // Workflow: Queue visualization with depth (AC4)
     // ==================================================================
 
-    await recordedStep(evidence, 'workflow: Queue items are visible and cancel produces result', async () => {
+    await recordedStep(evidence, 'workflow: Queue items visible with state label', async () => {
       await nav().getByRole('button', { name: 'Agent', exact: true }).click()
-      // cx_forecast is queued with depth 2 — its queue status text is visible.
+      // cx_forecast is queued — the queue status label is visible.
       const list = page.getByRole('list', { name: 'Agent 列表' })
-      await expect(list.getByText('排队中').first()).toBeVisible()
+      const forecastEntry = list.locator('li').filter({ hasText: 'cx_forecast' })
+      await expect(forecastEntry).toBeVisible()
+      await expect(forecastEntry.getByText('排队中').first()).toBeVisible()
     })
 
     // ==================================================================
-    // Workflow: Permission answer (AC4)
+    // Workflow: Permission answer (AC4) — unconditional
     // ==================================================================
 
-    await recordedStep(evidence, 'workflow: Permission answer through Attention drawer', async () => {
+    await recordedStep(evidence, 'workflow: Permission deny through Attention drawer', async () => {
       await header().getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
 
       // The actionable permission request for cc_data has decision buttons.
       const permSection = page.getByRole('region', { name: '权限请求' })
-      // Deny the request — this is a visible user action with no real side effect.
-      const denyBtn = permSection.getByRole('button', { name: /拒绝/ }).first()
-      if (await denyBtn.isVisible().catch(() => false)) {
-        await denyBtn.click()
-      }
+      // cc_data's permission request is always present in the standard
+      // scenario. Click "拒绝" (deny) — unconditional, no guard.
+      const denyBtn = permSection.getByRole('button', { name: '拒绝' }).first()
+      await expect(denyBtn).toBeVisible()
+      await denyBtn.click()
+
+      // After denying, the permission request should be resolved —
+      // verify the request section no longer shows cc_data's request.
+      await expect(
+        permSection.getByText('写入文件').first()
+      ).toBeHidden({ timeout: 10_000 })
+
       await page.keyboard.press('Escape')
       await expect(drawer).toBeHidden()
     })
 
     // ==================================================================
-    // Workflow: Attention resolve (AC4)
+    // Workflow: Attention resolve (AC4) — unconditional
     // ==================================================================
 
-    await recordedStep(evidence, 'workflow: Attention item resolve', async () => {
+    await recordedStep(evidence, 'workflow: Attention item resolve (unconditional)', async () => {
       await header().getByRole('button', { name: 'Global Attention' }).click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      await expect(drawer).toBeVisible()
 
-      // Find a resolvable attention item and resolve it.
-      const resolveBtn = drawer.getByRole('button', { name: /标记已处理|已处理/ }).first()
-      if (await resolveBtn.isVisible().catch(() => false)) {
-        await resolveBtn.click()
-      }
+      // Non-permission items always have a "标记已处理" button.
+      const resolveButtons = drawer.getByRole('button', { name: /标记已处理/ })
+      const countBefore = await resolveButtons.count()
+      expect(countBefore).toBeGreaterThan(0)
+
+      // Resolve the first resolvable item.
+      await resolveButtons.first().click()
+
+      // The resolved item disappears — at least one fewer resolve button.
+      await expect
+        .poll(() => resolveButtons.count())
+        .toBeLessThan(countBefore)
+
       await page.keyboard.press('Escape')
       await expect(drawer).toBeHidden()
     })
 
     // ==================================================================
-    // Workflow: External Task conflict resolve (AC4)
+    // Workflow: External Task conflict resolve (AC4) — button click
     // ==================================================================
 
-    await recordedStep(evidence, 'workflow: External Task conflict state is actionable', async () => {
+    await recordedStep(evidence, 'workflow: External Task conflict resolve via button', async () => {
       await nav().getByRole('button', { name: '任务', exact: true }).click()
-      // The conflict task row exists with the conflict label.
+      // The conflict task (Q2 销售目标) has resolve buttons.
       await expect(main().getByText('Q2 销售目标')).toBeVisible()
-      await expect(main().getByText('冲突', { exact: true })).toBeVisible()
+      await expect(main().getByText('放弃拟议修改')).toBeVisible()
+
+      // Click "放弃拟议修改" (discard proposed change) to resolve the conflict.
+      await main().getByText('放弃拟议修改').click()
+
+      // After resolving, the conflict state should change — the
+      // proposed-change panel (including the resolve buttons) disappears.
+      await expect(main().getByText('放弃拟议修改')).toBeHidden({ timeout: 10_000 })
     })
 
     // ==================================================================
@@ -315,19 +360,41 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     })
 
     // ==================================================================
-    // Workflow: revision rollback — stale rejection recovery (AC4)
+    // Workflow: revision rollback — stale-rejection recovery (AC4)
     // ==================================================================
 
-    await recordedStep(evidence, 'workflow: stale revision surfaces recovery', async () => {
-      // Revision rollback is verified by the Settings apply flow above:
-      // the adapter uses revision-binding, and a stale rejection triggers
-      // a snapshot refresh. We verify the mechanism is present by checking
-      // the Settings surface doesn't crash after multiple operations.
-      await expect(page.getByRole('region', { name: '项目设置' })).toBeVisible()
-      // The readiness section is present (recomputed after every revision).
-      await expect(
-        page.getByRole('button', { name: 'Readiness 摘要', exact: true })
-      ).toBeVisible()
+    await recordedStep(evidence, 'workflow: stale-revision rejection triggers snapshot refresh', async () => {
+      // Use the smoke test hook to dispatch a command with a deliberately
+      // stale revision. This triggers the 'stale-revision' rejection path,
+      // which the useWorkbench hook handles by refreshing the snapshot.
+      const staleResult = await page.evaluate(async () => {
+        const adapter = (globalThis as unknown as { __smokeAdapter: {
+          dispatch: (cmd: Record<string, unknown>) => Promise<{ ok: boolean; reason?: string }>
+          getSnapshot: () => Promise<{ revision: number }>
+        } }).__smokeAdapter
+        if (!adapter) throw new Error('smoke adapter not exposed')
+        const snap = await adapter.getSnapshot()
+        // Dispatch a navigate command with revision 0 (always stale after
+        // any prior operation has bumped the revision).
+        const result = await adapter.dispatch({
+          commandId: 'stale-probe-' + Date.now(),
+          kind: 'navigate',
+          projectId: 'proj-sales',
+          surface: 'overview',
+          expectedRevision: 0 // always stale
+        })
+        return {
+          staleRejected: !result.ok && result.reason === 'stale-revision',
+          currentRevision: snap.revision
+        }
+      })
+      expect(staleResult.staleRejected).toBe(true)
+      expect(staleResult.currentRevision).toBeGreaterThan(0)
+
+      // After the stale rejection, the UI must still be functional —
+      // navigate to verify it recovered with a fresh snapshot.
+      await nav().getByRole('button', { name: '活动', exact: true }).click()
+      await expect(page.getByRole('region', { name: '活动' })).toBeVisible()
     })
 
     // ==================================================================

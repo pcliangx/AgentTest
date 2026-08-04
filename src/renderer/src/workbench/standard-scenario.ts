@@ -814,6 +814,65 @@ export function createStandardScenario(
 }
 
 /**
+ * Smoke-test scenario: extends the standard scenario with extra states that
+ * the release-gate must cover but that unit tests do not expect in the base
+ * scenario — an archived Agent instance and a conflict External Task with a
+ * proposed change that exposes resolve buttons (#16 AC2/AC4).
+ *
+ * The layout, agent count and dispatch topology of the standard scenario
+ * are preserved; this variant only appends one agent and mutates one
+ * external task so it carries a proposedChange.
+ */
+export function createSmokeScenario(
+  now: number = Date.now()
+): WorkbenchViewModel {
+  const scenario = createStandardScenario(now)
+  const salesProject = scenario.projects[0]
+
+  // Append an archived Agent to the sales project.
+  const archivedAgent: AgentInstanceViewModel = {
+    agentInstanceId: id('inst-cc-archive', 'AgentInstanceId'),
+    projectId: salesProject.projectId,
+    name: 'cc_archive',
+    providerId: id('claude-code', 'AgentProviderId'),
+    runtimeState: 'archived',
+    terminalState: 'closed',
+    worktreeMode: 'isolated',
+    queueDepth: 0,
+    doctor: 'ready',
+    lastActivityAt: now - 7_200_000
+  }
+  scenario.agents.push(archivedAgent)
+  scenario.appliedConfigurations.push({
+    owner: { kind: 'agent', agentInstanceId: archivedAgent.agentInstanceId },
+    appliedVersion: 1,
+    values: {
+      'identity.name': 'cc_archive',
+      'model.id': 'claude-sonnet-4',
+      'proxy.http': '',
+      'env.custom': '',
+      'concurrency.priority': 'normal',
+      'budget.maxTokens': 200000
+    }
+  })
+
+  // Give the conflict External Task a proposedChange so the resolve
+  // buttons ("放弃拟议修改" / "用拟议修改覆盖") are rendered.
+  const conflictTask = scenario.externalTasks.find(
+    (t) => t.syncState === 'conflict'
+  )
+  if (conflictTask) {
+    conflictTask.proposedChange = {
+      summary: '标记为已完成',
+      failureReason: '飞书版本号已更新，写入被拒绝',
+      action: 'complete'
+    }
+  }
+
+  return scenario
+}
+
+/**
  * Reusable Knowledge boundary variant: one bound resource remains online,
  * another resource in the same narrowed binding is an explicit read-only
  * cache, and the second Project remains unconnected. It stays entirely

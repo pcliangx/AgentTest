@@ -1,6 +1,6 @@
 import { ProjectShell } from './project-shell'
 import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
-import { createStandardScenario } from './workbench/standard-scenario'
+import { createSmokeScenario } from './workbench/standard-scenario'
 import { UI_SMOKE_SCENARIO } from '../../shared/ui-smoke-scenario'
 
 /**
@@ -17,7 +17,7 @@ const scenario = new URLSearchParams(window.location.search).get('scenario')
 const adapter =
   scenario === UI_SMOKE_SCENARIO.id
     ? new MockScenarioAdapter(
-        createStandardScenario(UI_SMOKE_SCENARIO.clock),
+        createSmokeScenario(UI_SMOKE_SCENARIO.clock),
         { now: () => UI_SMOKE_SCENARIO.clock }
       )
     : new MockScenarioAdapter()
@@ -26,6 +26,10 @@ if (scenario === UI_SMOKE_SCENARIO.id) {
   console.info(
     `Agent Squad HQ renderer scenario: ${UI_SMOKE_SCENARIO.id}@${UI_SMOKE_SCENARIO.clock}`
   )
+  // Expose the adapter so Playwright specs can trigger edge-case commands
+  // (e.g. stale-revision rejection) that are impossible to reach through
+  // normal UI gestures alone.
+  Object.assign(window, { __smokeAdapter: adapter })
 }
 
 export default function App() {

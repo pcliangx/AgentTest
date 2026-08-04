@@ -18,7 +18,7 @@ import { join, resolve } from 'node:path'
 import { UI_SMOKE_SCENARIO } from '../../../src/shared/ui-smoke-scenario'
 
 const require = createRequire(resolve(process.cwd(), 'package.json'))
-export const electronExecutablePath = require('electron') as string
+const electronExecutablePath = require('electron') as string
 
 // ---------------------------------------------------------------------------
 // Evidence bag
@@ -72,7 +72,7 @@ function recordRendererError(
   }
 }
 
-export function sanitizedEnvironment(
+function sanitizedEnvironment(
   userDataPath: string
 ): Record<string, string> {
   const env: Record<string, string> = {}
