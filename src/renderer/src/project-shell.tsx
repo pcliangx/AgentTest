@@ -266,6 +266,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   const [showPicker, setShowPicker] = useState(false)
   // Global Attention Center (#9): one shell-level drawer over every surface.
   const [showAttention, setShowAttention] = useState(false)
+  // Close-window notice: shows that background state is preserved (#12 AC3).
+  const [showCloseNotice, setShowCloseNotice] = useState(false)
   // Undelivered deep-link targets stay retained for their placeholder page
   // until the user navigates somewhere else explicitly.
   const [retainedDeepLink, setRetainedDeepLink] =
@@ -699,6 +701,20 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               {connection.label}
             </span>
           )}
+          <button
+            className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700"
+            onClick={() => setShowCloseNotice(true)}
+          >
+            关闭窗口
+          </button>
+          <button
+            className="rounded bg-red-900 px-2 py-0.5 text-xs text-red-300 hover:bg-red-800"
+            onClick={() => {
+              void sendCommand({ kind: 'request-quit-preview' })
+            }}
+          >
+            退出
+          </button>
         </div>
       </header>
 
@@ -845,10 +861,18 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
+            {project.currentSurface === 'handoffs' && (
+              <HandoffsSurface
+                snapshot={snapshot}
+                project={project}
+                sendCommand={sendCommand}
+              />
+            )}
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
               project.currentSurface !== 'agents' &&
-              project.currentSurface !== 'settings' && (
+              project.currentSurface !== 'settings' &&
+              project.currentSurface !== 'handoffs' && (
                 <PlaceholderSurface
                   surface={project.currentSurface}
                   retainedTarget={
@@ -906,6 +930,19 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )
           }
           onCancel={() => void dismissConfirmation()}
+        />
+      )}
+
+      {showCloseNotice && (
+        <CloseWindowNotice onClose={() => setShowCloseNotice(false)} />
+      )}
+
+      {snapshot.quitPreview && (
+        <QuitPreviewDialog
+          preview={snapshot.quitPreview}
+          onAction={(action) =>
+            void sendCommand({ kind: 'execute-quit', action })
+          }
         />
       )}
     </div>
@@ -1148,6 +1185,297 @@ function GlobalSettingsSurface() {
       <h2 className="text-lg font-medium text-neutral-100">全局设置</h2>
       <p className="text-sm text-neutral-500">全局设置工作面尚未实现</p>
     </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Handoffs surface (#12 AC1)
+// ---------------------------------------------------------------------------
+
+const COMPLETENESS_LABEL: Record<string, string> = {
+  complete: '完整',
+  incomplete: '不完整'
+}
+
+const VALIDATION_LABEL: Record<string, string> = {
+  pass: '验证通过',
+  fail: '验证失败',
+  pending: '验证待完成'
+}
+
+const IMPORT_STATE_LABEL: Record<string, string> = {
+  'not-imported': '未导入',
+  'inspect-only': '已检查',
+  'execute-confirmed': '已确认执行'
+}
+
+function HandoffsSurface({
+  snapshot,
+  project,
+  sendCommand
+}: {
+  snapshot: WorkbenchViewModel
+  project: ProjectViewModel
+  sendCommand: (
+    body: WorkbenchCommandBody,
+    expectedRevision?: number
+  ) => Promise<CommandResult>
+}) {
+  const handoffs = snapshot.handoffs.filter(
+    (h) => h.projectId === project.projectId
+  )
+
+  if (handoffs.length === 0) {
+    return (
+      <section role="region" aria-label="交接" className="space-y-3">
+        <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
+        <p className="text-sm text-neutral-500">暂无交接记录</p>
+      </section>
+    )
+  }
+
+  return (
+    <section role="region" aria-label="交接" className="space-y-3">
+      <h2 className="mb-3 text-lg text-neutral-200">交接</h2>
+      <ul className="space-y-3">
+        {handoffs.map((h) => (
+          <li
+            key={h.handoffId}
+            className="rounded-lg bg-neutral-900 p-4"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <span
+                className={`rounded px-1.5 py-0.5 text-xs ${
+                  h.completeness === 'complete'
+                    ? 'bg-emerald-950 text-emerald-400'
+                    : 'bg-amber-950 text-amber-400'
+                }`}
+              >
+                {COMPLETENESS_LABEL[h.completeness]}
+              </span>
+              <span className="text-xs text-neutral-500">
+                {IMPORT_STATE_LABEL[h.importState]}
+              </span>
+              {h.provenance.origin === 'cross-project' && (
+                <span className="rounded bg-blue-950 px-1.5 py-0.5 text-xs text-blue-400">
+                  跨项目（来自 {h.provenance.sourceProjectName}）
+                </span>
+              )}
+              {h.provenance.origin === 'quit-snapshot' && (
+                <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
+                  退出快照
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-neutral-200">{h.goal}</p>
+            <p className="mt-1 text-xs text-neutral-500">{h.summary}</p>
+            <dl className="mt-2 space-y-1 text-xs text-neutral-400">
+              <div>
+                <dt className="inline text-neutral-600">来源：</dt>
+                <dd className="inline">{h.source.agentName}</dd>
+                {h.target && (
+                  <>
+                    <dt className="ml-2 inline text-neutral-600">目标：</dt>
+                    <dd className="inline">{h.target.agentName}</dd>
+                  </>
+                )}
+              </div>
+              <div>
+                <dt className="inline text-neutral-600">基线：</dt>
+                <dd className="inline font-mono">{h.baseCommit}</dd>
+                <dt className="ml-3 text-neutral-600">验证：</dt>
+                <dd className="inline">
+                  {VALIDATION_LABEL[h.validation.status]}
+                  {h.validation.message ? `（${h.validation.message}）` : ''}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-neutral-600">改动：</dt>
+                <dd className="inline">{h.changeSummary}</dd>
+              </div>
+              {h.artifacts.length > 0 && (
+                <div>
+                  <dt className="inline text-neutral-600">产物：</dt>
+                  <dd className="inline">
+                    {h.artifacts
+                      .map(
+                        (a) =>
+                          `${a.path}${a.status === 'missing' ? '（缺失）' : ''}`
+                      )
+                      .join('、')}
+                  </dd>
+                </div>
+              )}
+              {h.incompleteReason && (
+                <div className="text-amber-400">
+                  <dt className="inline text-amber-600">不完整原因：</dt>
+                  <dd className="inline">{h.incompleteReason}</dd>
+                </div>
+              )}
+              {h.recoveryActions.length > 0 && (
+                <div>
+                  <dt className="inline text-neutral-600">恢复动作：</dt>
+                  <dd className="inline">{h.recoveryActions.join('；')}</dd>
+                </div>
+              )}
+            </dl>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Close-window notice (#12 AC3)
+// ---------------------------------------------------------------------------
+
+function CloseWindowNotice({ onClose }: { onClose: () => void }) {
+  const noticeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    noticeRef.current?.focus()
+  }, [])
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="关闭窗口"
+        className="w-full max-w-sm space-y-3 rounded-lg bg-neutral-900 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-medium text-neutral-100">关闭窗口</h3>
+        <p className="text-sm text-neutral-400">
+          关闭窗口不会停止后台 Run、Terminal 或 Agent。后台工作将继续运行。
+        </p>
+        <div className="flex justify-end pt-2">
+          <button
+            ref={noticeRef}
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={onClose}
+          >
+            知道了
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Quit preview dialog (#12 AC3/AC4)
+// ---------------------------------------------------------------------------
+
+function QuitPreviewDialog({
+  preview,
+  onAction
+}: {
+  preview: WorkbenchViewModel['quitPreview']
+  onAction: (
+    action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
+  ) => void
+}) {
+  const quitRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    quitRef.current?.focus()
+  }, [])
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onAction('wait-for-runs')
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onAction])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="退出 Agent Squad HQ"
+        className="w-full max-w-lg space-y-4 rounded-lg bg-neutral-900 p-5"
+      >
+        <h3 className="text-base font-medium text-neutral-100">
+          退出 Agent Squad HQ
+        </h3>
+
+        {preview!.activeRuns.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">活动 Run（{preview!.activeRuns.length}）</h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.activeRuns.map((run) => (
+                <li key={run.runId}>
+                  {run.agentName}（{run.runtimeState}）
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.activeTerminals.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">活动 Terminal（{preview!.activeTerminals.length}）</h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.activeTerminals.map((term) => (
+                <li key={term.agentInstanceId}>{term.agentName}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.handoffDirtyAgents.length > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm text-neutral-400">有未提交改动的 Agent（{preview!.handoffDirtyAgents.length}）</h4>
+            <ul className="space-y-1 text-xs text-neutral-500">
+              {preview!.handoffDirtyAgents.map((agent) => (
+                <li key={agent.agentInstanceId}>
+                  {agent.agentName}：{agent.changeSummary}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {preview!.activeRuns.length === 0 &&
+          preview!.activeTerminals.length === 0 &&
+          preview!.handoffDirtyAgents.length === 0 && (
+            <p className="text-sm text-neutral-500">
+              没有活动 Run、Terminal 或未提交改动，可以安全退出。
+            </p>
+          )}
+
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
+          <button
+            ref={quitRef}
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={() => onAction('wait-for-runs')}
+          >
+            等待 Run 完成
+          </button>
+          <button
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={() => onAction('stop-runs')}
+          >
+            停止 Run
+          </button>
+          <button
+            className="rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700"
+            onClick={() => onAction('request-final-handoff')}
+          >
+            生成最终 Handoff
+          </button>
+          <button
+            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600"
+            onClick={() => onAction('force-quit')}
+          >
+            强制退出
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

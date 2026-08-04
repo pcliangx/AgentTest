@@ -294,6 +294,79 @@ export type ActivityEntry =
       reason?: never
     })
 
+// ---------------------------------------------------------------------------
+// Handoff (#12)
+// ---------------------------------------------------------------------------
+
+export interface HandoffArtifactViewModel {
+  path: string
+  status: 'included' | 'missing'
+}
+
+export interface HandoffValidationViewModel {
+  status: 'pass' | 'fail' | 'pending'
+  message?: string
+}
+
+export type HandoffImportState =
+  | 'not-imported'
+  | 'inspect-only'
+  | 'execute-confirmed'
+
+export interface HandoffViewModel {
+  handoffId: HandoffId
+  projectId: ProjectId
+  source: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  target?: {
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }
+  provenance: {
+    origin: 'local' | 'imported' | 'cross-project' | 'quit-snapshot'
+    createdAt: number
+    /** Project name for cross-project provenance only. */
+    sourceProjectName?: string
+  }
+  goal: string
+  summary: string
+  baseCommit: string
+  changeSummary: string
+  artifacts: HandoffArtifactViewModel[]
+  validation: HandoffValidationViewModel
+  completeness: 'complete' | 'incomplete'
+  incompleteReason?: string
+  recoveryActions: string[]
+  importState: HandoffImportState
+}
+
+// ---------------------------------------------------------------------------
+// Quit preview (#12)
+// ---------------------------------------------------------------------------
+
+export interface QuitPreviewViewModel {
+  activeRuns: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    runId: RunId
+    runtimeState: AgentRuntimeState
+  }>
+  activeTerminals: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+  }>
+  handoffDirtyAgents: Array<{
+    projectId: ProjectId
+    agentInstanceId: AgentInstanceId
+    agentName: string
+    changeSummary: string
+  }>
+}
+
 export interface WorktreeChangesViewModel {
   agentInstanceId: AgentInstanceId
   baseCommit: string
@@ -325,6 +398,8 @@ export interface WorkbenchViewModel {
   appliedConfigurations: AppliedConfigurationViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
+  handoffs: HandoffViewModel[]
+  quitPreview?: QuitPreviewViewModel
   global: {
     attentionCount: number
     concurrency: {
@@ -484,6 +559,13 @@ export type WorkbenchCommandBody =
       projectId: ProjectId
       handoffId: HandoffId
       targetAgentInstanceId: AgentInstanceId
+      mode: 'request-execute'
+    }
+  | {
+      kind: 'import-handoff'
+      projectId: ProjectId
+      handoffId: HandoffId
+      targetAgentInstanceId: AgentInstanceId
       mode: 'execute-confirmed'
       confirmationId: ConfirmationId
     }
@@ -493,6 +575,10 @@ export type WorkbenchCommandBody =
   | { kind: 'merge-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'discard-agent-changes'; agentInstanceId: AgentInstanceId }
   | { kind: 'request-quit-preview' }
+  | {
+      kind: 'execute-quit'
+      action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
+    }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
 
 /** Commands whose successful result may carry a LayoutTargetEffect. */

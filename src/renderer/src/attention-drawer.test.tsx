@@ -221,10 +221,6 @@ describe('Global Attention — deep links (#9)', () => {
     {
       title: '销售知识库有未同步的修改',
       retained: '已保留目标：Knowledge know-001'
-    },
-    {
-      title: '交接包不完整：缺少验证结果',
-      retained: '已保留目标：Handoff handoff-001'
     }
   ])(
     'keeps the undelivered target on an explicit placeholder page: $retained',
@@ -241,6 +237,24 @@ describe('Global Attention — deep links (#9)', () => {
       expect(screen.getByText(new RegExp(retained))).toBeVisible()
     }
   )
+
+  it('navigates to the Handoffs surface for an incomplete handoff attention item', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    await user.click(
+      within(drawer).getByRole('button', {
+        name: '打开：交接包不完整：缺少验证结果'
+      })
+    )
+    expect(
+      screen.queryByRole('complementary', { name: 'Global Attention' })
+    ).toBeNull()
+    // The Handoffs surface is now implemented (#12) — shows actual handoff
+    // data instead of a placeholder page.
+    const region = await screen.findByRole('region', { name: '交接' })
+    expect(region).toHaveTextContent('不完整')
+    expect(region).toHaveTextContent('缺少验证结果')
+  })
 })
 
 describe('Permission Center — decisions (#9)', () => {
