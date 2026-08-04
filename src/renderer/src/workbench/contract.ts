@@ -130,6 +130,78 @@ export interface ResourceBindingViewModel {
   allowedOperations: Array<'read' | 'create' | 'update'>
 }
 
+export type KnowledgeContainerState =
+  | 'online'
+  | 'offline'
+  | 'cached'
+  | 'unavailable'
+  | 'unconnected'
+
+export type KnowledgeSecurityAction =
+  | 'untrusted-link'
+  | 'download'
+  | 'popup'
+  | 'permission-request'
+
+/**
+ * Phase 1 projection for the Knowledge browser container. It intentionally
+ * carries display identities only: browser/Connector credentials, cookies,
+ * profiles and raw authentication material never cross the WorkbenchPort.
+ */
+export interface KnowledgeContainerBaseViewModel {
+  projectId: ProjectId
+  knowledgeResourceId?: KnowledgeResourceId
+  label?: string
+  /**
+   * Adapter-owned local-change truth. Attention may project this fact, but
+   * resolving that projection never clears the underlying unsynced changes.
+   */
+  unsyncedChanges?: {
+    summary: string
+  }
+  humanBrowserIdentity?: string
+  connectionId?: ConnectionId
+  connectorIdentity?: string
+  resourceBindingId?: ResourceBindingId
+  securityFeedback?: {
+    action: KnowledgeSecurityAction
+    message: string
+  }
+}
+
+export interface KnowledgeCacheViewModel {
+  version: string
+  cachedAt: number
+  readOnly: true
+}
+
+/**
+ * A cached projection is only representable when its mandatory provenance is
+ * present. Other states cannot accidentally retain stale cache metadata.
+ */
+export type KnowledgeContainerViewModel =
+  | (KnowledgeContainerBaseViewModel & {
+      state: 'cached'
+      cache: KnowledgeCacheViewModel
+    })
+  | (KnowledgeContainerBaseViewModel & {
+      state: Exclude<KnowledgeContainerState, 'cached'>
+      cache?: never
+    })
+
+/**
+ * Removes the discriminant payload before a projection changes state.
+ * Keeping this transition shape in one place prevents stale cache metadata
+ * from leaking into non-cached variants.
+ */
+export function stripKnowledgeContainerState({
+  state: _state,
+  cache: _cache,
+  ...base
+}: KnowledgeContainerViewModel): KnowledgeContainerBaseViewModel {
+  return base
+}
+
 export interface ProjectViewModel {
   projectId: ProjectId
   name: string
@@ -578,6 +650,7 @@ export interface WorkbenchViewModel {
   activeProjectId?: ProjectId
   activeGlobalSurface?: GlobalSurface
   projects: ProjectViewModel[]
+  knowledge: KnowledgeContainerViewModel[]
   agents: AgentInstanceViewModel[]
   queue: QueueItemViewModel[]
   permissionRequests: PermissionRequestViewModel[]
@@ -692,6 +765,17 @@ export function layoutOperationMayProduceTargetEffect(
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
   | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
+  | {
+      kind: 'preview-knowledge-security-event'
+      projectId: ProjectId
+      knowledgeResourceId: KnowledgeResourceId
+      action: KnowledgeSecurityAction
+    }
+  | {
+      kind: 'recover-knowledge-connection'
+      projectId: ProjectId
+      knowledgeResourceId: KnowledgeResourceId
+    }
   | { kind: 'change-layout'; projectId: ProjectId; operation: LayoutOperation }
   | {
       kind: 'create-agent'

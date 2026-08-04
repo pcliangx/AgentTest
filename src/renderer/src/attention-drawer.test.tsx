@@ -211,12 +211,20 @@ describe('Global Attention — deep links (#9)', () => {
 
   it.each([
     {
+      title: '本地任务「月度报表」已完成',
+      surface: '任务'
+    },
+    {
+      title: '飞书任务「Q2 销售目标」存在版本冲突',
+      surface: '任务'
+    },
+    {
       title: '销售知识库有未同步的修改',
-      retained: '已保留目标：Knowledge know-001'
+      surface: 'Knowledge'
     }
   ])(
-    'keeps the undelivered target on an explicit placeholder page: $retained',
-    async ({ title, retained }) => {
+    'navigates to the target surface from attention: $title',
+    async ({ title, surface }) => {
       const { user } = await renderShell()
       const { drawer } = await openDrawer(user)
       await user.click(
@@ -225,8 +233,9 @@ describe('Global Attention — deep links (#9)', () => {
       expect(
         screen.queryByRole('complementary', { name: 'Global Attention' })
       ).toBeNull()
-      expect(await screen.findByText(/工作面尚未实现/)).toBeVisible()
-      expect(screen.getByText(new RegExp(retained))).toBeVisible()
+      // Tasks (#10) and Knowledge (#11) surfaces are now implemented — the
+      // deep link lands on real content instead of a placeholder page.
+      expect(await screen.findByRole('region', { name: surface })).toBeVisible()
     }
   )
 
@@ -645,6 +654,8 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
   it('ignores a stale continuation: manual navigation wins, nothing pollutes the chosen page', async () => {
     const commands: WorkbenchCommand[] = []
     class DeferredResultPort extends MockScenarioAdapter {
+      private releaseNavigationResult?: () => void
+
       override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
         commands.push(command)
         const result = super.dispatch(command)
@@ -654,17 +665,25 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
         if (isFirstNavigate) {
           // The deep-link navigation publishes its event at once but returns
           // its CommandResult later — a contract-legal order (spec 566–568).
-          return new Promise((resolve) =>
-            setTimeout(() => {
-              void result.then(resolve)
-            }, 30)
-          )
+          return new Promise((resolve) => {
+            this.releaseNavigationResult = () => void result.then(resolve)
+          })
         }
         return result
       }
+
+      releaseNavigation(): void {
+        if (!this.releaseNavigationResult) {
+          throw new Error('deep-link navigation Result is not pending')
+        }
+        const release = this.releaseNavigationResult
+        this.releaseNavigationResult = undefined
+        release()
+      }
     }
+    const port = new DeferredResultPort()
     const user = userEvent.setup()
-    render(<ProjectShell port={new DeferredResultPort()} />)
+    render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
     const { drawer } = await openDrawer(user)
     await user.click(

@@ -1,4 +1,4 @@
-import { id } from './contract'
+import { id, stripKnowledgeContainerState } from './contract'
 import type {
   AgentInstanceViewModel,
   AgentProviderId,
@@ -26,6 +26,7 @@ export function createStandardScenario(
   const connId = id('conn-feishu-primary', 'ConnectionId')
   const panelId = id('panel-main', 'PanelId')
   const panelId2 = id('panel-research', 'PanelId')
+  const salesKnowledgeUnsyncedSummary = '销售知识库有未同步的修改'
 
   const claudeCode = id('claude-code', 'AgentProviderId')
   const codex = id('codex', 'AgentProviderId')
@@ -243,6 +244,26 @@ export function createStandardScenario(
           },
           focusedPanelId: panelId2
         }
+      }
+    ],
+    knowledge: [
+      {
+        projectId,
+        knowledgeResourceId: id('know-001', 'KnowledgeResourceId'),
+        label: '销售知识库',
+        state: 'online',
+        unsyncedChanges: { summary: salesKnowledgeUnsyncedSummary },
+        humanBrowserIdentity: '林晓（销售团队）',
+        connectionId: connId,
+        connectorIdentity: 'Agent Squad HQ Connector（销售团队应用）',
+        resourceBindingId: id(
+          'binding-sales-wiki',
+          'ResourceBindingId'
+        )
+      },
+      {
+        projectId: researchId,
+        state: 'unconnected'
       }
     ],
     agents,
@@ -545,7 +566,7 @@ export function createStandardScenario(
           knowledgeResourceId: id('know-001', 'KnowledgeResourceId')
         },
         state: 'open',
-        title: '销售知识库有未同步的修改'
+        title: salesKnowledgeUnsyncedSummary
       },
       {
         attentionItemId: id('att-010', 'AttentionItemId'),
@@ -790,6 +811,39 @@ export function createStandardScenario(
       providers
     }
   }
+}
+
+/**
+ * Reusable Knowledge boundary variant: one bound resource remains online,
+ * another resource in the same narrowed binding is an explicit read-only
+ * cache, and the second Project remains unconnected. It stays entirely
+ * contract-driven and performs no browser or network work.
+ */
+export function createKnowledgeBoundaryScenario(
+  now: number = Date.now()
+): WorkbenchViewModel {
+  const scenario = createStandardScenario(now)
+  const online = scenario.knowledge.find(
+    (container) => container.state === 'online'
+  )
+  if (!online) throw new Error('standard scenario online Knowledge is missing')
+
+  const identityBoundary = stripKnowledgeContainerState(online)
+  scenario.knowledge.splice(1, 0, {
+    ...identityBoundary,
+    knowledgeResourceId: id(
+      'know-sales-offline-playbook',
+      'KnowledgeResourceId'
+    ),
+    label: '销售知识库 · 离线手册',
+    state: 'cached',
+    cache: {
+      version: 'sales-playbook-v7',
+      cachedAt: now - 1_800_000,
+      readOnly: true
+    }
+  })
+  return scenario
 }
 
 /**

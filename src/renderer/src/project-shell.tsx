@@ -35,6 +35,7 @@ import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
+import { KnowledgeSurface } from './knowledge-surface'
 import { TasksSurface } from './tasks-surface'
 
 // ---------------------------------------------------------------------------
@@ -83,11 +84,17 @@ function useWorkbench(port: WorkbenchPort) {
         expectedRevision: expectedRevision ?? revisionRef.current
       } as WorkbenchCommand
       const result = port.dispatch(command)
-      void result.then((r) => {
-        if (!r.ok && r.reason === 'stale-revision') {
-          void port.getSnapshot().then(applySnapshot)
+      void result.then(
+        (r) => {
+          if (!r.ok && r.reason === 'stale-revision') {
+            void port.getSnapshot().then(applySnapshot)
+          }
+        },
+        () => {
+          // The returned Promise remains authoritative for caller-owned UI;
+          // this observer only refreshes stale revisions.
         }
-      })
+      )
       return result
     },
     [port, applySnapshot]
@@ -286,6 +293,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   // until the user navigates somewhere else explicitly.
   const [retainedDeepLink, setRetainedDeepLink] =
     useState<AttentionTarget | null>(null)
+  // A Knowledge target becomes authoritative for rendering as soon as its
+  // navigation is issued. The port may publish the accepted Event before its
+  // Result, so waiting for the Result would briefly expose another resource.
+  const [pendingKnowledgeTarget, setPendingKnowledgeTarget] = useState<{
+    attempt: number
+    target: Extract<AttentionTarget, { kind: 'knowledge' }>
+  } | null>(null)
   // Permanent permission policy is managed only in Settings; a request from
   // the Permission Center remounts Settings on its permissions section.
   const [permissionsNavNonce, setPermissionsNavNonce] = useState(0)
@@ -313,6 +327,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     retainedDeepLinkEpochRef.current += 1
     retainedTargetIntentsRef.current.clear()
     activeDeepLinkIntentTokenRef.current = undefined
+    setPendingKnowledgeTarget(null)
     setRetainedDeepLink(target)
   }
   const reconcileRetainedTargetIntents = (): void => {
@@ -387,6 +402,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
   const supersedeActiveDeepLinkIntent = (): number => {
     const attempt = ++deepLinkAttemptRef.current
+    setPendingKnowledgeTarget(null)
     const activeToken = activeDeepLinkIntentTokenRef.current
     activeDeepLinkIntentTokenRef.current = undefined
     settleRetainedTargetIntent(activeToken, { kind: 'rejected' })
@@ -394,13 +410,13 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
   const beginDeepLinkIntent = (): {
     attempt: number
-    retainedIntentToken: number | undefined
+    retainedIntentToken: number
   } => {
     const previousToken = activeDeepLinkIntentTokenRef.current
     const attempt = ++deepLinkAttemptRef.current
     // Register the replacement before retiring the previous barrier so an
     // already-settled older target effect cannot commit in between them.
-    const retainedIntentToken = registerRetainedTargetIntent()
+    const retainedIntentToken = registerAbsoluteRetainedTargetIntent()
     activeDeepLinkIntentTokenRef.current = retainedIntentToken
     settleRetainedTargetIntent(previousToken, { kind: 'rejected' })
     return { attempt, retainedIntentToken }
@@ -428,6 +444,30 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         (c) => c.connectionId === project.primaryConnectionId
       )
     : undefined
+  const knowledgeTarget =
+    project && pendingKnowledgeTarget?.target.projectId === project.projectId
+      ? pendingKnowledgeTarget.target
+      : project &&
+          retainedDeepLink?.kind === 'knowledge' &&
+          retainedDeepLink.projectId === project.projectId
+        ? retainedDeepLink
+        : undefined
+  const knowledgeTargetId = knowledgeTarget?.knowledgeResourceId
+  const projectKnowledge = project
+    ? snapshot.knowledge.filter(
+        (candidate) => candidate.projectId === project.projectId
+      )
+    : []
+  const targetedKnowledgeContainer = projectKnowledge.find(
+    (candidate) => candidate.knowledgeResourceId === knowledgeTargetId
+  )
+  const missingKnowledgeTargetId =
+    knowledgeTargetId && !targetedKnowledgeContainer
+      ? knowledgeTargetId
+      : undefined
+  const knowledgeContainer = knowledgeTargetId
+    ? targetedKnowledgeContainer
+    : projectKnowledge[0]
   const projectActivity = project
     ? snapshot.activity
         .filter((a) => a.projectId === project.projectId)
@@ -487,10 +527,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     target: AttentionTarget
   ): Promise<void> => {
     const { attempt, retainedIntentToken } = beginDeepLinkIntent()
+    setPendingKnowledgeTarget(
+      target.kind === 'knowledge' ? { attempt, target } : null
+    )
     // A newer deep link is itself a pending target intent. It must block an
     // older accepted layout Result from clearing the retained Run after the
     // new target's Event has landed but before its Result returns.
     const abandonRetainedIntent = () => {
+      setPendingKnowledgeTarget((current) =>
+        current?.attempt === attempt ? null : current
+      )
       if (activeDeepLinkIntentTokenRef.current === retainedIntentToken) {
         activeDeepLinkIntentTokenRef.current = undefined
       }
@@ -506,7 +552,16 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       abandonRetainedIntent()
       return
     }
-    const navResult = await navigate(target.projectId, deepLinkSurface(target))
+    let navResult: CommandResult
+    try {
+      navResult = await navigate(target.projectId, deepLinkSurface(target))
+    } catch {
+      abandonRetainedIntent()
+      if (isCurrent()) {
+        setDeepLinkNotice('无法打开目标：导航命令传输失败，请重试')
+      }
+      return
+    }
     if (!isCurrent()) {
       abandonRetainedIntent()
       return // superseded by a newer navigation
@@ -585,21 +640,29 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     const intentToken = registerAbsoluteRetainedTargetIntent()
     const attempt = supersedeActiveDeepLinkIntent()
     const result = navigateAway()
-    void result.then((outcome) => {
-      settleRetainedTargetIntent(
-        intentToken,
-        outcome.ok
-          ? {
-              kind: 'accepted-target',
-              target: null
-            }
-          : { kind: 'rejected' }
-      )
-      if (outcome.ok && deepLinkAttemptRef.current === attempt) {
-        setDeepLinkNotice(null)
-        onAcceptedCurrent?.()
+    void result.then(
+      (outcome) => {
+        const isCurrent = deepLinkAttemptRef.current === attempt
+        settleRetainedTargetIntent(
+          intentToken,
+          outcome.ok && isCurrent
+            ? {
+                kind: 'accepted-target',
+                target: null
+              }
+            : { kind: 'rejected' }
+        )
+        if (outcome.ok && isCurrent) {
+          setDeepLinkNotice(null)
+          onAcceptedCurrent?.()
+        }
+      },
+      () => {
+        // Transport failure is surfaced by the caller; the target ledger must
+        // still release this failed navigation barrier.
+        settleRetainedTargetIntent(intentToken, { kind: 'rejected' })
       }
-    })
+    )
     return result
   }
 
@@ -878,6 +941,38 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
+            {project.currentSurface === 'knowledge' && (
+              <KnowledgeSurface
+                key={`${project.projectId}:${
+                  missingKnowledgeTargetId ??
+                  knowledgeContainer?.knowledgeResourceId ??
+                  'empty'
+                }`}
+                project={project}
+                container={knowledgeContainer}
+                missingTargetId={missingKnowledgeTargetId}
+                onOpenConnections={() =>
+                  sendExplicitNavigation(() =>
+                    navigateGlobal('connections')
+                  )
+                }
+                onRecoverConnection={(knowledgeResourceId) =>
+                  sendCommand({
+                    kind: 'recover-knowledge-connection',
+                    projectId: project.projectId,
+                    knowledgeResourceId
+                  })
+                }
+                onPreviewSecurityEvent={(knowledgeResourceId, action) =>
+                  sendCommand({
+                    kind: 'preview-knowledge-security-event',
+                    projectId: project.projectId,
+                    knowledgeResourceId,
+                    action
+                  })
+                }
+              />
+            )}
             {project.currentSurface === 'tasks' && (
               <TasksSurface
                 key={project.projectId}
@@ -914,6 +1009,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             {project.currentSurface !== 'overview' &&
               project.currentSurface !== 'activity' &&
               project.currentSurface !== 'agents' &&
+              project.currentSurface !== 'knowledge' &&
               project.currentSurface !== 'settings' &&
               project.currentSurface !== 'tasks' &&
               project.currentSurface !== 'handoffs' && (

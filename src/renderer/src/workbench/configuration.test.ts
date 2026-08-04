@@ -733,6 +733,10 @@ describe('apply-configuration — primary connection', () => {
     expect(snap.pendingConfirmation!.action).toContain('集成')
     expect(snap.pendingConfirmation!.impact).toContain('销售团队任务清单')
     expect(snap.pendingConfirmation!.impact).toContain('销售知识库')
+    expect(snap.pendingConfirmation!.impact).toContain('未同步 Knowledge 修改')
+    expect(snap.pendingConfirmation!.impact).toContain(
+      '销售知识库有未同步的修改'
+    )
     // Requesting the transition is side-effect free until confirmation.
     expect(snap.projects[0].primaryConnectionId).toBe(CONN_PRIMARY)
     expect(snap.projects[0].resourceBindings).toHaveLength(2)
@@ -741,6 +745,36 @@ describe('apply-configuration — primary connection', () => {
     ).toBe(CONN_PRIMARY)
     expect(appliedOf(snap, projectOwner).appliedVersion).toBe(2)
     expect(draftOf(snap, projectOwner)).toBeDefined()
+  })
+
+  it('keeps unsynced Knowledge impact after its Attention projection is resolved', async () => {
+    const adapter = new MockScenarioAdapter()
+    const initial = await adapter.getSnapshot()
+    const conflict = initial.attentionItems.find(
+      (item) =>
+        item.state === 'open' &&
+        item.kind === 'connection-conflict' &&
+        item.target.kind === 'knowledge' &&
+        item.target.projectId === PROJECT
+    )!
+
+    const resolved = await send(adapter, {
+      kind: 'resolve-attention',
+      attentionItemId: conflict.attentionItemId
+    })
+    expect(resolved.ok).toBe(true)
+
+    await stage(adapter, projectOwner, 'integrations.primaryConnectionId', null)
+    const requested = await applyAll(adapter, [projectOwner])
+    expect(requested.ok).toBe(true)
+
+    const preview = await adapter.getSnapshot()
+    expect(preview.pendingConfirmation?.impact).toContain(
+      '未同步 Knowledge 修改'
+    )
+    expect(preview.pendingConfirmation?.impact).toContain(
+      '销售知识库有未同步的修改'
+    )
   })
 
   it('requires connection-difference confirmation even with zero bindings', async () => {
@@ -789,6 +823,14 @@ describe('apply-configuration — primary connection', () => {
     expect(after.pendingConfirmation).toBeUndefined()
     expect(after.projects[0].primaryConnectionId).toBe(CONN_PRODUCT)
     expect(after.projects[0].resourceBindings).toEqual([])
+    const knowledge = after.knowledge.find(
+      (candidate) => candidate.projectId === projectOwner.projectId
+    )!
+    expect(knowledge.state).toBe('unavailable')
+    expect(knowledge.connectionId).toBeUndefined()
+    expect(knowledge.resourceBindingId).toBeUndefined()
+    expect(knowledge.humanBrowserIdentity).toBeUndefined()
+    expect(knowledge.connectorIdentity).toBeUndefined()
     expect(
       appliedOf(after, projectOwner).values['integrations.primaryConnectionId']
     ).toBe(CONN_PRODUCT)
@@ -1054,6 +1096,12 @@ describe('apply-configuration — primary connection', () => {
 
     const after = await adapter.getSnapshot()
     expect(after.projects[0].resourceBindings).toEqual([trustedBinding])
+    const knowledge = after.knowledge.find(
+      (candidate) => candidate.projectId === projectOwner.projectId
+    )!
+    expect(knowledge.state).toBe('unavailable')
+    expect(knowledge.connectionId).toBe(CONN_PRIMARY)
+    expect(knowledge.resourceBindingId).toBeUndefined()
     expect(
       appliedOf(after, projectOwner).values['integrations.resourceScope']
     ).toBe('销售团队任务清单')
