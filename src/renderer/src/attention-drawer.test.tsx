@@ -1819,3 +1819,72 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
     expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
   })
 })
+
+/**
+ * The frozen command-center radar grouping (#68): 需要处理 (permission
+ * cards first), 运行中与排队 and 最近完成 agent rows with the 28px Provider
+ * avatar and the #65 status dot, plus the header capacity line that mirrors
+ * the statusbar facts.
+ */
+describe('Global Attention — radar groups (#68)', () => {
+  it('shows the radar capacity line from the same facts as the statusbar', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    expect(
+      within(drawer).getByText('全局 2 / 6 · Project 2 / 3')
+    ).toBeInTheDocument()
+  })
+
+  it('groups queued agents as radar rows that deep-link to the owning agent', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    const group = within(drawer).getByRole('region', { name: '运行中与排队' })
+    const row = within(group).getByRole('button', { name: /cx_forecast/ })
+    // The #65 status dot carries its family label next to the row text.
+    expect(within(row).getByRole('img', { name: '排队中' })).toBeVisible()
+    await user.click(row)
+    // Same deep link as an attention 打开: drawer closes, Agent opens.
+    expect(
+      screen.queryByRole('complementary', { name: 'Global Attention' })
+    ).toBeNull()
+    expect(
+      await screen.findByRole('region', { name: 'Agent 目录' })
+    ).toBeVisible()
+    expect(screen.getByRole('tab', { name: /cx_forecast/ })).toBeVisible()
+  })
+
+  it('replays the latest run-completed entries under 最近完成', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    const group = within(drawer).getByRole('region', { name: '最近完成' })
+    const rows = within(group).getAllByRole('button')
+    expect(rows).toHaveLength(2)
+    // Newest first: cc_report (now-120s) before cc_sql (now-300s).
+    expect(rows[0]).toHaveTextContent('cc_report 完成了用户访谈摘要')
+    expect(rows[1]).toHaveTextContent(
+      'cc_sql 完成了 SQL schema 更新，已通知 @@cc_etl 同步'
+    )
+  })
+
+  it('lists permission cards before other attention items inside 需要处理', async () => {
+    const { user } = await renderShell()
+    const { drawer } = await openDrawer(user)
+    const group = within(drawer).getByRole('region', { name: '需要处理' })
+    const permissionCard = within(group).getByRole('region', {
+      name: /权限请求：cc_data/
+    })
+    // The card carries the request's full context (#68): scope, reason, the
+    // owning Project's applied policy, the deny deadline and every offered
+    // decision.
+    expect(permissionCard).toHaveTextContent('范围：')
+    expect(permissionCard).toHaveTextContent('原因：')
+    expect(permissionCard).toHaveTextContent('当前策略：每次询问')
+    const attentionItem = within(group).getByText(
+      'cc_etl 的 Run 失败：连接超时'
+    )
+    expect(
+      permissionCard.compareDocumentPosition(attentionItem) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+})

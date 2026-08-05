@@ -225,7 +225,9 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
 
       // The actionable permission request for cc_data has decision buttons.
-      const permSection = page.getByRole('region', { name: '权限请求' })
+      // (#68: permission cards live inside the 需要处理 radar group, each
+      // still named 权限请求：<agent> <action>.)
+      const permSection = page.getByRole('region', { name: /权限请求：cc_data/ })
       // cc_data's permission request is always present in the standard
       // scenario. Click "拒绝" (deny) — unconditional, no guard.
       const denyBtn = permSection.getByRole('button', { name: '拒绝' }).first()
@@ -321,10 +323,11 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       const settingsNav = page.getByLabel('设置目录')
       await settingsNav.getByRole('button', { name: 'Agent 实例', exact: true }).click()
 
-      // Select an instance to edit.
-      const instanceSelect = page.getByLabel('选择实例')
-      await expect(instanceSelect).toBeVisible()
-      await instanceSelect.selectOption({ index: 1 })
+      // Select an instance to edit. (#68: the rail's Agent Instances list
+      // replaced the 选择实例 combobox; the row also opens the section.)
+      const instanceRow = settingsNav.getByRole('button', { name: /^cc_sql / })
+      await expect(instanceRow).toBeVisible()
+      await instanceRow.click()
 
       // Find the Agent 名称 text input.
       const nameInput = page.getByLabel('Agent 名称')
