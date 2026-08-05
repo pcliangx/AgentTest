@@ -1,4 +1,8 @@
-import type { AgentProviderId, AgentRuntimeState } from './workbench/contract'
+import type {
+  AgentProviderId,
+  AgentRuntimeState,
+  AgentWorktreeMode
+} from './workbench/contract'
 
 /**
  * Shared display metadata — labels only, never business branching.
@@ -56,4 +60,10 @@ export const TERMINAL_STATE_LABEL: Record<
   opening: 'Terminal 正在打开',
   active: 'Terminal 接管中',
   failed: 'Terminal 打开失败'
+}
+
+/** Worktree isolation label for the Agent head card (#67). */
+export const WORKTREE_MODE_LABEL: Record<AgentWorktreeMode, string> = {
+  isolated: '独立 worktree',
+  'read-only-shared': '共享只读 worktree'
 }

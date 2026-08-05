@@ -1280,7 +1280,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
         within(view).getByRole('log', { name: '对话记录' })
       ).toHaveTextContent(chatText)
       expect(
-        within(view).getByRole('textbox', { name: '发送给当前 Agent' })
+        within(view).getByRole('textbox', { name: `发送给 ${agentName}` })
       ).not.toBeDisabled()
 
       await user.click(within(view).getByRole('button', { name: 'Terminal' }))
@@ -1348,5 +1348,120 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
     await user.click(within(view).getByRole('button', { name: '活动' }))
 
     expect(apiSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('Workspace layout — panel chrome and Agent view (#67)', () => {
+  it('renders panels as labeled cards and moves the focus ring with tab activation', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(
+      screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
+    )
+    expect(panels()).toHaveLength(2)
+    const [first, second] = panels()
+    expect(within(first).getByText('P1')).toBeInTheDocument()
+    expect(within(second).getByText('P2')).toBeInTheDocument()
+    // The new panel starts focused (brand ring); the other stays a plain card.
+    expect(second.className).toContain('border-brand')
+    expect(second.className).toContain('shadow-panel-focus')
+    expect(first.className).toContain('border-line')
+    expect(first.className).toContain('shadow-panel')
+
+    await user.click(within(first).getByRole('tab', { name: /^cc_data/ }))
+    expect(panels()[0].className).toContain('shadow-panel-focus')
+    expect(panels()[1].className).not.toContain('shadow-panel-focus')
+  })
+
+  it('renders the tab strip with status dots and a clear active tab', async () => {
+    const { user } = await gotoAgentsSurface()
+    const tablist = screen.getByRole('tablist', { name: 'Agent 标签' })
+    const active = within(tablist).getByRole('tab', { name: /^cc_data/ })
+    expect(active).toHaveAttribute('aria-selected', 'true')
+    expect(active.className).toContain('border-b-brand')
+    expect(active.className).toContain('bg-paper')
+    // Decorative dot (#65) — the accessible name still starts with the
+    // Agent name, the state is named by the adjacent sublabel.
+    const dot = active.querySelector('.state-dot')
+    expect(dot).toHaveClass('state-dot-attention')
+    expect(dot).toHaveAttribute('aria-hidden', 'true')
+    expect(
+      within(active).getByRole('button', { name: '关闭标签 cc_data' })
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^cc_sql/ }))
+    await screen.findByRole('heading', { name: 'cc_sql' })
+    const inactive = within(
+      screen.getByRole('tablist', { name: 'Agent 标签' })
+    ).getByRole('tab', { name: /^cc_data/ })
+    expect(inactive).toHaveAttribute('aria-selected', 'false')
+    expect(inactive.className).toContain('border-b-transparent')
+  })
+
+  it('renders the head card with avatar, worktree sublabel and double-coded state', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(screen.getByRole('button', { name: /^cx_review/ }))
+    const heading = await screen.findByRole('heading', { name: 'cx_review' })
+    const header = heading.closest('header') as HTMLElement
+    expect(within(header).getByText('CX')).toBeInTheDocument()
+    expect(header).toHaveTextContent('Codex · 独立 worktree')
+    // Run state is double-coded: status dot plus text, never color alone.
+    expect(header.querySelector('.state-dot')).toHaveClass('state-dot-ready')
+    expect(within(header).getByText('就绪')).toBeInTheDocument()
+
+    const view = heading.closest('[aria-label="Agent 视图"]') as HTMLElement
+    const chatNav = within(view).getByRole('button', { name: '对话' })
+    expect(chatNav.className).toContain('border-ink')
+    expect(chatNav.className).toContain('font-bold')
+    expect(
+      within(view).getByRole('button', { name: '活动' }).className
+    ).toContain('border-transparent')
+  })
+
+  it('renders the current-task block, conversation entries and mono tool chips', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(screen.getByRole('button', { name: /^cc_data/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    const log = within(view).getByRole('log', { name: '对话记录' })
+    expect(within(log).getByText('当前任务')).toBeInTheDocument()
+    expect(log).toHaveTextContent('清洗 Q2 销售流水，去掉重复订单行。')
+    expect(within(log).getByText('用户')).toBeInTheDocument()
+    expect(log).toHaveTextContent(
+      '正在执行。当前 Run 使用创建时记录的权限与配置快照。'
+    )
+    // Tool event as a mono chip, double-coded by dot label and text.
+    const chip = within(log).getByText(/^tool · 分析 worktree 中的输入文件$/)
+    expect(chip).toHaveClass('font-mono')
+    expect(
+      within(chip).getByRole('img', { name: '工具运行中' })
+    ).toBeInTheDocument()
+    // Queue hint stays a light info bar with planner-owned position facts.
+    const hint = within(log).getByText(/当前 Project 已有 2 项排队/)
+    expect(hint).toHaveClass('bg-brand-soft')
+
+    // A settled tool event carries the completed dot instead.
+    await user.click(screen.getByRole('button', { name: /^kimi_visual/ }))
+    const kimiView = await screen.findByRole('region', { name: 'Agent 视图' })
+    const kimiLog = within(kimiView).getByRole('log', { name: '对话记录' })
+    const settledChip = within(kimiLog).getByText(/^tool · 读取 region_sales.csv$/)
+    expect(
+      within(settledChip).getByRole('img', { name: '工具已完成' })
+    ).toBeInTheDocument()
+  })
+
+  it('renders the per-panel composer with agent-named placeholder and primary send', async () => {
+    const { user } = await gotoAgentsSurface()
+    await user.click(screen.getByRole('button', { name: /^cc_data/ }))
+    const view = await screen.findByRole('region', { name: 'Agent 视图' })
+    const composer = within(view).getByRole('textbox', {
+      name: '发送给 cc_data'
+    })
+    expect(composer).toHaveAttribute('placeholder', '只发送给 cc_data…')
+    const send = within(view).getByRole('button', { name: '发送给 cc_data' })
+    expect(send).toHaveClass('rounded-full')
+    expect(send).toHaveClass('bg-brand')
+    expect(send).toHaveAttribute(
+      'title',
+      '显式启动或继续当前 Run；不会发送给其他 Agent'
+    )
   })
 })

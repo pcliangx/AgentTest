@@ -165,13 +165,38 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
         )
       }
 
-      const workspaceMain = page.getByRole('main')
-      const overflow = await workspaceMain.evaluate((element) => ({
-        clientWidth: element.clientWidth,
-        scrollWidth: element.scrollWidth,
-        scrollLeft: element.scrollLeft
-      }))
+      // Overflow surfaces at the innermost split container whose children
+      // hit the minimum Panel size (UX-v0.2 §7.2(8)); the workspace main
+      // and the document itself stay fixed.
+      const fourthPanel = panels.filter({
+        has: page.getByRole('tab', { name: /^cc_etl\b/ })
+      })
+      await expect(fourthPanel).toHaveCount(1)
+      const overflow = await fourthPanel.evaluate((element) => {
+        let ancestor = element.parentElement
+        while (ancestor) {
+          if (
+            ancestor.classList.contains('overflow-auto') &&
+            ancestor.scrollWidth > ancestor.clientWidth
+          ) {
+            const before = ancestor.scrollLeft
+            ancestor.scrollTo({ left: ancestor.scrollWidth })
+            return {
+              clientWidth: ancestor.clientWidth,
+              scrollWidth: ancestor.scrollWidth,
+              before,
+              after: ancestor.scrollLeft
+            }
+          }
+          ancestor = ancestor.parentElement
+        }
+        return null
+      })
+      if (!overflow) {
+        throw new Error('no scrollable overflow container at four panels')
+      }
       expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth)
+      expect(overflow.after).toBeGreaterThan(overflow.before)
       expect(
         await page.evaluate<{ clientWidth: number; scrollWidth: number }>(
           '({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth })'
@@ -184,16 +209,6 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       await page.getByRole('button', { name: '关闭密度提示' }).click()
       await expect(page.getByRole('note')).toBeHidden()
 
-      const fourthPanel = panels.filter({
-        has: page.getByRole('tab', { name: /^cc_etl\b/ })
-      })
-      await expect(fourthPanel).toHaveCount(1)
-      await workspaceMain.evaluate((element) => {
-        element.scrollTo({ left: element.scrollWidth, behavior: 'instant' })
-      })
-      await expect
-        .poll(() => workspaceMain.evaluate((element) => element.scrollLeft))
-        .toBeGreaterThan(overflow.scrollLeft)
       await fourthPanel.scrollIntoViewIfNeeded()
       await expect(fourthPanel).toBeInViewport({ ratio: 0.75 })
 

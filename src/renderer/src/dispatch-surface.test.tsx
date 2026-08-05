@@ -487,11 +487,11 @@ describe('Dispatch — Agent Tab composer', () => {
     const plannedRevision = (await port.getSnapshot()).revision
 
     await user.type(
-      within(view).getByRole('textbox', { name: '发送给当前 Agent' }),
+      within(view).getByRole('textbox', { name: '发送给 cx_review' }),
       'queue from composer'
     )
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cx_review' })
     )
 
     const after = await port.getSnapshot()
@@ -521,11 +521,11 @@ describe('Dispatch — Agent Tab composer', () => {
       '规划服务暂时不可用'
     )
     const composer = within(view).getByRole('textbox', {
-      name: '发送给当前 Agent'
+      name: '发送给 cc_data'
     })
     await user.type(composer, 'retry from composer')
     expect(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_data' })
     ).toBeDisabled()
 
     await user.click(within(view).getByRole('button', { name: '重新计算' }))
@@ -535,7 +535,7 @@ describe('Dispatch — Agent Tab composer', () => {
       ).toHaveTextContent('新指令将进入第 3 位')
     )
     expect(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_data' })
     ).toBeEnabled()
   })
 
@@ -546,11 +546,11 @@ describe('Dispatch — Agent Tab composer', () => {
     await user.click(within(view).getByRole('button', { name: '对话' }))
 
     const composer = within(view).getByRole('textbox', {
-      name: /发送给当前 Agent/
+      name: /发送给 cc_data/
     })
     await user.type(composer, 'clean the Q2 pipeline')
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_data' })
     )
 
     const sent = port.commands.filter(
@@ -572,11 +572,11 @@ describe('Dispatch — Agent Tab composer', () => {
     // UX-v0.2 §6.3 only a needs-input Run may be replied to; a running agent
     // must enqueue as the next Run.
     await user.type(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ }),
       'follow up'
     )
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_data' })
     )
     const sent = port.commands.find(
       (c) => c.kind === 'send-agent-instruction'
@@ -592,11 +592,11 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     await user.type(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      within(view).getByRole('textbox', { name: /发送给 cc_sql/ }),
       'here is the input'
     )
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_sql' })
     )
     const sent = port.commands.find(
       (c) => c.kind === 'send-agent-instruction'
@@ -614,7 +614,7 @@ describe('Dispatch — Agent Tab composer', () => {
     // Composer must be disabled and explain the Terminal mutex.
     expect(view).toHaveTextContent('Terminal 接管中')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cx_anti/ })
     ).toBeDisabled()
     expect(
       port.commands.filter((c) => c.kind === 'send-agent-instruction')
@@ -632,7 +632,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Terminal 正在打开或接管中')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ })
     ).toBeDisabled()
     expect(port.commands).toHaveLength(0)
   })
@@ -648,7 +648,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Project 已归档')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ })
     ).toBeDisabled()
 
     const dialog = await openPicker(user)
@@ -673,7 +673,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Project Root 不可用')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ })
     ).toBeDisabled()
 
     const dialog = await openPicker(user)
@@ -698,7 +698,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Project 尚未初始化或绑定 Git 仓库')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ })
     ).toBeDisabled()
 
     const dialog = await openPicker(user)
@@ -725,7 +725,7 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     expect(view).toHaveTextContent('Agent 已归档')
     expect(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ })
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ })
     ).toBeDisabled()
     expect(port.commands).toHaveLength(0)
   })
@@ -739,11 +739,11 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     await user.type(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      within(view).getByRole('textbox', { name: /发送给 cx_review/ }),
       'kick off'
     )
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cx_review' })
     )
     const sent = port.commands.find(
       (c) => c.kind === 'send-agent-instruction'
@@ -763,11 +763,11 @@ describe('Dispatch — Agent Tab composer', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await user.click(within(view).getByRole('button', { name: '对话' }))
     await user.type(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ }),
       'enqueue once'
     )
     const send = within(view).getByRole('button', {
-      name: '发送给当前 Agent'
+      name: '发送给 cc_data'
     })
 
     await user.click(send)
@@ -1589,11 +1589,11 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     // The Agent Tab composer addresses only the current instance; typing @@
     // there must NOT fan out to other agents — only send-agent-instruction.
     await user.type(
-      within(view).getByRole('textbox', { name: /发送给当前 Agent/ }),
+      within(view).getByRole('textbox', { name: /发送给 cc_data/ }),
       'notify @@cc_sql too'
     )
     await user.click(
-      within(view).getByRole('button', { name: '发送给当前 Agent' })
+      within(view).getByRole('button', { name: '发送给 cc_data' })
     )
     expect(
       port.commands.filter((c) => c.kind === 'confirm-dispatch')

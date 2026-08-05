@@ -151,20 +151,26 @@ export function createStandardScenario(
       activeRunId: id('run-001', 'RunId'),
       // The active Run keeps its launch-time configuration snapshot (#13):
       // applying newer configuration never rewrites this version.
-      activeRunConfigVersion: 3
+      activeRunConfigVersion: 3,
+      currentTaskSummary: '清洗 Q2 销售流水'
     }),
     agent(ccSql, 'cc_sql', claudeCode, 'needs-input', now - 300_000, {
-      activeRunId: id('run-sql-001', 'RunId')
+      activeRunId: id('run-sql-001', 'RunId'),
+      currentTaskSummary: '维护 SQL schema 与查询'
     }),
     agent(ccEtl, 'cc_etl', claudeCode, 'failed', now - 1_800_000),
     agent(cxAnti, 'cx_anti', codex, 'ready', now - 120_000, {
-      terminalState: 'active'
+      terminalState: 'active',
+      currentTaskSummary: '检查异常值处理策略'
     }),
     agent(cxForecast, 'cx_forecast', codex, 'queued', now - 600_000, {
-      queueDepth: 2
+      queueDepth: 2,
+      currentTaskSummary: '生成季度预测模型'
     }),
     agent(cxReview, 'cx_review', codex, 'ready', now - 30_000),
-    agent(kimiViz, 'kimi_visual', kimiCode, 'ready', now - 240_000),
+    agent(kimiViz, 'kimi_visual', kimiCode, 'ready', now - 240_000, {
+      currentTaskSummary: '绘制区域销售趋势'
+    }),
     agent(kimiDocs, 'kimi_docs', kimiCode, 'unavailable', now - 3_600_000),
     {
       ...agent(ccReport, 'cc_report', claudeCode, 'ready', now - 120_000),
@@ -784,6 +790,69 @@ export function createStandardScenario(
         timestamp: now - 120_000,
         kind: 'run-completed',
         summary: 'cc_report 完成了用户访谈摘要'
+      }
+    ],
+    // Chat log content (#67): the frozen baseline's 当前任务 context block,
+    // assistant turns and tool chips are adapter-owned display facts, seeded
+    // here like every other Phase 1 projection. Only agents with a visible
+    // conversation carry entries; the rest keep the empty/status branches.
+    chatEntries: [
+      {
+        entryId: id('chat-001', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: ccData,
+        kind: 'user',
+        text: '清洗 Q2 销售流水，去掉重复订单行。'
+      },
+      {
+        entryId: id('chat-002', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: ccData,
+        kind: 'assistant',
+        text: '正在执行。当前 Run 使用创建时记录的权限与配置快照。'
+      },
+      {
+        entryId: id('chat-003', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: ccData,
+        kind: 'tool',
+        pending: true,
+        text: '分析 worktree 中的输入文件'
+      },
+      {
+        entryId: id('chat-004', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: ccSql,
+        kind: 'user',
+        text: '核对 6 月各区域销售口径。'
+      },
+      {
+        entryId: id('chat-005', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: ccSql,
+        kind: 'assistant',
+        text: '我需要你确认：6 月数据口径按下单时间还是支付时间统计？'
+      },
+      {
+        entryId: id('chat-006', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: kimiViz,
+        kind: 'user',
+        text: '绘制区域销售趋势图。'
+      },
+      {
+        entryId: id('chat-007', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: kimiViz,
+        kind: 'assistant',
+        text: '趋势图草稿已生成，等待下一步指令。'
+      },
+      {
+        entryId: id('chat-008', 'ChatEntryId'),
+        projectId,
+        agentInstanceId: kimiViz,
+        kind: 'tool',
+        text: '读取 region_sales.csv'
       }
     ],
     global: {

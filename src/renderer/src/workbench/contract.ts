@@ -33,6 +33,7 @@ export type ProjectTaskId = Brand<string, 'ProjectTaskId'>
 export type ExternalTaskId = Brand<string, 'ExternalTaskId'>
 export type KnowledgeResourceId = Brand<string, 'KnowledgeResourceId'>
 export type ActivityId = Brand<string, 'ActivityId'>
+export type ChatEntryId = Brand<string, 'ChatEntryId'>
 export type ExecutionResultId = Brand<string, 'ExecutionResultId'>
 
 /** Brands a raw string into a branded ID (cast helper). */
@@ -239,6 +240,12 @@ export interface AgentInstanceViewModel {
   doctor: 'ready' | 'blocked'
   /** Epoch ms of the instance's latest known activity, for recency ordering. */
   lastActivityAt?: number
+  /**
+   * Adapter-owned summary of the instance's current work item (#67),
+   * displayed verbatim as the Chat view's 当前任务 context block. Absent
+   * when no work item is known — the block is hidden, never fabricated.
+   */
+  currentTaskSummary?: string
   /**
    * Adapter-owned handoff facts that cannot be derived from runtime, Activity
    * or worktree projections. Renderer consumers display these facts verbatim.
@@ -550,6 +557,34 @@ export type ActivityEntry =
     })
 
 // ---------------------------------------------------------------------------
+// Chat entries (#67) — adapter-owned conversation facts per Agent Instance
+// ---------------------------------------------------------------------------
+
+/**
+ * One visible entry in an Agent's Chat log (#67). Phase 1 seeds these from
+ * the scenario; a real adapter projects them from Run events. `tool`
+ * entries render as mono chips — `pending` while the tool is in flight.
+ * The renderer never infers conversation content from runtime state.
+ */
+interface ChatEntryBase {
+  entryId: ChatEntryId
+  projectId: ProjectId
+  agentInstanceId: AgentInstanceId
+  text: string
+}
+
+export type ChatEntryViewModel =
+  | (ChatEntryBase & {
+      kind: 'user' | 'assistant'
+      pending?: never
+    })
+  | (ChatEntryBase & {
+      kind: 'tool'
+      /** Still running vs settled. */
+      pending?: boolean
+    })
+
+// ---------------------------------------------------------------------------
 // Handoff (#12)
 // ---------------------------------------------------------------------------
 
@@ -683,6 +718,8 @@ export interface WorkbenchViewModel {
   runReadiness: RunReadinessViewModel[]
   changes: WorktreeChangesViewModel[]
   activity: ActivityEntry[]
+  /** Chat log entries per Agent Instance (#67), oldest first. */
+  chatEntries: ChatEntryViewModel[]
   handoffs: HandoffViewModel[]
   quitPreview?: QuitPreviewViewModel
   global: {
