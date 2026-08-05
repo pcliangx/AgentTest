@@ -1,0 +1,161 @@
+/**
+ * Repeatable visual-acceptance capture (#69).
+ *
+ * One deterministic Electron session (the shared smoke harness, fixed
+ * 1280×800 viewport, reduced-motion, contract mock scenario) walks every
+ * surface and writes a PNG per surface to `test-results/visual/`, so the
+ * manual side-by-side comparison against the frozen prototypes
+ * (docs/design) can be re-run at any time with a single command:
+ *
+ *     npm run capture:visual
+ *
+ * The spec also runs as part of `npm run test:ui` so the capture flow
+ * itself can never rot. Screenshots are artifacts for human comparison —
+ * the assertions here only guarantee each surface actually rendered before
+ * its capture; nothing pixel-diffs.
+ */
+import { expect, test, type TestInfo } from '@playwright/test'
+import { mkdir } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import {
+  attachAllEvidence,
+  captureFailure,
+  connectSmokeWindow,
+  createEvidence,
+  expectNoRendererErrors,
+  launchSmokeApplication,
+  recordedStep,
+  stopSmokeSession,
+  type SmokeEvidence,
+  type SmokeSession
+} from './helpers/smoke-harness'
+import { UI_SMOKE_SCENARIO } from '../../src/shared/ui-smoke-scenario'
+
+const VISUAL_DIR = resolve('test-results/visual')
+
+test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: TestInfo) => {
+  const evidence: SmokeEvidence = createEvidence()
+  let session: SmokeSession | undefined
+
+  try {
+    session = await recordedStep(evidence, 'launch Electron for visual capture', () =>
+      launchSmokeApplication('first', evidence)
+    )
+    const page = await recordedStep(evidence, 'connect to the window', () =>
+      connectSmokeWindow(session!, evidence)
+    )
+    await mkdir(VISUAL_DIR, { recursive: true })
+
+    const nav = () => page.getByRole('navigation', { name: '主导航' })
+    const header = () => page.locator('header')
+
+    const capture = async (name: string): Promise<void> => {
+      const path = join(VISUAL_DIR, `${name}.png`)
+      await page.screenshot({ path })
+      await testInfo.attach(`${name}.png`, { path, contentType: 'image/png' })
+      evidence.steps.push(`CAPTURE test-results/visual/${name}.png`)
+    }
+
+    /** Navigate, prove the surface rendered, let the layout settle, shoot. */
+    const captureSurface = async (
+      name: string,
+      open: () => Promise<void>,
+      ready: () => Promise<void>
+    ): Promise<void> => {
+      await open()
+      await ready()
+      await page.waitForTimeout(200)
+      await capture(name)
+    }
+
+    for (const [name, navLabel, regionName] of [
+      ['01-overview', '概览', '项目概览'],
+      // The Agent Directory lives in the always-on context pane; probe the
+      // Agents surface's own region instead.
+      ['02-agents', 'Agent', 'Agent 工作区'],
+      ['03-tasks', '任务', '任务'],
+      ['04-knowledge', '知识', 'Knowledge'],
+      ['05-handoffs', '交接', '交接'],
+      ['06-activity', '活动', '活动'],
+      ['07-settings', '设置', '项目设置']
+    ] as const) {
+      await recordedStep(evidence, `capture ${name}`, () =>
+        captureSurface(
+          name,
+          () =>
+            nav().getByRole('button', { name: navLabel, exact: true }).click(),
+          async () => {
+            await expect(
+              page.getByRole('region', { name: regionName })
+            ).toBeVisible()
+          }
+        )
+      )
+    }
+
+    for (const [name, headerLabel, regionName] of [
+      ['08-connections', '连接', '全局连接'],
+      ['09-provider-health', 'Provider 健康', 'Provider 健康'],
+      ['10-global-settings', '全局设置', '全局设置']
+    ] as const) {
+      await recordedStep(evidence, `capture ${name}`, () =>
+        captureSurface(
+          name,
+          () =>
+            header()
+              .getByRole('button', { name: headerLabel, exact: true })
+              .click(),
+          async () => {
+            await expect(
+              page.getByRole('region', { name: regionName })
+            ).toBeVisible()
+          }
+        )
+      )
+    }
+
+    await recordedStep(evidence, 'capture 11-attention-drawer', async () => {
+      await page.getByRole('button', { name: 'Global Attention' }).click()
+      await expect(
+        page.getByRole('complementary', { name: 'Global Attention' })
+      ).toBeVisible()
+      await page.waitForTimeout(200)
+      await capture('11-attention-drawer')
+      await page.keyboard.press('Escape')
+      await expect(
+        page.getByRole('complementary', { name: 'Global Attention' })
+      ).toBeHidden()
+    })
+
+    await recordedStep(evidence, 'capture 12-dispatch-picker', async () => {
+      await nav().getByRole('button', { name: '概览', exact: true }).click()
+      const overview = page.getByRole('region', { name: '项目概览' })
+      await expect(overview).toBeVisible()
+      // The ContextPane also offers a 派发给 Agent entry — scope to the
+      // Overview region's primary action.
+      await overview.getByRole('button', { name: '派发给 Agent' }).click()
+      const dialog = page.getByRole('dialog', { name: '派发给 Agent' })
+      await expect(dialog).toBeVisible()
+      // Fill an @@ mention so target chips and the resource/queue preview
+      // render before the capture.
+      await dialog
+        .getByRole('textbox', { name: '指令' })
+        .fill('ask @@cc_data 汇总今日清洗进展')
+      await expect(
+        dialog.getByRole('region', { name: '派发预览' })
+      ).toBeVisible()
+      await page.waitForTimeout(200)
+      await capture('12-dispatch-picker')
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeHidden()
+    })
+
+    await expectNoRendererErrors(page, session, evidence)
+  } catch (error) {
+    await captureFailure(session, evidence, error, testInfo)
+    throw error
+  } finally {
+    if (session) await stopSmokeSession(session, evidence)
+    await attachAllEvidence(testInfo, evidence, UI_SMOKE_SCENARIO)
+  }
+})

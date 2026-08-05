@@ -238,6 +238,13 @@
     background: var(--color-amber-soft);
     color: var(--color-amber);
   }
+  /* Failure/loss states (#69): 不可用/错误/验证失败 — same double-coding
+     rule as chip-good/chip-warn. */
+  .chip-danger {
+    border-color: var(--color-danger);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
 
   /* Inline notice bars of the frozen settings baseline (#68): amber for
      scope/limitation notes, danger for Provider Doctor failures. */

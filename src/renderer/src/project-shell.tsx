@@ -29,12 +29,13 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
-import { activityKindLabel } from './activity-display'
-import { CONNECTION_STATUS_LABEL } from './connection-display'
+import { ACTIVITY_KIND_CHIP, activityKindLabel } from './activity-display'
+import { CONNECTION_CHIP, CONNECTION_STATUS_LABEL } from './connection-display'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
+import { StatusChip } from './status-chip'
 import { ContextPane } from './context-pane'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
@@ -1023,7 +1024,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             />
           )}
           {snapshot.activeGlobalSurface === 'global-settings' && (
-            <GlobalSettingsSurface />
+            <GlobalSettingsSurface concurrency={snapshot.global.concurrency} />
           )}
           </main>
         ) : project ? (
@@ -1077,7 +1078,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               <OverviewSurface
                 project={project}
                 agentCount={projectAgents.length}
-                connectionLabel={connection?.label}
+                connection={connection}
                 activity={projectActivity.slice(0, 5)}
                 onDispatch={() => setShowPicker(true)}
               />
@@ -1173,23 +1174,8 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 }
               />
             )}
-            {project.currentSurface !== 'overview' &&
-              project.currentSurface !== 'activity' &&
-              project.currentSurface !== 'agents' &&
-              project.currentSurface !== 'knowledge' &&
-              project.currentSurface !== 'settings' &&
-              project.currentSurface !== 'tasks' &&
-              project.currentSurface !== 'handoffs' && (
-                <PlaceholderSurface
-                  surface={project.currentSurface}
-                  retainedTarget={
-                    retainedDeepLink &&
-                    deepLinkSurface(retainedDeepLink) === project.currentSurface
-                      ? retainedDeepLink
-                      : null
-                  }
-                />
-              )}
+            {/* #69: every ProjectSurface variant has a real surface above —
+                the old 尚未实现 placeholder branch is gone for good. */}
           </main>
           </>
         ) : (
@@ -1305,64 +1291,90 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 function OverviewSurface({
   project,
   agentCount,
-  connectionLabel,
+  connection,
   activity,
   onDispatch
 }: {
   project: ProjectViewModel
   agentCount: number
-  connectionLabel?: string
+  connection?: WorkbenchViewModel['global']['connections'][number]
   activity: ActivityEntry[]
   onDispatch: () => void
 }) {
   return (
     <section role="region" aria-label="项目概览" className="space-y-4">
-      <h2 className="text-lg font-medium text-ink">{project.name}</h2>
-
-      <div className="flex gap-6 text-sm">
-        <div>
-          <span className="text-muted">根目录</span>
-          <span className="ml-1.5 text-ink">
-            {ROOT_LABEL[project.rootAvailability]}
-          </span>
-        </div>
-        <div>
-          <span className="text-muted">Git</span>
-          <span className="ml-1.5 text-ink">
-            {GIT_LABEL[project.repositoryReadiness]}
-          </span>
-        </div>
+      {/* #69: the frozen baseline's card language — header with the single
+          primary action, big-number stat cards, a double-encoded status
+          card and the recent-activity card. */}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-medium text-ink">{project.name}</h2>
+        <button className="btn btn-primary" onClick={onDispatch}>
+          派发给 Agent
+        </button>
       </div>
 
-      <div className="text-sm">
-        <span className="text-muted">连接</span>
-        <span className="ml-1.5 text-ink">
-          {connectionLabel ?? '未连接'}
-        </span>
-      </div>
-
-      <div className="flex gap-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard value={agentCount} label="Agent" />
         <StatCard value={project.activeRunCount} label="活动运行" />
         <StatCard value={project.queuedRunCount} label="排队" />
         <StatCard value={project.attentionCount} label="关注" />
       </div>
 
-      <div className="flex gap-2">
-        <button className="btn" onClick={onDispatch}>
-          派发给 Agent
-        </button>
+      <div className="card max-w-[560px]">
+        <div className="border-b border-line bg-raised px-3 py-2">
+          <h3 className="section-label">状态</h3>
+        </div>
+        <ul className="divide-y divide-line text-xs">
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">根目录</span>
+            <StatusChip
+              tone={project.rootAvailability === 'available' ? 'good' : 'danger'}
+              icon={project.rootAvailability === 'available' ? '●' : '✕'}
+            >
+              {ROOT_LABEL[project.rootAvailability]}
+            </StatusChip>
+          </li>
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">Git</span>
+            <StatusChip
+              tone={project.repositoryReadiness === 'ready' ? 'good' : 'warn'}
+              icon={project.repositoryReadiness === 'ready' ? '✓' : '⚠'}
+            >
+              {GIT_LABEL[project.repositoryReadiness]}
+            </StatusChip>
+          </li>
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">连接</span>
+            {connection ? (
+              <span className="flex items-center gap-2">
+                <span className="text-ink">{connection.label}</span>
+                <StatusChip
+                  tone={CONNECTION_CHIP[connection.status].tone}
+                  icon={CONNECTION_CHIP[connection.status].icon}
+                >
+                  {CONNECTION_STATUS_LABEL[connection.status]}
+                </StatusChip>
+              </span>
+            ) : (
+              <StatusChip icon="○">未连接</StatusChip>
+            )}
+          </li>
+        </ul>
       </div>
 
-      <div>
-        <h3 className="mb-2 text-sm text-muted">最近活动</h3>
-        <ul className="space-y-1">
-          {activity.map((entry) => (
-            <li key={entry.activityId} className="text-xs text-muted">
-              {entry.summary}
-            </li>
-          ))}
-        </ul>
+      <div className="card">
+        <div className="border-b border-line bg-raised px-3 py-2">
+          <h3 className="section-label">最近活动</h3>
+        </div>
+        {activity.length === 0 ? (
+          <p className="px-3 py-2 text-xs text-muted">暂无活动记录</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {activity.map((entry) => (
+              <ActivityRow key={entry.activityId} entry={entry} />
+            ))}
+          </ul>
+        )}
       </div>
     </section>
   )
@@ -1370,56 +1382,52 @@ function OverviewSurface({
 
 function StatCard({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded-lg border border-line bg-paper px-3 py-2">
-      <span className="text-xl text-ink">{value}</span>
-      <span className="ml-1 text-xs text-muted">{label}</span>
+    <div className="card px-3 py-2.5">
+      {/* Frozen baseline order (#69): muted label first, big number below —
+          numbers stay ink; the label names the metric. */}
+      <span className="block text-[10px] text-muted">{label}</span>
+      <span className="mt-0.5 block text-[22px] font-bold leading-7 text-ink">
+        {value}
+      </span>
     </div>
+  )
+}
+
+function ActivityRow({ entry }: { entry: ActivityEntry }) {
+  return (
+    <li className="flex items-center gap-2 px-3 py-2">
+      <StatusChip
+        tone={ACTIVITY_KIND_CHIP[entry.kind].tone}
+        icon={ACTIVITY_KIND_CHIP[entry.kind].icon}
+      >
+        {activityKindLabel(entry.kind)}
+      </StatusChip>
+      <span className="min-w-0 flex-1 truncate text-xs text-ink">
+        {entry.summary}
+      </span>
+      <time className="shrink-0 text-[10px] text-muted">
+        {new Date(entry.timestamp).toLocaleString()}
+      </time>
+    </li>
   )
 }
 
 function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
   return (
-    <section role="region" aria-label="活动" className="space-y-2">
-      <h2 className="mb-3 text-lg text-ink">活动</h2>
+    <section role="region" aria-label="活动" className="space-y-3">
+      <h2 className="text-lg font-medium text-ink">活动</h2>
       {activity.length === 0 ? (
         <p className="text-sm text-muted">暂无活动记录</p>
       ) : (
-        <ul className="space-y-2">
-          {activity.map((entry) => (
-            <li
-              key={entry.activityId}
-              className="border-b border-line pb-2 text-sm"
-            >
-              <div className="text-ink">{entry.summary}</div>
-              <div className="mt-0.5 text-xs text-muted">
-                {activityKindLabel(entry.kind)}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="card">
+          <ul className="divide-y divide-line">
+            {activity.map((entry) => (
+              <ActivityRow key={entry.activityId} entry={entry} />
+            ))}
+          </ul>
+        </div>
       )}
     </section>
-  )
-}
-
-function PlaceholderSurface({
-  surface,
-  retainedTarget
-}: {
-  surface: ProjectSurface
-  retainedTarget?: AttentionTarget | null
-}) {
-  const label = SURFACES.find((s) => s.surface === surface)?.label ?? surface
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2">
-      <p className="text-sm text-muted">{label} 工作面尚未实现</p>
-      {retainedTarget && (
-        <p className="text-xs text-muted">
-          已保留目标：{describeAttentionTarget(retainedTarget)}
-          （详情尚未交付）
-        </p>
-      )}
-    </div>
   )
 }
 
@@ -1466,9 +1474,12 @@ function ConnectionsSurface({
             >
               <div className="flex items-center gap-3">
                 <span className="text-sm text-ink">{conn.label}</span>
-                <span className="text-xs text-muted">
-                  {CONNECTION_STATUS_LABEL[conn.status] ?? conn.status}
-                </span>
+                <StatusChip
+                  tone={CONNECTION_CHIP[conn.status].tone}
+                  icon={CONNECTION_CHIP[conn.status].icon}
+                >
+                  {CONNECTION_STATUS_LABEL[conn.status]}
+                </StatusChip>
               </div>
               <button
                 className="mini-button mini-button-danger"
@@ -1500,15 +1511,21 @@ function ProviderHealthSurface({
             key={p.providerId}
             className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"
           >
-            <span className="text-sm text-ink">{p.displayName}</span>
+            <div>
+              <span className="text-sm text-ink">{p.displayName}</span>
+              <p className="mt-0.5 text-xs text-muted">
+                {p.models.length > 0
+                  ? `模型：${p.models.map((m) => m.displayName).join('、')}`
+                  : '无可用模型'}
+              </p>
+            </div>
             <div className="flex items-center gap-2">
-              <span
-                className={`text-xs ${
-                  p.status === 'ready' ? 'text-teal' : 'text-amber'
-                }`}
+              <StatusChip
+                tone={p.status === 'ready' ? 'good' : 'warn'}
+                icon={p.status === 'ready' ? '●' : '⚠'}
               >
                 {p.status === 'ready' ? '可用' : '已阻断'}
-              </span>
+              </StatusChip>
               {p.status === 'blocked' && (
                 <button
                   className="text-xs text-brand hover:text-brand-ink"
@@ -1525,11 +1542,47 @@ function ProviderHealthSurface({
   )
 }
 
-function GlobalSettingsSurface() {
+function GlobalSettingsSurface({
+  concurrency
+}: {
+  concurrency: WorkbenchViewModel['global']['concurrency']
+}) {
   return (
     <section role="region" aria-label="全局设置" className="space-y-3">
       <h2 className="text-lg font-medium text-ink">全局设置</h2>
-      <p className="text-sm text-muted">全局设置工作面尚未实现</p>
+      {/* #69: the placeholder copy is gone — the surface renders the
+          adapter-owned capacity facts as the same card language as every
+          other surface. Editing arrives with a real global contract. */}
+      <div className="card max-w-[560px]">
+        <div className="border-b border-line bg-raised px-3 py-2">
+          <h3 className="section-label">运行容量</h3>
+        </div>
+        <ul className="divide-y divide-line text-xs">
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">全局并发上限</span>
+            <strong className="text-ink">{concurrency.globalLimit}</strong>
+          </li>
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">Project 并发上限</span>
+            <strong className="text-ink">{concurrency.projectLimit}</strong>
+          </li>
+          <li className="flex items-center justify-between px-3 py-2">
+            <span className="text-muted">每 Agent 并发上限</span>
+            <strong className="text-ink">{concurrency.perAgentLimit}</strong>
+          </li>
+        </ul>
+        <div className="flex items-center gap-2 border-t border-line bg-raised px-3 py-2 text-xs text-muted">
+          当前：
+          <StatusChip tone="brand" icon="●">
+            全局活跃 {concurrency.activeGlobal}
+          </StatusChip>
+          <StatusChip icon="◌">排队 {concurrency.queuedGlobal}</StatusChip>
+        </div>
+      </div>
+      <p className="notice-bar max-w-[560px]">
+        演示模式：容量为契约化 mock 事实；Phase 1 不提供全局配置编辑，实例与
+        Project 配置请使用各 Project 的设置工作面。
+      </p>
     </section>
   )
 }
@@ -1547,6 +1600,16 @@ const VALIDATION_LABEL: Record<HandoffValidationViewModel['status'], string> = {
   pass: '验证通过',
   fail: '验证失败',
   pending: '验证待完成'
+}
+
+/** #69 triple-encoding for the handoff validation state. */
+const VALIDATION_CHIP: Record<
+  HandoffValidationViewModel['status'],
+  { tone: 'good' | 'danger' | 'warn'; icon: string }
+> = {
+  pass: { tone: 'good', icon: '✓' },
+  fail: { tone: 'danger', icon: '✕' },
+  pending: { tone: 'warn', icon: '⚠' }
 }
 
 const IMPORT_STATE_LABEL: Record<HandoffImportState, string> = {
@@ -1611,32 +1674,23 @@ function HandoffsSurface({
               }`}
             >
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span
-                  className={`rounded px-1.5 py-0.5 text-xs ${
-                    h.completeness === 'complete'
-                      ? 'bg-teal-soft text-teal'
-                      : 'bg-amber-soft text-amber'
-                  }`}
+                <StatusChip
+                  tone={h.completeness === 'complete' ? 'good' : 'warn'}
+                  icon={h.completeness === 'complete' ? '✓' : '⚠'}
                 >
                   {COMPLETENESS_LABEL[h.completeness]}
-                </span>
-                <span className="text-xs text-muted">
-                  {IMPORT_STATE_LABEL[h.importState]}
-                </span>
+                </StatusChip>
+                <StatusChip>{IMPORT_STATE_LABEL[h.importState]}</StatusChip>
                 {h.provenance.origin === 'cross-project' && (
-                  <span className="rounded bg-brand-soft px-1.5 py-0.5 text-xs text-brand-ink">
+                  <StatusChip tone="brand">
                     跨项目（来自 {h.provenance.sourceProjectName}）
-                  </span>
+                  </StatusChip>
                 )}
                 {h.provenance.origin === 'quit-snapshot' && (
-                  <span className="rounded bg-danger-soft px-1.5 py-0.5 text-xs text-danger">
-                    退出快照
-                  </span>
+                  <StatusChip tone="danger">退出快照</StatusChip>
                 )}
                 {h.provenance.origin === 'imported' && (
-                  <span className="rounded bg-brand-soft px-1.5 py-0.5 text-xs text-brand-ink">
-                    导入
-                  </span>
+                  <StatusChip tone="brand">导入</StatusChip>
                 )}
                 <span className="font-mono text-[10px] text-muted">
                   {h.handoffId}
@@ -1664,7 +1718,12 @@ function HandoffsSurface({
                   <dd className="inline font-mono">{h.baseCommit}</dd>
                   <dt className="ml-3 inline text-muted">验证：</dt>
                   <dd className="inline">
-                    {VALIDATION_LABEL[h.validation.status]}
+                    <StatusChip
+                      tone={VALIDATION_CHIP[h.validation.status].tone}
+                      icon={VALIDATION_CHIP[h.validation.status].icon}
+                    >
+                      {VALIDATION_LABEL[h.validation.status]}
+                    </StatusChip>
                     {h.validation.message ? `（${h.validation.message}）` : ''}
                   </dd>
                 </div>
