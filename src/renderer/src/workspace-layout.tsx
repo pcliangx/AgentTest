@@ -22,10 +22,13 @@ import { id } from './workbench/contract'
 import { activityKindLabel } from './activity-display'
 import { clampRatio } from './workbench/layout-reducer'
 import {
+  providerCode,
   providerLabel,
   RUNTIME_STATE_LABEL,
-  TERMINAL_STATE_LABEL
+  TERMINAL_STATE_LABEL,
+  WORKTREE_MODE_LABEL
 } from './agent-display'
+import { StatusDot, statusDotState } from './status-dot'
 import type { PlanDispatch, SendCommand } from './agents-surface'
 import type { ProjectDispatchBlockReason } from './workbench/dispatchability'
 import { useDispatchPlan } from './use-dispatch-plan'
@@ -313,10 +316,10 @@ export function WorkspaceArea({
   const panelCount = Object.keys(layout.panels).length
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {focusPanelId ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-2 py-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center gap-2 border-b border-line bg-raised px-2 py-1">
             <span className="flex-1 text-xs text-muted">
               Focus 模式：仅显示当前 Panel，布局保持不变
             </span>
@@ -324,18 +327,18 @@ export function WorkspaceArea({
               ref={exitFocusButtonRef}
               aria-label="退出 Focus"
               aria-keyshortcuts="Escape"
-              className="rounded px-1.5 py-0.5 text-xs text-ink hover:bg-wash"
+              className="mini-button"
               onClick={() => void sendLayout({ kind: 'focus-panel' })}
             >
               退出 Focus
             </button>
           </div>
-          <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1">
             <PanelView panelId={focusPanelId} ctx={ctx} />
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1">
           <LayoutNodeView node={layout.root} ctx={ctx} />
         </div>
       )}
@@ -682,10 +685,10 @@ function Divider({
       aria-valuemin={10}
       aria-valuemax={90}
       tabIndex={0}
-      className={`shrink-0 bg-line hover:bg-brand focus-visible:bg-brand ${
+      className={`group relative shrink-0 ${
         direction === 'horizontal'
-          ? 'w-1.5 cursor-col-resize'
-          : 'h-1.5 cursor-row-resize'
+          ? 'w-2 cursor-col-resize'
+          : 'h-2 cursor-row-resize'
       }`}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
@@ -693,7 +696,18 @@ function Divider({
       onPointerUp={handlePointerUp}
       onPointerCancel={cancelDrag}
       onLostPointerCapture={cancelDrag}
-    />
+    >
+      {/* Frozen-baseline divider (#67): an 8px hit area with a centered 2px
+          line that turns brand on hover/focus. */}
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute rounded-full bg-line transition-colors group-hover:bg-brand group-focus-visible:bg-brand ${
+          direction === 'horizontal'
+            ? 'inset-y-2 left-[3px] w-0.5'
+            : 'inset-x-2 top-[3px] h-0.5'
+        }`}
+      />
+    </div>
   )
 }
 
@@ -807,9 +821,6 @@ const TAB_KEYSHORTCUTS = [
   'Control+Shift+ArrowDown'
 ].join(' ')
 
-const PANEL_TOOLBAR_BUTTON_CLASS =
-  'rounded px-1.5 py-0.5 text-xs text-muted hover:bg-wash hover:text-ink'
-
 function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContext }) {
   const { project, snapshot, openAttentionTargets, sendLayout } = ctx
   const panel = project.layout.panels[panelId]
@@ -817,6 +828,12 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
   const activeAgent = snapshot.agents.find(
     (a) => a.agentInstanceId === panel.activeTabId
   )
+  // Frozen-baseline panel chrome (#67): the P-label follows the rendered
+  // tree order, and the focused Panel carries the brand ring so the active
+  // target is visible without relying on color alone (the layout focus is
+  // also exposed through the Focus toolbar state).
+  const panelIndex = treePanelOrder(project.layout.root).indexOf(panelId) + 1
+  const isLayoutFocused = project.layout.focusedPanelId === panelId
 
   const dropOperation = (
     zone: 'center' | 'left' | 'right' | 'top' | 'bottom',
@@ -869,13 +886,25 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
     <div
       role="group"
       aria-label="Agent 面板"
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[11px] border bg-paper ${
+        isLayoutFocused
+          ? 'border-brand shadow-panel-focus'
+          : 'border-line shadow-panel'
+      }`}
     >
-      <div className="flex shrink-0 items-center gap-1 border-b border-line px-1.5 py-1">
+      {/* Narrow Panels (three-up at 1280×800) cannot fit every op — the
+          toolbar scrolls horizontally instead of wrapping button text. */}
+      <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-line bg-raised py-1 pl-0 pr-1.5">
+        <span
+          aria-hidden="true"
+          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[9px] font-bold text-muted"
+        >
+          P{panelIndex}
+        </span>
         {!ctx.temporaryFocusPanelId && (
           <>
             <button
-              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              className="mini-button"
               onClick={() =>
                 void sendLayout({
                   kind: 'split-panel',
@@ -887,7 +916,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               向右分割
             </button>
             <button
-              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              className="mini-button"
               onClick={() =>
                 void sendLayout({
                   kind: 'split-panel',
@@ -899,7 +928,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               向下分割
             </button>
             <button
-              className={PANEL_TOOLBAR_BUTTON_CLASS}
+              className="mini-button"
               title="以此 Panel 为主，生成一主两辅布局"
               onClick={() =>
                 void sendLayout({ kind: 'apply-analysis-preset', panelId })
@@ -914,7 +943,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
           <button
             aria-label="Focus 此 Panel"
             data-focus-trigger={panelId}
-            className={PANEL_TOOLBAR_BUTTON_CLASS}
+            className="mini-button"
             onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
           >
             Focus
@@ -922,7 +951,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
         )}
         {!ctx.temporaryFocusPanelId && ctx.panelCount > 1 && (
           <button
-            className={PANEL_TOOLBAR_BUTTON_CLASS}
+            className="mini-button"
             onClick={() => ctx.onRequestClosePanel(panelId)}
           >
             关闭 Panel
@@ -933,7 +962,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div
         role="tablist"
         aria-label="Agent 标签"
-        className="flex shrink-0 overflow-x-auto border-b border-line"
+        className="flex shrink-0 overflow-x-auto border-b border-line bg-raised"
       >
         {panel.tabs.map((tabId) => {
           const agent = snapshot.agents.find(
@@ -950,10 +979,10 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               data-tab-id={tabId}
               tabIndex={selected ? 0 : -1}
               draggable
-              className={`flex cursor-pointer items-center gap-1.5 border-r border-line px-3 py-1.5 text-sm ${
+              className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm ${
                 selected
-                  ? 'bg-paper text-ink'
-                  : 'text-muted hover:bg-wash'
+                  ? 'border-b-brand bg-paper text-ink'
+                  : 'border-b-transparent text-muted hover:bg-wash'
               }`}
               onClick={() =>
                 void sendLayout({
@@ -970,7 +999,11 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               }}
               onDragEnd={ctx.onDragTabEnd}
             >
-              <span className="font-mono">{agent.name}</span>
+              {/* Decorative — the adjacent sublabel already names the
+                  state, so the accessible name still starts with the
+                  Agent Name. */}
+              <StatusDot state={statusDotState(agent.runtimeState)} />
+              <span className="truncate font-mono">{agent.name}</span>
               {openAttentionTargets.has(tabId) && (
                 <span
                   role="img"
@@ -980,13 +1013,13 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                   ●
                 </span>
               )}
-              <span className="text-xs text-muted">
+              <span className="min-w-0 flex-1 truncate text-xs text-muted">
                 {providerLabel(agent.providerId)} ·{' '}
                 {RUNTIME_STATE_LABEL[agent.runtimeState]}
               </span>
               <button
                 aria-label={`关闭标签 ${agent.name}`}
-                className="ml-1 rounded px-1 text-muted hover:bg-wash hover:text-ink"
+                className="shrink-0 rounded px-1 text-muted hover:bg-wash hover:text-ink"
                 onClick={(e) => {
                   e.stopPropagation()
                   void sendLayout({
@@ -1171,16 +1204,30 @@ function AgentView({
     <section
       role="region"
       aria-label="Agent 视图"
-      className="flex min-h-0 flex-1 flex-col p-4"
+      className="flex min-h-0 flex-1 flex-col"
     >
-      <header className="mb-3">
-        <h3 className="font-mono text-base font-medium text-ink">
-          {agent.name}
-        </h3>
-        <p className="mt-0.5 text-xs text-muted">
-          {providerLabel(agent.providerId)} ·{' '}
+      {/* Head card (#67): mono avatar + name title, Provider/worktree
+          sublabel, and the run state double-coded by dot + text. */}
+      <header className="flex min-h-[48px] shrink-0 items-center gap-2 border-b border-line px-3">
+        <span
+          aria-hidden="true"
+          className="grid h-[31px] w-[31px] shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-[9px] font-bold text-brand-ink"
+        >
+          {providerCode(agent.providerId)}
+        </span>
+        <div className="min-w-0">
+          <h3 className="truncate font-mono text-[13px] font-bold text-ink">
+            {agent.name}
+          </h3>
+          <p className="truncate text-[10px] text-muted">
+            {providerLabel(agent.providerId)} ·{' '}
+            {WORKTREE_MODE_LABEL[agent.worktreeMode]}
+          </p>
+        </div>
+        <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-wash px-2 py-1 text-[10px] text-muted">
+          <StatusDot state={statusDotState(agent.runtimeState)} />
           {RUNTIME_STATE_LABEL[agent.runtimeState]}
-        </p>
+        </span>
       </header>
 
       {/* Unavailable (#14): every per-agent sub-view stays read-only; the
@@ -1189,7 +1236,7 @@ function AgentView({
       {agent.runtimeState === 'unavailable' && (
         <div
           role="note"
-          className="mb-3 flex items-center gap-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber"
+          className="mx-3 mt-2 flex shrink-0 items-center gap-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber"
         >
           <span className="flex-1">
             Provider 不可用；当前仅可查看历史记录，修复 Provider 后可恢复。
@@ -1208,14 +1255,16 @@ function AgentView({
         </div>
       )}
 
-      <div className="mb-3 flex gap-1 border-b border-line">
+      {/* Underline segmented nav (#67) — the active segment pairs the
+          underline with bold text, never color alone. */}
+      <div className="flex shrink-0 gap-4 border-b border-line px-3">
         {SUB_VIEWS.map(({ view, label }) => (
           <button
             key={view}
-            className={`px-2 py-1 text-sm ${
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-1 py-1.5 text-xs ${
               subView === view
-                ? 'border-b-2 border-brand text-ink'
-                : 'text-muted hover:text-ink'
+                ? 'border-ink font-bold text-ink'
+                : 'border-transparent text-muted hover:text-ink'
             }`}
             onClick={() => setSubView(view)}
           >
@@ -1224,7 +1273,15 @@ function AgentView({
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto text-sm text-muted">
+      {/* Chat pins its composer to the Panel bottom and scrolls the log
+          internally; the other sub-views scroll as one block. */}
+      <div
+        className={
+          subView === 'chat'
+            ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-3 pt-2 text-sm text-muted'
+            : 'min-h-0 flex-1 overflow-auto px-3 py-2 text-sm text-muted'
+        }
+      >
         {subView === 'chat' && (
           <ChatState
             project={project}
@@ -1293,6 +1350,9 @@ function ChatState({
   planDispatch: PlanDispatch
   sendCommand: SendCommand
 }) {
+  // 9px caps eyebrow above each conversation block (frozen baseline §main).
+  const speakerLabelClass =
+    'mb-1 text-[9px] font-bold uppercase tracking-[0.08em] text-muted'
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const submittingRef = useRef(false)
@@ -1327,6 +1387,11 @@ function ChatState({
       !replyingToCurrentRun
   })
   const planEntry = currentPlan?.entries[0]
+
+  // This Agent's adapter-owned conversation entries (#67), oldest first.
+  const chatEntries = snapshot.chatEntries.filter(
+    (entry) => entry.agentInstanceId === agent.agentInstanceId
+  )
 
   const disabled =
     baseDisabled || (!replyingToCurrentRun && (planning || !currentPlan))
@@ -1375,6 +1440,41 @@ function ChatState({
         aria-busy={planning}
         className="min-h-0 flex-1 overflow-auto"
       >
+        {/* Conversation content (#67): the 当前任务 context block and the
+            adapter-owned entries (assistant turns, mono tool chips). The
+            state-driven status copy below is unchanged — it answers what
+            sending NOW would do. */}
+        {agent.currentTaskSummary && (
+          <article className="mb-2.5 max-w-[68ch]">
+            <div className={speakerLabelClass}>当前任务</div>
+            <p className="text-xs leading-relaxed text-ink">
+              {agent.currentTaskSummary}
+            </p>
+          </article>
+        )}
+        {chatEntries.map((entry) =>
+          entry.kind === 'tool' ? (
+            <div key={entry.entryId} className="mb-2.5">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-wash px-2 py-1.5 font-mono text-[10px] text-muted">
+                <StatusDot
+                  state={entry.pending ? 'running' : 'ready'}
+                  label={entry.pending ? '工具运行中' : '工具已完成'}
+                />
+                tool · {entry.text}
+              </span>
+            </div>
+          ) : (
+            <article
+              key={entry.entryId}
+              className="mb-2.5 max-w-[68ch] border-t border-line/60 pt-2.5"
+            >
+              <div className={speakerLabelClass}>
+                {entry.kind === 'user' ? '用户' : agent.name}
+              </div>
+              <p className="text-xs leading-relaxed text-ink">{entry.text}</p>
+            </article>
+          )
+        )}
         {projectBlockReason === 'project-archived' ? (
           <p className="text-muted">
             Project 已归档；仅可查看历史记录，不能发送新指令。
@@ -1438,7 +1538,9 @@ function ChatState({
             )}
           </fieldset>
         ) : planEntry?.outcome === 'queue' ? (
-          <p className="text-muted">
+          /* Queue hint as the light info bar (#67) — position facts stay
+             planner-owned, only the presentation changed. */
+          <p className="rounded-lg border border-brand-border bg-brand-soft px-3 py-2 text-xs text-brand-ink">
             当前 Project 已有 {planEntry.position - 1}{' '}
             项排队；新指令将进入第 {planEntry.position} 位。
           </p>
@@ -1451,9 +1553,11 @@ function ChatState({
             暂时无法计算新指令的启动与队位。
           </p>
         ) : (
-          <p className="text-muted">
-            暂无对话记录；发送首条消息后才会启动 Run。
-          </p>
+          chatEntries.length === 0 && (
+            <p className="text-muted">
+              暂无对话记录；发送首条消息后才会启动 Run。
+            </p>
+          )
         )}
       </div>
 
@@ -1479,21 +1583,27 @@ function ChatState({
         </div>
       )}
 
-      <div className="mt-2 flex gap-2 border-t border-line pt-2">
+      {/* Per-Panel composer (#67): placeholder and accessible name carry
+          the target Agent Name so the single-target semantics stay
+          explicit; the round brand-primary button starts or continues the
+          current Run only — never a broadcast. */}
+      <div className="mt-2 flex shrink-0 items-end gap-2 border-t border-line pt-2">
         <textarea
-          aria-label="发送给当前 Agent"
-          placeholder="发送给当前 Agent…"
-          className="min-h-[2.5rem] flex-1 resize-none rounded border border-line bg-paper px-2 py-1 text-sm text-ink placeholder:text-muted"
+          aria-label={`发送给 ${agent.name}`}
+          placeholder={`只发送给 ${agent.name}…`}
+          className="max-h-[74px] min-h-9 flex-1 resize-none rounded-lg border border-line bg-paper px-2.5 py-2 text-xs text-ink placeholder:text-muted"
           value={draft}
           disabled={baseDisabled}
           onChange={(e) => setDraft(e.target.value)}
         />
         <button
-          className="btn btn-primary shrink-0"
+          aria-label={`发送给 ${agent.name}`}
+          title="显式启动或继续当前 Run；不会发送给其他 Agent"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand text-sm text-paper transition-colors not-disabled:hover:bg-brand-ink disabled:opacity-45"
           disabled={disabled || draft.trim().length === 0}
           onClick={() => void submit()}
         >
-          发送给当前 Agent
+          ↑
         </button>
       </div>
     </div>
@@ -1915,14 +2025,16 @@ function QueuePanel({
             aria-label={`队列项 ${item.position}：${agentName}`}
             className="flex items-center gap-2 rounded border border-line bg-paper px-2 py-1 text-xs"
           >
-            <span className="w-5 text-muted">{item.position}</span>
-            <span className="flex-1 text-ink">{agentName}</span>
-            <span className="text-muted">
+            <span className="w-5 shrink-0 text-muted">{item.position}</span>
+            <span className="min-w-0 flex-1 truncate text-ink">
+              {agentName}
+            </span>
+            <span className="shrink-0 text-muted">
               {PRIORITY_LABEL[item.priority] ?? item.priority}
             </span>
             <button
               aria-label="上移"
-              className="text-muted hover:text-ink disabled:opacity-20"
+              className="shrink-0 text-muted hover:text-ink disabled:opacity-20"
               disabled={item.position <= 1}
               onClick={() => manage(item.queueItemId, 'move-earlier')}
             >
@@ -1930,7 +2042,7 @@ function QueuePanel({
             </button>
             <button
               aria-label="下移"
-              className="text-muted hover:text-ink disabled:opacity-20"
+              className="shrink-0 text-muted hover:text-ink disabled:opacity-20"
               disabled={item.position >= queueItems.length}
               onClick={() => manage(item.queueItemId, 'move-later')}
             >
@@ -1940,7 +2052,7 @@ function QueuePanel({
               aria-label={
                 canRaise ? '提高优先级' : '提高优先级（已是最高优先级）'
               }
-              className="text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
+              className="shrink-0 text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
               disabled={!canRaise}
               onClick={() => manage(item.queueItemId, 'raise-priority')}
             >
@@ -1950,7 +2062,7 @@ function QueuePanel({
               aria-label={
                 canLower ? '降低优先级' : '降低优先级（已是最低优先级）'
               }
-              className="text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
+              className="shrink-0 text-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-20"
               disabled={!canLower}
               onClick={() => manage(item.queueItemId, 'lower-priority')}
             >
@@ -1958,7 +2070,7 @@ function QueuePanel({
             </button>
             <button
               aria-label="取消排队"
-              className="text-danger hover:underline"
+              className="shrink-0 whitespace-nowrap text-danger hover:underline"
               onClick={() => manage(item.queueItemId, 'cancel')}
             >
               取消排队

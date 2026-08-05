@@ -1302,7 +1302,19 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         // Phase 1 has no real runtime: recording the instruction is the only
         // side effect. No Run is created — we record an instruction-sent fact,
-        // never a fake `run-started` (#6 P1-3).
+        // never a fake `run-started` (#6 P1-3). The accepted instruction is
+        // also echoed into the Chat log as the user's own entry (#67) — the
+        // adapter never fabricates assistant replies.
+        this.snapshot.chatEntries = [
+          ...this.snapshot.chatEntries,
+          {
+            entryId: this.freshId('ChatEntryId'),
+            projectId: agent.projectId,
+            agentInstanceId: agent.agentInstanceId,
+            kind: 'user',
+            text: command.instruction
+          }
+        ]
         this.snapshot.activity = [
           {
             activityId: this.freshId('ActivityId'),

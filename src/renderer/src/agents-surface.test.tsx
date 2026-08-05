@@ -493,7 +493,7 @@ describe('Agents surface — orthogonality (#14)', () => {
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
     await waitFor(() => expect(view).toHaveTextContent('发送首条消息'))
     expect(
-      within(view).getByRole('textbox', { name: '发送给当前 Agent' })
+      within(view).getByRole('textbox', { name: '发送给 cx_review' })
     ).toBeEnabled()
   })
 })
