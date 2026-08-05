@@ -43,6 +43,28 @@ function summaryPanel(): HTMLElement {
   return screen.getByRole('complementary', { name: '待应用摘要' })
 }
 
+/**
+ * #68: instances are picked from the settings catalog rail's Agent Instances
+ * list (the frozen variant-A layout), which also jumps to the instances
+ * section. The row's accessible name starts with the instance name and
+ * carries the Provider · state sublabel.
+ */
+async function selectInstance(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+) {
+  const nav = screen.getByRole('navigation', { name: '设置目录' })
+  await user.click(
+    within(nav).getByRole('button', { name: new RegExp(`^${name} `) })
+  )
+}
+
+/** The settings catalog rail row of one instance (#68). */
+function instanceNavItem(name: string): HTMLElement {
+  const nav = screen.getByRole('navigation', { name: '设置目录' })
+  return within(nav).getByRole('button', { name: new RegExp(`^${name} `) })
+}
+
 /** Stages a text-field change: clear, type, then blur to commit the draft. */
 async function stageText(
   user: ReturnType<typeof userEvent.setup>,
@@ -340,11 +362,7 @@ describe('Settings A — draft lifecycle', () => {
     const port = new MockScenarioAdapter()
     const { user } = await gotoSettingsSurface(port)
     await stageText(user, '项目名称', '销售分析 v2')
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     await stageText(user, '模型', 'model-a')
 
     await user.click(
@@ -378,18 +396,11 @@ describe('Settings A — draft lifecycle', () => {
 
   it('isolates drafts between two instances for the same field path', async () => {
     const { user } = await gotoSettingsSurface()
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
 
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     await stageText(user, '模型', 'model-a')
 
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
     await stageText(user, '模型', 'model-b')
 
     // Each owner carries exactly its own change (US-67).
@@ -397,15 +408,9 @@ describe('Settings A — draft lifecycle', () => {
     expect(within(summaryPanel()).getByText(/cc_sql.*1 项变更/)).toBeDefined()
 
     // Switching back shows that instance's own draft, not the other's.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     expect(screen.getByRole('textbox', { name: '模型' })).toHaveValue('model-a')
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
     expect(screen.getByRole('textbox', { name: '模型' })).toHaveValue('model-b')
   })
 
@@ -715,11 +720,7 @@ describe('Settings A — atomic apply', () => {
   it('previews the change summary, then commits all owners atomically', async () => {
     const { user } = await gotoSettingsSurface()
     await stageText(user, '项目名称', '销售分析 v2')
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     await stageText(user, '模型', 'claude-opus-4')
 
     await user.click(screen.getByRole('button', { name: '应用全部变更' }))
@@ -746,17 +747,10 @@ describe('Settings A — atomic apply', () => {
 
   it('keeps every draft and shows an error when any owner fails validation', async () => {
     const { user } = await gotoSettingsSurface()
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
     // Invalid empty name for cc_sql, valid model change for cc_data.
     await stageText(user, 'Agent 名称', '')
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     await stageText(user, '模型', 'claude-opus-4')
 
     await user.click(screen.getByRole('button', { name: '应用全部变更' }))
@@ -775,17 +769,10 @@ describe('Settings A — atomic apply', () => {
 
   it('applies an agent rename immediately while the active Run keeps its snapshot', async () => {
     const { user } = await gotoSettingsSurface()
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
     await stageText(user, 'Agent 名称', 'cc_sql_v2')
     // A run-configuration change on the running instance cc_data too.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_data'
-    )
+    await selectInstance(user, 'cc_data')
     expect(screen.getByText(/当前 Run 配置快照：v3/)).toBeDefined()
     await stageText(user, '模型', 'claude-opus-4')
 
@@ -794,8 +781,8 @@ describe('Settings A — atomic apply', () => {
     await user.click(within(dialog).getByRole('button', { name: '确认应用' }))
 
     // Name + routing metadata are effective at once (US-91)…
-    const picker = screen.getByRole('combobox', { name: '选择实例' })
-    expect(within(picker).getByRole('option', { name: 'cc_sql_v2' })).toBeDefined()
+    expect(instanceNavItem('cc_sql_v2')).toBeDefined()
+    expect(screen.queryByRole('button', { name: /^cc_sql / })).toBeNull()
     // …while the active Run keeps its launch-time snapshot (US-71).
     expect(screen.getByText(/当前 Run 配置快照：v3/)).toBeDefined()
     expect(screen.getByText('当前：claude-opus-4（v4）')).toBeDefined()
@@ -883,6 +870,38 @@ describe('Settings A — integrations', () => {
     expect(screen.getByText('当前：飞书 · 产品团队（v3）')).toBeDefined()
     expect(screen.getByText('当前：（v3）')).toBeDefined()
   })
+
+  it('derives the head badge from the applied connection status, never from binding presence (#68)', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '集成' }))
+
+    // The applied primary connection is genuinely connected.
+    expect(screen.getByText('飞书 · 销售团队：已连接')).toBeDefined()
+
+    // Rebind to the disconnected 产品团队 connection and apply through both
+    // confirmations; the badge must follow the adapter-owned status.
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '主连接' }),
+      'conn-feishu-product'
+    )
+    await user.click(screen.getByRole('button', { name: '应用全部变更' }))
+    const applyDialog = await screen.findByRole('dialog', {
+      name: '应用配置变更'
+    })
+    await user.click(
+      within(applyDialog).getByRole('button', { name: '确认应用' })
+    )
+    const impactDialog = await screen.findByRole('dialog', { name: /集成/ })
+    await user.click(
+      within(impactDialog).getByRole('button', { name: '确认' })
+    )
+
+    // Bound but disconnected must never claim 已连接.
+    expect(
+      await screen.findByText('飞书 · 产品团队：未连接')
+    ).toBeDefined()
+    expect(screen.queryByText(/产品团队：已连接/)).toBeNull()
+  })
 })
 
 describe('Settings A — project scoping', () => {
@@ -906,14 +925,10 @@ describe('Settings A — project scoping', () => {
 
   it('resets the instance selection when switching projects', async () => {
     const { user } = await gotoSettingsSurface()
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
 
     // Put BOTH projects on the Settings surface, so switching projects
-    // reuses the mounted SettingsSurface instead of unmounting it.
+    // remounts the SettingsSurface with the research project's instances.
     await user.selectOptions(
       screen.getByRole('combobox', { name: '切换项目' }),
       '用户研究'
@@ -925,11 +940,7 @@ describe('Settings A — project scoping', () => {
       screen.getByRole('combobox', { name: '切换项目' }),
       '销售数据分析'
     )
-    await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '选择实例' }),
-      'cc_sql'
-    )
+    await selectInstance(user, 'cc_sql')
 
     // Switch to research while both stay on Settings: the selection must
     // be rebuilt for the research project, never left dangling on cc_sql.
@@ -939,8 +950,10 @@ describe('Settings A — project scoping', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
 
-    expect(screen.getByRole('combobox', { name: '选择实例' })).toHaveValue(
-      'inst-cc-report'
+    // The rail selects the research project's first instance (#68).
+    expect(instanceNavItem('cc_report')).toHaveAttribute(
+      'aria-current',
+      'page'
     )
     expect(screen.getByRole('textbox', { name: 'Agent 名称' })).toHaveValue(
       'cc_report'
@@ -984,14 +997,17 @@ describe('Settings B — 策略矩阵 (#14)', () => {
     ).toHaveTextContent('Kimi Code')
 
     // Rows come from the agent catalogue; identity.name is the column
-    // header, never a row.
+    // header, never a row. #68: each cell carries the value line plus an
+    // effective-status subline — the comparison reads the value line only.
     expect(
       screen.queryByRole('rowheader', { name: 'Agent 名称' })
     ).not.toBeInTheDocument()
+    const cellValue = (cell: HTMLElement) =>
+      cell.firstElementChild?.textContent
     const priorityCells = within(
       screen.getByRole('row', { name: /优先级/ })
     ).getAllByRole('cell')
-    expect(priorityCells.map((cell) => cell.textContent)).toEqual([
+    expect(priorityCells.map(cellValue)).toEqual([
       '普通',
       '高',
       '普通',
@@ -1004,7 +1020,7 @@ describe('Settings B — 策略矩阵 (#14)', () => {
     const budgetCells = within(
       screen.getByRole('row', { name: /Token 预算上限/ })
     ).getAllByRole('cell')
-    expect(budgetCells.map((cell) => cell.textContent)).toEqual([
+    expect(budgetCells.map(cellValue)).toEqual([
       '200000',
       '200000',
       '200000',
@@ -1018,9 +1034,7 @@ describe('Settings B — 策略矩阵 (#14)', () => {
     const proxyCells = within(
       screen.getByRole('row', { name: /HTTP 代理/ })
     ).getAllByRole('cell')
-    expect(new Set(proxyCells.map((cell) => cell.textContent))).toEqual(
-      new Set(['未设置'])
-    )
+    expect(new Set(proxyCells.map(cellValue))).toEqual(new Set(['未设置']))
     // The view marks itself read-only and points editing at Settings A.
     expect(screen.getByText(/只读比较视图/)).toBeInTheDocument()
   })
@@ -1086,10 +1100,12 @@ describe('Settings C — Readiness 摘要 (#14)', () => {
     await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
 
     // kimi_docs is unavailable on a ready provider — the one blocked card.
-    // (#66: scoped to main — the context pane also lists kimi_docs.)
+    // (#66: scoped to main — the context pane also lists kimi_docs. #68: the
+    // readiness view names every instance once per card — rail row,
+    // Provider readiness and per-instance detail.)
     expect(
-      within(screen.getByRole('main')).getByText('kimi_docs')
-    ).toBeInTheDocument()
+      within(screen.getByRole('main')).getAllByText('kimi_docs')
+    ).toHaveLength(3)
     expect(screen.getByText('已阻止')).toBeInTheDocument()
     expect(
       screen.getByText('Agent 当前不可用，修复 Provider 后可恢复')
@@ -1175,10 +1191,15 @@ describe('Settings C — Readiness 摘要 (#14)', () => {
     await user.click(
       screen.getByRole('button', { name: '前往「Agent 实例」设置' })
     )
-    // The instances editor opens on exactly the offending instance.
-    expect(await screen.findByRole('combobox', { name: '选择实例' }))
-      .toHaveValue('inst-cx-review')
-    expect(screen.getByRole('textbox', { name: '模型' })).toHaveValue('gpt-4o')
+    // The instances editor opens on exactly the offending instance (#68:
+    // the rail row is the selection indicator, and the form follows it).
+    expect(await screen.findByRole('textbox', { name: '模型' })).toHaveValue(
+      'gpt-4o'
+    )
+    expect(instanceNavItem('cx_review')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
   })
 })
 
@@ -1212,5 +1233,161 @@ describe('Settings A — permissions enforcement status (#14)', () => {
     expect(
       screen.queryByText(/有效策略矩阵与下一次 Run 的 readiness/)
     ).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Settings A — the frozen 层级配置台 layout (#68): the icon catalog rail with
+ * the Agent instance list, the top 放弃/应用 action bar, and the Doctor
+ * badge on the instance detail head.
+ */
+describe('Settings A — 层级配置台 layout (#68)', () => {
+  it('drives the instance form from the rail list and shows the Doctor badge', async () => {
+    const { user } = await gotoSettingsSurface()
+    // The rail groups: catalog sections, read-only views, then instances.
+    const nav = screen.getByRole('navigation', { name: '设置目录' })
+    expect(within(nav).getByText('Agent Instances')).toBeInTheDocument()
+
+    await selectInstance(user, 'cc_data')
+    // The rail row is the selection indicator…
+    expect(instanceNavItem('cc_data')).toHaveAttribute('aria-current', 'page')
+    // …and the middle form follows it, with the adapter's Doctor fact on
+    // the detail head.
+    expect(screen.getByText('Doctor 通过')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Agent 名称' })).toHaveValue(
+      'cc_data'
+    )
+
+    await selectInstance(user, 'cc_sql')
+    expect(instanceNavItem('cc_sql')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('textbox', { name: 'Agent 名称' })).toHaveValue(
+      'cc_sql'
+    )
+  })
+
+  it('shows Doctor 未通过 and the danger notice when the Provider is blocked', async () => {
+    const scenario = createStandardScenario()
+    const claude = scenario.global.providers.find(
+      (p) => p.providerId === 'claude-code'
+    )
+    if (!claude) throw new Error('standard scenario has no claude-code')
+    claude.status = 'blocked'
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await selectInstance(user, 'cc_data')
+    expect(screen.getByText('Doctor 未通过')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Provider Doctor 未通过：不能启动或重启 Run/)
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the top action bar in sync with drafts and discards every owner at once', async () => {
+    const { user } = await gotoSettingsSurface()
+    // Empty: both actions disabled, the bar reports the applied state.
+    expect(screen.getByRole('button', { name: '放弃全部变更' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
+    expect(screen.getByText('配置已应用')).toBeInTheDocument()
+
+    await stageText(user, '项目名称', '销售分析 v2')
+    await selectInstance(user, 'cc_data')
+    await stageText(user, '模型', 'claude-opus-4')
+    // Bar count and summary head count stay the same fact.
+    expect(screen.getByText('2 项待应用')).toBeInTheDocument()
+    expect(
+      within(summaryPanel()).getByText('待应用修改 · 2')
+    ).toBeInTheDocument()
+
+    // 放弃 rolls every owner back through the same confirmation flow as
+    // the per-owner 丢弃 (#13 atomic semantics).
+    await user.click(screen.getByRole('button', { name: '放弃全部变更' }))
+    const dialog = await screen.findByRole('dialog', { name: '丢弃配置草稿' })
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
+    expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
+    expect(screen.getByText('配置已应用')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '放弃全部变更' })).toBeDisabled()
+    // Applied truth never moved.
+    expect(screen.getByText('当前：claude-sonnet-4（v3）')).toBeDefined()
+  })
+})
+
+/**
+ * Settings B — the frozen card-style policy matrix (#68): horizontal scroll
+ * instead of truncated columns, plus the amber hint bar.
+ */
+describe('Settings B — 策略矩阵 card layout (#68)', () => {
+  it('keeps nine instance columns intact behind horizontal scroll with the amber hint', async () => {
+    const scenario = createStandardScenario()
+    // A ninth sales instance, mirroring the prototype's widest matrix.
+    const template = scenario.agents.find((a) => a.name === 'cx_review')
+    if (!template) throw new Error('standard scenario has no cx_review')
+    const extraId = id('inst-cx-extra', 'AgentInstanceId')
+    scenario.agents.push({
+      ...template,
+      agentInstanceId: extraId,
+      name: 'cx_extra'
+    })
+    const templateConfig = scenario.appliedConfigurations.find(
+      (c) =>
+        c.owner.kind === 'agent' &&
+        c.owner.agentInstanceId === template.agentInstanceId
+    )
+    if (!templateConfig) {
+      throw new Error('standard scenario has no cx_review config')
+    }
+    scenario.appliedConfigurations.push({
+      ...templateConfig,
+      owner: { kind: 'agent', agentInstanceId: extraId }
+    })
+    const { user } = await gotoSettingsSurface(new MockScenarioAdapter(scenario))
+    await user.click(screen.getByRole('button', { name: '策略矩阵' }))
+
+    // Corner + nine instance columns, none dropped or merged.
+    expect(screen.getAllByRole('columnheader')).toHaveLength(10)
+    // The card scrolls horizontally; cells keep their two lines intact.
+    const table = screen.getByRole('table')
+    expect(table.parentElement).toHaveClass('overflow-x-auto')
+    expect(
+      screen.getByText(/矩阵不取代完整 Settings 导航，也不提供批量复制密钥/)
+    ).toBeInTheDocument()
+  })
+})
+
+/**
+ * Settings C — the frozen readiness review cards (#68): four status cards
+ * with double-coded chips, the per-instance detail card and the boundary
+ * card, all backed by adapter facts.
+ */
+describe('Settings C — readiness cards (#68)', () => {
+  it('renders the status cards and the boundary card from applied facts', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+    const main = within(screen.getByRole('main'))
+    for (const title of [
+      'Provider readiness',
+      'Workspace isolation',
+      'Feishu trust boundary',
+      'Run policy',
+      '逐实例 Readiness',
+      '配置生效边界'
+    ]) {
+      expect(main.getByText(title)).toBeInTheDocument()
+    }
+    // Chips double-code the state text — never colour alone.
+    expect(main.getByText('Enforced')).toBeInTheDocument()
+    expect(main.getByText('Never allowed')).toBeInTheDocument()
+    expect(main.getByText('默认拒绝')).toBeInTheDocument()
+    expect(main.getByText('Not exposed')).toBeInTheDocument()
+    expect(main.getByText('永远二次确认')).toBeInTheDocument()
+    // Facts come from the applied configuration, not the prototype fixture.
+    expect(main.getByText('销售团队任务清单、销售知识库')).toBeInTheDocument()
+    expect(main.getByText('7 个 Agent 可运行')).toBeInTheDocument()
+    expect(main.getByText('使用当前 applied 快照')).toBeInTheDocument()
+  })
+
+  it('reflects staged drafts in the boundary card', async () => {
+    const { user } = await gotoSettingsSurface()
+    await stageText(user, '项目名称', '销售分析 v2')
+    await user.click(screen.getByRole('button', { name: 'Readiness 摘要' }))
+    expect(screen.getByText('1 项草稿待应用')).toBeInTheDocument()
   })
 })

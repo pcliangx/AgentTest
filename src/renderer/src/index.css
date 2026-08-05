@@ -27,8 +27,10 @@
   --color-brand-ink: #274bc9;
   --color-teal: #0f8a83;
   --color-teal-soft: #e1f2f0;
+  --color-teal-border: #a4d6ce;
   --color-amber: #ad6a00;
   --color-amber-soft: #fdf0d7;
+  --color-amber-border: #e6c786;
   --color-danger: #b42318;
   --color-danger-soft: #fdecea;
   --color-attention-red: #f04438;
@@ -222,6 +224,35 @@
     background: var(--color-brand-soft);
     color: var(--color-brand-ink);
     font-weight: 650;
+  }
+  /* Semantic status chips of the Settings 层级配置台 (#68): 通过/Enforced and
+     未通过/Never allowed double-code the adjacent text, never carry meaning
+     alone. */
+  .chip-good {
+    border-color: var(--color-teal-border);
+    background: var(--color-teal-soft);
+    color: var(--color-teal);
+  }
+  .chip-warn {
+    border-color: var(--color-amber-border);
+    background: var(--color-amber-soft);
+    color: var(--color-amber);
+  }
+
+  /* Inline notice bars of the frozen settings baseline (#68): amber for
+     scope/limitation notes, danger for Provider Doctor failures. */
+  .notice-bar {
+    border: 1px solid var(--color-amber-border);
+    border-radius: 9px;
+    background: var(--color-amber-soft);
+    padding: 9px 10px;
+    color: var(--color-amber);
+    font-size: 9px;
+  }
+  .notice-bar-danger {
+    border-color: var(--color-danger);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
   }
 
   .card {

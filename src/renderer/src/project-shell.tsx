@@ -30,6 +30,7 @@ import type {
 } from './workbench/contract'
 import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
 import { activityKindLabel } from './activity-display'
+import { CONNECTION_STATUS_LABEL } from './connection-display'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
@@ -254,13 +255,6 @@ const ROOT_LABEL: Record<string, string> = {
 const GIT_LABEL: Record<string, string> = {
   ready: '已就绪',
   'not-ready': '未就绪'
-}
-
-const CONNECTION_STATUS_LABEL: Record<string, string> = {
-  connected: '已连接',
-  disconnected: '未连接',
-  offline: '离线',
-  error: '错误'
 }
 
 type RetainedRunTarget = Extract<AttentionTarget, { kind: 'run' }>
@@ -1251,6 +1245,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
       {showAttention && (
         <AttentionDrawer
+          project={project}
           snapshot={snapshot}
           onClose={() => setShowAttention(false)}
           onOpenTarget={(target) => void openAttentionTarget(target)}
