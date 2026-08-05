@@ -8,6 +8,7 @@ import type {
   KnowledgeSecurityAction,
   ProjectViewModel
 } from './workbench/contract'
+import { StatusChip, type StatusChipTone } from './status-chip'
 
 const STATE_LABEL: Record<KnowledgeContainerState, string> = {
   online: '在线',
@@ -17,12 +18,16 @@ const STATE_LABEL: Record<KnowledgeContainerState, string> = {
   unconnected: '未连接'
 }
 
-const STATE_STYLE: Record<KnowledgeContainerState, string> = {
-  online: 'text-teal',
-  offline: 'text-muted',
-  cached: 'text-amber',
-  unavailable: 'text-danger',
-  unconnected: 'text-muted'
+/** #69: color + decorative icon + text, one StatusChip for every state. */
+const STATE_CHIP: Record<
+  KnowledgeContainerState,
+  { tone: StatusChipTone; icon: string }
+> = {
+  online: { tone: 'good', icon: '●' },
+  offline: { tone: 'neutral', icon: '◌' },
+  cached: { tone: 'warn', icon: '⚠' },
+  unavailable: { tone: 'danger', icon: '✕' },
+  unconnected: { tone: 'neutral', icon: '○' }
 }
 
 type KnowledgeFailureReason = CommandRejectionReason | 'transport-error'
@@ -348,11 +353,13 @@ export function KnowledgeSurface({
                 </p>
               )}
             </div>
-            <span
-              role="status"
-              className={`text-xs ${STATE_STYLE[renderedState]}`}
-            >
-              {STATE_LABEL[renderedState]}
+            <span role="status">
+              <StatusChip
+                tone={STATE_CHIP[renderedState].tone}
+                icon={STATE_CHIP[renderedState].icon}
+              >
+                {STATE_LABEL[renderedState]}
+              </StatusChip>
             </span>
           </div>
           <div

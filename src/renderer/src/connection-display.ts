@@ -1,4 +1,5 @@
 import type { WorkbenchViewModel } from './workbench/contract'
+import type { StatusChipTone } from './status-chip'
 
 /** Connection health states as owned by the adapter (#6). */
 export type ConnectionStatus =
@@ -15,4 +16,15 @@ export const CONNECTION_STATUS_LABEL: Record<ConnectionStatus, string> = {
   disconnected: '未连接',
   offline: '离线',
   error: '错误'
+}
+
+/** #69 triple-encoding (color + decorative icon + text) for health chips. */
+export const CONNECTION_CHIP: Record<
+  ConnectionStatus,
+  { tone: StatusChipTone; icon: string }
+> = {
+  connected: { tone: 'good', icon: '●' },
+  disconnected: { tone: 'neutral', icon: '○' },
+  offline: { tone: 'warn', icon: '◌' },
+  error: { tone: 'danger', icon: '✕' }
 }

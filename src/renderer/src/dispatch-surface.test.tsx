@@ -1571,9 +1571,14 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     const chips = within(dialog).getAllByRole('listitem', {
       name: /已选目标/
     })
-    expect(chips.map((chip) => chip.textContent)).toContain(
-      'data review（不可派发）'
-    )
+    // Assert on the label text node: the decorative ⚠ glyph (#69
+    // triple-encoding) is an aria-hidden sibling and must not leak into
+    // expectations.
+    expect(
+      chips.some(
+        (chip) => within(chip).queryByText('data review（不可派发）') !== null
+      )
+    ).toBe(true)
     expect(chips.map((chip) => chip.textContent)).not.toContain('data')
     expect(dialog).toHaveTextContent('不可派发的目标：data review')
     expect(

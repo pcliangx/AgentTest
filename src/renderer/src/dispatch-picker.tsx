@@ -9,7 +9,9 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
-import { RUNTIME_STATE_LABEL } from './agent-display'
+import { RUNTIME_STATE_LABEL, providerCode } from './agent-display'
+import { StatusDot, statusDotState } from './status-dot'
+import { StatusChip } from './status-chip'
 import { useDispatchPlan } from './use-dispatch-plan'
 import {
   getProjectDispatchBlockReason,
@@ -597,8 +599,11 @@ export function DispatchPicker({
               const selected = displayedTargetIds.has(a.agentInstanceId)
               return (
                 <li key={a.agentInstanceId}>
+                  {/* #69: same row language as the radar/directory rows —
+                      decorative avatar + dot; the text still names the
+                      state, so the button's accessible name is unchanged. */}
                   <button
-                    className={`block w-full rounded px-2 py-1 text-left text-sm ${
+                    className={`grid w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-2 rounded px-2 py-1 text-left ${
                       disabled
                         ? 'cursor-not-allowed text-muted opacity-50'
                         : selected
@@ -609,8 +614,17 @@ export function DispatchPicker({
                     disabled={disabled}
                     onClick={() => toggleManual(a.agentInstanceId)}
                   >
-                    {a.name} · {RUNTIME_STATE_LABEL[a.runtimeState]}
-                    {disabled ? '（不可派发）' : ''}
+                    <span
+                      aria-hidden="true"
+                      className="grid h-6 w-6 place-items-center rounded-md bg-brand-soft font-mono text-[8px] font-bold text-brand"
+                    >
+                      {providerCode(a.providerId)}
+                    </span>
+                    <span className="min-w-0 text-sm">
+                      {a.name} · {RUNTIME_STATE_LABEL[a.runtimeState]}
+                      {disabled ? '（不可派发）' : ''}
+                    </span>
+                    <StatusDot state={statusDotState(a.runtimeState)} />
                   </button>
                 </li>
               )
@@ -633,13 +647,14 @@ export function DispatchPicker({
             <div className="text-xs text-muted">已选目标</div>
             <ul className="mt-1 flex flex-wrap gap-1">
               {displayedTargetPreviews.map((target) => (
-                <li
-                  key={target.agentInstanceId}
-                  aria-label="已选目标"
-                  className="chip"
-                >
-                  {target.name}
-                  {target.blocked ? '（不可派发）' : ''}
+                <li key={target.agentInstanceId} aria-label="已选目标">
+                  <StatusChip
+                    tone={target.blocked ? 'warn' : 'brand'}
+                    icon={target.blocked ? '⚠' : undefined}
+                  >
+                    {target.name}
+                    {target.blocked ? '（不可派发）' : ''}
+                  </StatusChip>
                 </li>
               ))}
             </ul>

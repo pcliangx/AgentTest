@@ -3,6 +3,7 @@ import type {
   AttentionTarget,
   CommandResult,
   DispatchId,
+  DispatchViewModel,
   ExternalTaskOperation,
   ExternalTaskViewModel,
   ExecutionReviewState,
@@ -14,6 +15,7 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
+import { StatusChip, type StatusChipTone } from './status-chip'
 
 /**
  * Tasks surface (#10).
@@ -26,6 +28,10 @@ import type { SendCommand } from './agents-surface'
  * explicit, separately confirmed action. High-risk external operations
  * (delete, batch, members, permissions, business overwrite) all reuse the
  * shell's shared confirmation host.
+ *
+ * #69: every status renders as color + decorative icon + text through the
+ * shared StatusChip (UX-v0.2 §15); danger actions keep their own danger
+ * styling and never share an unlabelled icon with everyday actions.
  */
 
 const SYNC_LABEL: Record<TaskSyncState, string> = {
@@ -35,10 +41,42 @@ const SYNC_LABEL: Record<TaskSyncState, string> = {
   unavailable: '不可用'
 }
 
+const SYNC_CHIP: Record<
+  TaskSyncState,
+  { tone: StatusChipTone; icon: string }
+> = {
+  synced: { tone: 'good', icon: '●' },
+  offline: { tone: 'neutral', icon: '◌' },
+  conflict: { tone: 'warn', icon: '⚠' },
+  unavailable: { tone: 'danger', icon: '✕' }
+}
+
 const REVIEW_LABEL: Record<ExecutionReviewState, string> = {
   'pending-review': '待评审',
   accepted: '已验收',
   'revision-requested': '已提出修订'
+}
+
+const REVIEW_CHIP: Record<
+  ExecutionReviewState,
+  { tone: StatusChipTone; icon: string }
+> = {
+  'pending-review': { tone: 'warn', icon: '⚠' },
+  accepted: { tone: 'good', icon: '✓' },
+  'revision-requested': { tone: 'neutral', icon: '↩' }
+}
+
+// Dispatch status is a contract enum of its own (not an AgentRuntimeState),
+// so these badges belong to StatusChip, not StatusDot (#69 H1). `completed`
+// renders no badge today; its entry keeps the Record exhaustive.
+const DISPATCH_STATUS_CHIP: Record<
+  DispatchViewModel['status'],
+  { label: string; tone: StatusChipTone; icon: string }
+> = {
+  active: { label: '进行中', tone: 'brand', icon: '●' },
+  queued: { label: '排队中', tone: 'neutral', icon: '◌' },
+  completed: { label: '已完成', tone: 'good', icon: '✓' },
+  cancelled: { label: '已取消', tone: 'warn', icon: '⚠' }
 }
 
 const BUSINESS_LABEL: Record<
@@ -152,9 +190,12 @@ export function TasksSurface({
                 </span>
                 {dispatch.status === 'active' && (
                   <>
-                    <span className="chip chip-brand">
-                      进行中
-                    </span>
+                    <StatusChip
+                      tone={DISPATCH_STATUS_CHIP.active.tone}
+                      icon={DISPATCH_STATUS_CHIP.active.icon}
+                    >
+                      {DISPATCH_STATUS_CHIP.active.label}
+                    </StatusChip>
                     <button
                       aria-label={`模拟完成：${dispatch.instruction.slice(0, 12)}`}
                       className="mini-button"
@@ -171,23 +212,32 @@ export function TasksSurface({
                   </>
                 )}
                 {dispatch.status === 'queued' && (
-                  <span className="chip">
-                    排队中
-                  </span>
+                  <StatusChip
+                    tone={DISPATCH_STATUS_CHIP.queued.tone}
+                    icon={DISPATCH_STATUS_CHIP.queued.icon}
+                  >
+                    {DISPATCH_STATUS_CHIP.queued.label}
+                  </StatusChip>
                 )}
                 {dispatch.status === 'cancelled' && (
-                  <span className="chip">
-                    已取消
-                  </span>
+                  <StatusChip
+                    tone={DISPATCH_STATUS_CHIP.cancelled.tone}
+                    icon={DISPATCH_STATUS_CHIP.cancelled.icon}
+                  >
+                    {DISPATCH_STATUS_CHIP.cancelled.label}
+                  </StatusChip>
                 )}
               </div>
               {result && (
                 <div className="mt-1 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-muted">{result.summary}</span>
-                    <span className="chip">
+                    <StatusChip
+                      tone={REVIEW_CHIP[result.reviewState].tone}
+                      icon={REVIEW_CHIP[result.reviewState].icon}
+                    >
                       {REVIEW_LABEL[result.reviewState]}
-                    </span>
+                    </StatusChip>
                   </div>
                   {result.reviewState === 'pending-review' && (
                     <div className="flex gap-1.5">
@@ -281,21 +331,27 @@ export function TasksSurface({
               </span>
             )}
             {tombstoned && (
-              <span className="chip">
+              <StatusChip tone="danger" icon="✕">
                 已删除
-              </span>
+              </StatusChip>
             )}
           </div>
           <div className="flex items-center gap-1.5 text-[10px]">
             <span className="chip">
               {task.externalId} · v{task.version}
             </span>
-            <span className="chip">
+            <StatusChip
+              tone={SYNC_CHIP[task.syncState].tone}
+              icon={SYNC_CHIP[task.syncState].icon}
+            >
               {SYNC_LABEL[task.syncState]}
-            </span>
-            <span className="chip">
+            </StatusChip>
+            <StatusChip
+              tone={task.businessStatus === 'completed' ? 'good' : 'neutral'}
+              icon={task.businessStatus === 'completed' ? '✓' : undefined}
+            >
               {BUSINESS_LABEL[task.businessStatus]}
-            </span>
+            </StatusChip>
           </div>
         </div>
 
@@ -305,6 +361,7 @@ export function TasksSurface({
             className="space-y-1.5 rounded-lg bg-amber-soft px-2 py-1.5 text-xs text-amber"
           >
             <p>
+              <span aria-hidden="true">⚠ </span>
               拟议修改：{task.proposedChange.summary}（
               {task.proposedChange.failureReason}）
             </p>
@@ -417,9 +474,12 @@ export function TasksSurface({
               深链目标
             </span>
           )}
-          <span className="chip">
+          <StatusChip
+            tone={task.status === 'completed' ? 'good' : 'brand'}
+            icon={task.status === 'completed' ? '✓' : '●'}
+          >
             {LOCAL_STATUS_LABEL[task.status]}
-          </span>
+          </StatusChip>
         </div>
         {renderDispatchResults(taskRef, task.dispatchIds)}
         <div>

@@ -1,4 +1,5 @@
 import type { ActivityKind } from './workbench/contract'
+import type { StatusChipTone } from './status-chip'
 
 export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   'run-started': '运行开始',
@@ -21,4 +22,31 @@ export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
 
 export function activityKindLabel(kind: ActivityKind): string {
   return ACTIVITY_KIND_LABEL[kind]
+}
+
+/**
+ * #69 triple-encoding for activity rows: outcome families get teal/amber/
+ * red, in-flight and informational entries stay brand/neutral. The icon is
+ * decorative; the label always names the kind.
+ */
+export const ACTIVITY_KIND_CHIP: Record<
+  ActivityKind,
+  { tone: StatusChipTone; icon: string }
+> = {
+  'run-started': { tone: 'brand', icon: '●' },
+  'run-completed': { tone: 'good', icon: '✓' },
+  'run-failed': { tone: 'danger', icon: '✕' },
+  'run-interrupted': { tone: 'warn', icon: '⚠' },
+  'run-cancelled': { tone: 'warn', icon: '⚠' },
+  'configuration-applied': { tone: 'good', icon: '✓' },
+  'permission-decided': { tone: 'neutral', icon: '●' },
+  'attention-resolved': { tone: 'good', icon: '✓' },
+  'instruction-sent': { tone: 'brand', icon: '●' },
+  'dispatch-created': { tone: 'brand', icon: '●' },
+  'execution-result-reviewed': { tone: 'good', icon: '✓' },
+  'external-task-write': { tone: 'neutral', icon: '●' },
+  'external-task-write-failed': { tone: 'danger', icon: '✕' },
+  'external-task-conflict-resolved': { tone: 'good', icon: '✓' },
+  'queue-cancelled': { tone: 'warn', icon: '⚠' },
+  'dangerous-action-confirmed': { tone: 'neutral', icon: '●' }
 }
