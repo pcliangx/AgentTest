@@ -29,6 +29,8 @@ const SCENARIO = {
     'three Panel baseline',
     'fourth Panel scroll and operation',
     'Tab keyboard move',
+    'Tab pointer drag reorder (#77)',
+    'Tab pointer drag cross-panel (#77)',
     'divider keyboard resize',
     'Focus restore',
     'deterministic relaunch'
@@ -261,6 +263,28 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
           .filter({ has: page.getByRole('tab', { name: /^cc_data\b/ }) })
           .filter({ has: page.getByRole('tab', { name: /^cx_review\b/ }) })
       ).toHaveCount(1)
+    })
+
+    await recordedStep(evidence, 'reorder and cross-panel move a Tab with pointer drag (#77)', async () => {
+      // After Focus restore: 4 panels. P0 has [cc_data, cx_review]. Drag
+      // cx_review to the panel with kimi_visual, then verify the move.
+      const sourcePanel = panels.filter({
+        has: page.getByRole('tab', { name: /^cc_data\b/ })
+      })
+      const targetPanel = panels.filter({
+        has: page.getByRole('tab', { name: /^kimi_visual\b/ })
+      })
+      await expect(sourcePanel.getByRole('tab', { name: /^cx_review\b/ })).toBeVisible()
+
+      // Cross-panel drag: dragTo fires the HTML5 dragstart → dragover → drop
+      // sequence that the tablist handler expects.
+      const dragTab = sourcePanel.getByRole('tab', { name: /^cx_review\b/ })
+      const dropStrip = targetPanel.getByRole('tablist', { name: 'Agent 标签' })
+      await dragTab.dragTo(dropStrip)
+
+      // cx_review is now alongside kimi_visual; the source panel keeps cc_data.
+      await expect(targetPanel.getByRole('tab', { name: /^cx_review\b/ })).toBeVisible()
+      await expect(sourcePanel.getByRole('tab', { name: /^cx_review\b/ })).toHaveCount(0)
     })
 
     await expectNoRendererErrors(page, activeSession, evidence)

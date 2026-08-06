@@ -64,6 +64,8 @@ interface LayoutRenderContext {
   openAttentionTargets: Set<string>
   previewRatios: Partial<Record<string, number>>
   draggingTab: { tabId: AgentInstanceId; startRevision: number } | null
+  /** #77: the panel whose tab strip is currently being hovered and the insertion index. */
+  tabStripInsertion: { panelId: PanelId; index: number } | null
   panelCount: number
   layoutRevision: number
   temporaryFocusPanelId?: PanelId
@@ -82,6 +84,7 @@ interface LayoutRenderContext {
   onCancelRatio: (splitNodeId: SplitNodeId) => void
   onDragTabStart: (tab: AgentInstanceId) => void
   onDragTabEnd: () => void
+  onTabStripInsertion: (insertion: { panelId: PanelId; index: number } | null) => void
   onRequestTabFocus: (tab: AgentInstanceId) => number
   onCancelTabFocus: (token: number) => void
   onRequestClosePanel: (panelId: PanelId) => void
@@ -116,6 +119,12 @@ export function WorkspaceArea({
     tabId: AgentInstanceId
     startRevision: number
   } | null>(null)
+  // #77: tracks which panel's tab strip is hovered and the insertion index
+  // computed from the pointer position relative to tab centers.
+  const [tabStripInsertion, setTabStripInsertion] = useState<{
+    panelId: PanelId
+    index: number
+  } | null>(null)
   const [previewRatios, setPreviewRatios] = useState<
     Partial<Record<string, number>>
   >({})
@@ -131,6 +140,7 @@ export function WorkspaceArea({
   // instead of leaving a ghost overlay behind.
   useEffect(() => {
     setDraggingTab(null)
+    setTabStripInsertion(null)
   }, [snapshot.revision])
 
   // Temporary Focus: render only the focused panel. The split tree itself
@@ -293,7 +303,12 @@ export function WorkspaceArea({
       // drop that lands after an authoritative layout change stale-rejects
       // instead of overwriting it.
       setDraggingTab({ tabId: tab, startRevision: snapshot.revision }),
-    onDragTabEnd: () => setDraggingTab(null),
+    onDragTabEnd: () => {
+      setDraggingTab(null)
+      setTabStripInsertion(null)
+    },
+    onTabStripInsertion: setTabStripInsertion,
+    tabStripInsertion,
     onRequestTabFocus: (tab) => {
       const token = ++tabFocusIntentCounter.current
       setPendingTabFocus((prev) => [
@@ -962,78 +977,174 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div
         role="tablist"
         aria-label="Agent 标签"
-        className="flex shrink-0 overflow-x-auto border-b border-line bg-raised"
+        className={`relative z-20 flex shrink-0 overflow-x-auto border-b border-line bg-raised transition-colors ${
+          ctx.draggingTab && ctx.tabStripInsertion?.panelId === panelId
+            ? 'bg-brand-soft/40'
+            : ''
+        }`}
+        onDragOver={(e) => {
+          if (!ctx.draggingTab) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          // Compute insertion index from the pointer position relative to
+          // each tab's horizontal centre.
+          const tabEls = Array.from(
+            e.currentTarget.querySelectorAll('[data-tab-id]')
+          ) as HTMLElement[]
+          let index = tabEls.length
+          for (let i = 0; i < tabEls.length; i++) {
+            const rect = tabEls[i].getBoundingClientRect()
+            if (e.clientX < rect.left + rect.width / 2) {
+              index = i
+              break
+            }
+          }
+          // Don't show an insertion marker for a no-op same-panel drop
+          // (the tab dropped where it already is).
+          if (
+            ctx.draggingTab.tabId === panel.activeTabId &&
+            tabEls.length > 0
+          ) {
+            const draggedEl = tabEls.find(
+              (el) => el.dataset.tabId === ctx.draggingTab!.tabId
+            )
+            if (draggedEl) {
+              const rect = draggedEl.getBoundingClientRect()
+              const isBefore = e.clientX < rect.left + rect.width / 2
+              const draggedIndex = panel.tabs.indexOf(
+                ctx.draggingTab.tabId as AgentInstanceId
+              )
+              if (
+                (isBefore && index === draggedIndex) ||
+                (!isBefore && index === draggedIndex + 1)
+              ) {
+                ctx.onTabStripInsertion(null)
+                return
+              }
+            }
+          }
+          ctx.onTabStripInsertion({ panelId, index })
+        }}
+        onDragLeave={(e) => {
+          // Only clear if leaving the tablist entirely (not entering a child).
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            if (ctx.tabStripInsertion?.panelId === panelId) {
+              ctx.onTabStripInsertion(null)
+            }
+          }
+        }}
+        onDrop={(e) => {
+          if (!ctx.draggingTab) return
+          e.preventDefault()
+          e.stopPropagation()
+          const tabId = (e.dataTransfer.getData('text/plain') ||
+            ctx.draggingTab.tabId) as AgentInstanceId
+          const baseline = ctx.draggingTab.startRevision
+          const insertion = ctx.tabStripInsertion
+          ctx.onDragTabEnd()
+          if (tabId && insertion) {
+            void sendLayout(
+              {
+                kind: 'move-tab',
+                agentInstanceId: tabId,
+                targetPanelId: panelId,
+                insertionIndex: insertion.index
+              },
+              baseline
+            )
+          }
+        }}
       >
-        {panel.tabs.map((tabId) => {
+        {panel.tabs.map((tabId, tabIndex) => {
           const agent = snapshot.agents.find(
             (a) => a.agentInstanceId === tabId
           )
           if (!agent) return null
           const selected = tabId === panel.activeTabId
+          // #77: insertion indicator — a 2px brand line before the tab at
+          // the hovered index.
+          const showInsertionBefore =
+            ctx.tabStripInsertion?.panelId === panelId &&
+            ctx.tabStripInsertion.index === tabIndex
           return (
-            <div
-              key={tabId}
-              role="tab"
-              aria-selected={selected}
-              aria-keyshortcuts={TAB_KEYSHORTCUTS}
-              data-tab-id={tabId}
-              tabIndex={selected ? 0 : -1}
-              draggable
-              className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm ${
-                selected
-                  ? 'border-b-brand bg-paper text-ink'
-                  : 'border-b-transparent text-muted hover:bg-wash'
-              }`}
-              onClick={() =>
-                void sendLayout({
-                  kind: 'activate-tab',
-                  panelId,
-                  agentInstanceId: tabId
-                })
-              }
-              onKeyDown={(e) => handleTabKeyDown(e, ctx, panelId, tabId)}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/plain', tabId)
-                e.dataTransfer.effectAllowed = 'move'
-                ctx.onDragTabStart(tabId)
-              }}
-              onDragEnd={ctx.onDragTabEnd}
-            >
-              {/* Decorative — the adjacent sublabel already names the
-                  state, so the accessible name still starts with the
-                  Agent Name. */}
-              <StatusDot state={statusDotState(agent.runtimeState)} />
-              <span className="truncate font-mono">{agent.name}</span>
-              {openAttentionTargets.has(tabId) && (
-                <span
-                  role="img"
-                  aria-label="有待处理事项"
-                  className="text-amber"
-                >
-                  ●
-                </span>
+            <div key={tabId} className="flex items-center">
+              {showInsertionBefore && (
+                <div
+                  aria-hidden="true"
+                  className="h-5 w-0.5 shrink-0 rounded-full bg-brand"
+                />
               )}
-              <span className="min-w-0 flex-1 truncate text-xs text-muted">
-                {providerLabel(agent.providerId)} ·{' '}
-                {RUNTIME_STATE_LABEL[agent.runtimeState]}
-              </span>
-              <button
-                aria-label={`关闭标签 ${agent.name}`}
-                className="shrink-0 rounded px-1 text-muted hover:bg-wash hover:text-ink"
-                onClick={(e) => {
-                  e.stopPropagation()
+              <div
+                role="tab"
+                aria-selected={selected}
+                aria-keyshortcuts={TAB_KEYSHORTCUTS}
+                data-tab-id={tabId}
+                tabIndex={selected ? 0 : -1}
+                draggable
+                className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm ${
+                  selected
+                    ? 'border-b-brand bg-paper text-ink'
+                    : 'border-b-transparent text-muted hover:bg-wash'
+                }`}
+                onClick={() =>
                   void sendLayout({
-                    kind: 'close-tab',
+                    kind: 'activate-tab',
                     panelId,
                     agentInstanceId: tabId
                   })
+                }
+                onKeyDown={(e) => handleTabKeyDown(e, ctx, panelId, tabId)}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', tabId)
+                  e.dataTransfer.effectAllowed = 'move'
+                  ctx.onDragTabStart(tabId)
                 }}
+                onDragEnd={ctx.onDragTabEnd}
               >
-                ×
-              </button>
+                {/* Decorative — the adjacent sublabel already names the
+                    state, so the accessible name still starts with the
+                    Agent Name. */}
+                <StatusDot state={statusDotState(agent.runtimeState)} />
+                <span className="truncate font-mono">{agent.name}</span>
+                {openAttentionTargets.has(tabId) && (
+                  <span
+                    role="img"
+                    aria-label="有待处理事项"
+                    className="text-amber"
+                  >
+                    ●
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-xs text-muted">
+                  {providerLabel(agent.providerId)} ·{' '}
+                  {RUNTIME_STATE_LABEL[agent.runtimeState]}
+                </span>
+                <button
+                  aria-label={`关闭标签 ${agent.name}`}
+                  className="shrink-0 rounded px-1 text-muted hover:bg-wash hover:text-ink"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void sendLayout({
+                      kind: 'close-tab',
+                      panelId,
+                      agentInstanceId: tabId
+                    })
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
           )
         })}
+        {/* Trailing insertion indicator (drop at end of strip). */}
+        {ctx.tabStripInsertion?.panelId === panelId &&
+          ctx.tabStripInsertion.index >= panel.tabs.length && (
+            <div
+              aria-hidden="true"
+              className="ml-1 h-5 w-0.5 shrink-0 self-center rounded-full bg-brand"
+            />
+          )}
       </div>
 
       {activeAgent ? (
