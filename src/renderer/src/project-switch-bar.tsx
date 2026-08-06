@@ -191,34 +191,38 @@ export function ProjectSwitchBar({
               />
             )}
           </div>
-          {/* Mirror row for width measurement: identical items — same
-              active-state weight and the same 更多 ▾ label as the real
-              trigger, so measured widths match what actually renders
-              (PR #81 review). Never visible or focusable; jsdom reports
-              zero widths, which computeVisibleProjectCount treats as
-              "show everything". */}
+          {/* Mirror row for width measurement: identical items — real
+              <button> elements (never focusable) with the same active-state
+              weight per item and the same 更多 ▾ label as the real trigger,
+              so measured widths match what actually renders (PR #81
+              review). jsdom reports zero widths, which
+              computeVisibleProjectCount treats as "show everything". */}
           <div
             ref={measureRef}
             aria-hidden="true"
             className="pointer-events-none absolute flex items-center gap-1 whitespace-nowrap opacity-0"
           >
             {projects.map((project) => (
-              <span
+              <button
                 key={project.projectId}
+                type="button"
+                tabIndex={-1}
                 data-switch-item
                 className={`${switchBarItemClass(
                   project.projectId === activeProjectId
-                )} inline-block max-w-[140px]`}
+                )} max-w-[140px]`}
               >
                 <span className="block truncate">{project.name}</span>
-              </span>
+              </button>
             ))}
-            <span
+            <button
+              type="button"
+              tabIndex={-1}
               data-switch-more
-              className={`${switchBarItemClass(moreMeasuredActive)} inline-block`}
+              className={switchBarItemClass(moreMeasuredActive)}
             >
               更多 ▾
-            </span>
+            </button>
           </div>
         </>
       )}
@@ -296,8 +300,10 @@ function OverflowMenu({
         aria-expanded={open}
         // While the current Project is folded into the closed menu, the
         // trigger is the bar's only carrier of that fact — it keeps the
-        // double-encoded highlight AND aria-current (PR #81 review).
-        aria-current={containsActive ? 'page' : undefined}
+        // double-encoded highlight AND aria-current. Once the menu opens
+        // the menuitem itself announces it, so the trigger steps back to
+        // avoid a duplicate current announcement (PR #81 round-2 review).
+        aria-current={containsActive && !open ? 'page' : undefined}
         aria-label={moreLabel}
         title={moreLabel}
         className={switchBarItemClass(containsActive)}
@@ -327,7 +333,8 @@ function OverflowMenu({
             )
             if (event.key === 'ArrowDown') {
               event.preventDefault()
-              focusItem(index + 1)
+              // ARIA menu pattern: both directions wrap around the ends.
+              focusItem(index < 0 ? 0 : (index + 1) % items.length)
             } else if (event.key === 'ArrowUp') {
               event.preventDefault()
               focusItem(index <= 0 ? items.length - 1 : index - 1)

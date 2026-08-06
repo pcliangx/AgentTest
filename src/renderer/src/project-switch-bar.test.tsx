@@ -224,8 +224,12 @@ describe('ProjectSwitchBar — overflow 更多 menu', () => {
     const items = within(menu).getAllByRole('menuitem')
     await waitFor(() => expect(items[0]).toHaveFocus())
 
-    // Arrow navigation wraps the roving focus.
+    // Arrow navigation wraps the roving focus around both ends.
     await user.keyboard('{ArrowDown}')
+    expect(items[1]).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(items[0]).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
     expect(items[1]).toHaveFocus()
     await user.keyboard('{ArrowUp}')
     expect(items[0]).toHaveFocus()
