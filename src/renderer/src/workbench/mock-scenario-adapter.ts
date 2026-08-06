@@ -2964,7 +2964,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         // is already the "scanned" state. Real PATH/version probing is Phase 3.
         this.prependActivity({
           timestamp: this.clock(),
-          kind: 'dangerous-action-confirmed',
+          kind: 'provider-rescanned',
           summary: '已重新扫描本机 CLI 工具'
         })
         return null
@@ -2978,7 +2978,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         }
         this.prependActivity({
           timestamp: this.clock(),
-          kind: 'dangerous-action-confirmed',
+          kind: 'provider-tested',
           summary: `测试「${provider.displayName}」：CLI 可用${provider.models.length > 0 ? `，${provider.models.length} 个模型` : ''}`
         })
         return null
@@ -2997,7 +2997,7 @@ export class MockScenarioAdapter implements WorkbenchPort {
         provider.status = 'ready'
         this.prependActivity({
           timestamp: this.clock(),
-          kind: 'dangerous-action-confirmed',
+          kind: 'provider-enabled',
           summary: `已接入 Provider「${provider.displayName}」`
         })
         return null

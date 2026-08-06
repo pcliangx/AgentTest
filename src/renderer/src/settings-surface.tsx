@@ -1787,6 +1787,7 @@ function ProvidersSection({
   const [showInstallable, setShowInstallable] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, string>>({})
+  // #80: test results keyed by providerId for O(1) lookup.
 
   const copyCommand = async (cmd: string) => {
     try {
@@ -1858,18 +1859,23 @@ function ProvidersSection({
                     ? '来自 CLI 的实时列表'
                     : 'CLI 默认设置'}
                 </span>
-                {provider.models.length > 0 && (
-                  <span>
-                    {provider.models.length} 个模型
-                    {provider.models.find((m) =>
-                      m.displayName.includes('current')
-                    ) && (
-                      <span className="ml-1 text-brand">
-                        · {provider.models.find((m) => m.displayName.includes('current'))!.displayName}
-                      </span>
-                    )}
-                  </span>
-                )}
+                {/* #80: model count only for live-list providers with models. */}
+                {provider.modelSource === 'live-list' &&
+                  provider.models.length > 0 && (
+                    <span>
+                      {provider.models.length} 个模型
+                      {(() => {
+                        const current = provider.models.find((m) =>
+                          m.displayName.includes('current')
+                        )
+                        return current ? (
+                          <span className="ml-1 text-brand">
+                            · {current.displayName}
+                          </span>
+                        ) : null
+                      })()}
+                    </span>
+                  )}
               </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -1895,9 +1901,9 @@ function ProvidersSection({
             </div>
           </div>
         ))}
-        {testResults[installed[0]?.providerId] && (
+        {Object.keys(testResults).length > 0 && (
           <p role="status" className="text-xs text-muted">
-            {Object.values(testResults).map((r) => r).join('；')}
+            {Object.values(testResults).join('；')}
           </p>
         )}
       </div>

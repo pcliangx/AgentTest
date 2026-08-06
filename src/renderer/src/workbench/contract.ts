@@ -544,6 +544,9 @@ export type ActivityKind =
   | 'external-task-conflict-resolved'
   | 'queue-cancelled'
   | 'dangerous-action-confirmed'
+  | 'provider-rescanned'
+  | 'provider-tested'
+  | 'provider-enabled'
 
 interface ActivityEntryBase {
   activityId: ActivityId

@@ -1390,3 +1390,45 @@ describe('Settings C — readiness cards (#68)', () => {
     expect(screen.getByText('1 项草稿待应用')).toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// 模型与提供商 (#80)
+// ---------------------------------------------------------------------------
+
+describe('Settings — 模型与提供商 (#80)', () => {
+  it('shows detected CLI cards with version, model source and test button', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '模型与提供商' }))
+    const main = within(screen.getByRole('main'))
+    // The section heading shows the detected count.
+    expect(main.getByText(/已检测/)).toBeInTheDocument()
+    // Claude Code card has version + vendor + test button.
+    expect(main.getByText('Claude Code')).toBeInTheDocument()
+    expect(main.getByText(/v1\.2\.0/)).toBeInTheDocument()
+    expect(main.getByText(/Anthropic/)).toBeInTheDocument()
+    expect(main.getAllByText(/实时列表/).length).toBeGreaterThan(0)
+    expect(main.getAllByRole('button', { name: '测试' }).length).toBeGreaterThan(0)
+  })
+
+  it('shows an enable button for detected but not-enabled CLI (Aider)', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '模型与提供商' }))
+    const main = within(screen.getByRole('main'))
+    // Aider is installed but not enabled — shows both test and enable.
+    expect(main.getByText('Aider')).toBeInTheDocument()
+    expect(main.getByText('未接入')).toBeInTheDocument()
+    expect(main.getByRole('button', { name: '接入' })).toBeInTheDocument()
+  })
+
+  it('shows installable section with copy-install-command', async () => {
+    const { user } = await gotoSettingsSurface()
+    await user.click(screen.getByRole('button', { name: '模型与提供商' }))
+    const main = within(screen.getByRole('main'))
+    // Expand the installable section.
+    await user.click(main.getByRole('button', { name: /可安装/ }))
+    // Qwen Coder is installable with a pip install command.
+    expect(main.getByText('Qwen Coder')).toBeInTheDocument()
+    expect(main.getByText(/pip install/)).toBeInTheDocument()
+    expect(main.getByRole('button', { name: /复制安装命令/ })).toBeInTheDocument()
+  })
+})

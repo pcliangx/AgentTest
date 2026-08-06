@@ -1536,7 +1536,9 @@ function ProviderHealthSurface({
     <section role="region" aria-label="Provider 健康" className="space-y-3">
       <h2 className="text-lg font-medium text-ink">Provider 健康</h2>
       <ul className="space-y-2">
-        {providers.map((p) => (
+        {/* #80: Provider Health shows only enabled providers — detected but
+            not-yet-connected CLIs are managed in Settings → 模型与提供商. */}
+        {providers.filter((p) => p.enabled !== false).map((p) => (
           <li
             key={p.providerId}
             className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"

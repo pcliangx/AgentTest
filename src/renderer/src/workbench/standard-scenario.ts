@@ -80,6 +80,17 @@ export function createStandardScenario(
       vendorDescription: 'Google — Gemini CLI 编码工具'
     },
     {
+      providerId: id('aider-cli', 'AgentProviderId'),
+      displayName: 'Aider',
+      status: 'ready',
+      models: [{ modelId: 'gpt-4o', displayName: 'GPT-4o' }],
+      version: '0.62.0',
+      modelSource: 'live-list',
+      installState: 'installed',
+      enabled: false,
+      vendorDescription: '开源 AI 结对编程 CLI'
+    },
+    {
       providerId: id('qwen-coder', 'AgentProviderId'),
       displayName: 'Qwen Coder',
       status: 'ready',
