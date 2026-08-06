@@ -136,6 +136,26 @@ function removeTabFromPanel(
   }
 }
 
+/**
+ * Insert a tab into a panel's strip at a specific position (#77). If the
+ * tab is already present in the panel it is removed first, then re-inserted
+ * at the clamped index. The index is expressed relative to the post-removal
+ * array so that same-panel reordering is intuitive.
+ */
+function insertTabAtIndex(
+  panel: { tabs: AgentInstanceId[]; activeTabId?: AgentInstanceId },
+  agentInstanceId: AgentInstanceId,
+  requestedIndex: number
+): void {
+  const remaining = panel.tabs.filter((t) => t !== agentInstanceId)
+  const clamped = Math.max(0, Math.min(requestedIndex, remaining.length))
+  panel.tabs = [
+    ...remaining.slice(0, clamped),
+    agentInstanceId,
+    ...remaining.slice(clamped)
+  ]
+}
+
 function findTabOwner(
   state: WorkspaceLayoutViewModel,
   agentInstanceId: AgentInstanceId
@@ -288,65 +308,44 @@ export function applyLayoutOperation(
       // target panel's tab strip. Without it, existing behaviour holds
       // (same-panel activates; cross-panel appends to the end).
       const insertionIndex = operation.insertionIndex
-      if (owner === operation.targetPanelId) {
-        if (insertionIndex !== undefined) {
-          // Reorder within the same panel.
-          const panel = state.panels[owner]
-          const currentIndex = panel.tabs.indexOf(operation.agentInstanceId)
-          if (currentIndex === insertionIndex ||
-              (currentIndex === insertionIndex - 1 && insertionIndex === panel.tabs.length)) {
-            // No-op — the tab is already at this position.
-            panel.activeTabId = operation.agentInstanceId
-            retargetFocus(state, owner)
-            return ok(state, {
-              kind: 'selected-agent',
-              agentInstanceId: operation.agentInstanceId
-            })
-          }
-          // Clamp to valid range after removal.
-          let without = panel.tabs.filter((t) => t !== operation.agentInstanceId)
-          const clamped = Math.max(0, Math.min(insertionIndex, without.length))
-          without = [
-            ...without.slice(0, clamped),
-            operation.agentInstanceId,
-            ...without.slice(clamped)
-          ]
-          panel.tabs = without
-          panel.activeTabId = operation.agentInstanceId
-          retargetFocus(state, owner)
-          return ok(state, {
-            kind: 'selected-agent',
-            agentInstanceId: operation.agentInstanceId
-          })
-        }
-        state.panels[owner].activeTabId = operation.agentInstanceId
-        retargetFocus(state, owner)
+      const panel = state.panels[owner]
+      const targetPanel = state.panels[operation.targetPanelId]
+      const selectAndFocus = (pid: PanelId): LayoutResult => {
+        state.panels[pid].activeTabId = operation.agentInstanceId
+        retargetFocus(state, pid)
         return ok(state, {
           kind: 'selected-agent',
           agentInstanceId: operation.agentInstanceId
         })
       }
+      if (owner === operation.targetPanelId) {
+        if (insertionIndex !== undefined) {
+          const currentIndex = panel.tabs.indexOf(operation.agentInstanceId)
+          // No-op — the tab is already at this position.
+          const isNoOp =
+            currentIndex === insertionIndex ||
+            (currentIndex === insertionIndex - 1 &&
+              insertionIndex === panel.tabs.length)
+          if (!isNoOp) {
+            insertTabAtIndex(
+              panel,
+              operation.agentInstanceId,
+              insertionIndex
+            )
+          }
+        }
+        return selectAndFocus(owner)
+      }
       removeTabFromPanel(state, owner, operation.agentInstanceId)
-      const targetPanel = state.panels[operation.targetPanelId]
       if (insertionIndex !== undefined) {
-        const clamped = Math.max(0, Math.min(insertionIndex, targetPanel.tabs.length))
-        targetPanel.tabs = [
-          ...targetPanel.tabs.slice(0, clamped),
-          operation.agentInstanceId,
-          ...targetPanel.tabs.slice(clamped)
-        ]
+        insertTabAtIndex(targetPanel, operation.agentInstanceId, insertionIndex)
       } else {
         targetPanel.tabs.push(operation.agentInstanceId)
       }
-      targetPanel.activeTabId = operation.agentInstanceId
-      retargetFocus(state, operation.targetPanelId)
       if (state.panels[owner].tabs.length === 0) {
         prunePanel(state, owner)
       }
-      return ok(state, {
-        kind: 'selected-agent',
-        agentInstanceId: operation.agentInstanceId
-      })
+      return selectAndFocus(operation.targetPanelId)
     }
 
     case 'split-panel': {

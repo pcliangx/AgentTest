@@ -774,6 +774,38 @@ function handleTabKeyDown(
     return
   }
 
+  // #77: Alt+ArrowLeft/Right reorders the tab within its own panel's strip —
+  // the keyboard equivalent of the pointer drag-and-drop reorder (§15).
+  if (
+    e.altKey &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.shiftKey &&
+    (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+  ) {
+    e.preventDefault()
+    const tablist = e.currentTarget.closest('[role="tablist"]')
+    const tabs = Array.from(
+      tablist?.querySelectorAll('[role="tab"]') ?? []
+    ) as HTMLElement[]
+    const currentIndex = tabs.indexOf(e.currentTarget)
+    const targetIndex =
+      e.key === 'ArrowLeft' ? currentIndex - 1 : currentIndex + 2
+    if (targetIndex < 0 || targetIndex > tabs.length) return
+    const reorderIntent = ctx.onRequestTabFocus(tabId)
+    void ctx
+      .sendLayout({
+        kind: 'move-tab',
+        agentInstanceId: tabId,
+        targetPanelId: panelId,
+        insertionIndex: targetIndex
+      })
+      .then((result) => {
+        if (!result.ok) ctx.onCancelTabFocus(reorderIntent)
+      })
+    return
+  }
+
   if (!(e.ctrlKey || e.metaKey) || e.altKey || !ARROWS.includes(e.key)) return
   e.preventDefault()
   if (e.shiftKey) {
@@ -821,11 +853,51 @@ function handleTabKeyDown(
   }
 }
 
+/**
+ * Compute the tab insertion index from the pointer's horizontal position
+ * relative to each tab element's centre (#77). Returns null when the drop
+ * would be a no-op (the dragged tab dropped where it already is).
+ */
+function computeTabInsertionIndex(
+  tablist: HTMLElement,
+  clientX: number,
+  tabs: AgentInstanceId[],
+  draggedTabId: AgentInstanceId
+): number | null {
+  const tabEls = Array.from(
+    tablist.querySelectorAll('[data-tab-id]')
+  ) as HTMLElement[]
+  let index = tabEls.length
+  for (let i = 0; i < tabEls.length; i++) {
+    const rect = tabEls[i].getBoundingClientRect()
+    if (clientX < rect.left + rect.width / 2) {
+      index = i
+      break
+    }
+  }
+  // Suppress the indicator when the drop would leave the tab in place.
+  const draggedEl = tabEls.find((el) => el.dataset.tabId === draggedTabId)
+  if (draggedEl) {
+    const rect = draggedEl.getBoundingClientRect()
+    const isBefore = clientX < rect.left + rect.width / 2
+    const draggedIndex = tabs.indexOf(draggedTabId)
+    if (
+      (isBefore && index === draggedIndex) ||
+      (!isBefore && index === draggedIndex + 1)
+    ) {
+      return null
+    }
+  }
+  return index
+}
+
 const TAB_KEYSHORTCUTS = [
   'ArrowLeft',
   'ArrowRight',
   'Home',
   'End',
+  'Alt+ArrowLeft',
+  'Alt+ArrowRight',
   'Control+ArrowLeft',
   'Control+ArrowRight',
   'Control+ArrowUp',
@@ -977,53 +1049,24 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div
         role="tablist"
         aria-label="Agent 标签"
-        className={`relative z-20 flex shrink-0 overflow-x-auto border-b border-line bg-raised transition-colors ${
+        className={`relative z-20 flex shrink-0 overflow-x-auto border-b border-line bg-raised ${
           ctx.draggingTab && ctx.tabStripInsertion?.panelId === panelId
-            ? 'bg-brand-soft/40'
+            ? 'tab-strip-drop-target'
             : ''
         }`}
         onDragOver={(e) => {
           if (!ctx.draggingTab) return
           e.preventDefault()
           e.dataTransfer.dropEffect = 'move'
-          // Compute insertion index from the pointer position relative to
-          // each tab's horizontal centre.
-          const tabEls = Array.from(
-            e.currentTarget.querySelectorAll('[data-tab-id]')
-          ) as HTMLElement[]
-          let index = tabEls.length
-          for (let i = 0; i < tabEls.length; i++) {
-            const rect = tabEls[i].getBoundingClientRect()
-            if (e.clientX < rect.left + rect.width / 2) {
-              index = i
-              break
-            }
-          }
-          // Don't show an insertion marker for a no-op same-panel drop
-          // (the tab dropped where it already is).
-          if (
-            ctx.draggingTab.tabId === panel.activeTabId &&
-            tabEls.length > 0
-          ) {
-            const draggedEl = tabEls.find(
-              (el) => el.dataset.tabId === ctx.draggingTab!.tabId
-            )
-            if (draggedEl) {
-              const rect = draggedEl.getBoundingClientRect()
-              const isBefore = e.clientX < rect.left + rect.width / 2
-              const draggedIndex = panel.tabs.indexOf(
-                ctx.draggingTab.tabId as AgentInstanceId
-              )
-              if (
-                (isBefore && index === draggedIndex) ||
-                (!isBefore && index === draggedIndex + 1)
-              ) {
-                ctx.onTabStripInsertion(null)
-                return
-              }
-            }
-          }
-          ctx.onTabStripInsertion({ panelId, index })
+          const result = computeTabInsertionIndex(
+            e.currentTarget,
+            e.clientX,
+            panel.tabs,
+            ctx.draggingTab.tabId as AgentInstanceId
+          )
+          ctx.onTabStripInsertion(
+            result === null ? null : { panelId, index: result }
+          )
         }}
         onDragLeave={(e) => {
           // Only clear if leaving the tablist entirely (not entering a child).
@@ -1071,7 +1114,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               {showInsertionBefore && (
                 <div
                   aria-hidden="true"
-                  className="h-5 w-0.5 shrink-0 rounded-full bg-brand"
+                  className="tab-insertion-indicator"
                 />
               )}
               <div
@@ -1142,7 +1185,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
           ctx.tabStripInsertion.index >= panel.tabs.length && (
             <div
               aria-hidden="true"
-              className="ml-1 h-5 w-0.5 shrink-0 self-center rounded-full bg-brand"
+              className="tab-insertion-indicator ml-1"
             />
           )}
       </div>
