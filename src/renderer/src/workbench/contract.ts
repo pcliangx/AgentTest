@@ -991,6 +991,26 @@ export type WorkbenchCommandBody =
       action: 'wait-for-runs' | 'stop-runs' | 'request-final-handoff' | 'force-quit'
     }
   | { kind: 'confirm-dangerous-action'; confirmationId: ConfirmationId }
+  | {
+      /**
+       * Archive (= close) an Agent instance (#78). The adapter interrupts
+       * any active Run, clears queue items, suppresses Attention, and
+       * preserves the transcript for read-only viewing. Requires confirmation
+       * when the instance is running, queued, or has pending Attention.
+       */
+      kind: 'archive-instance'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+    }
+  | {
+      /**
+       * Reopen a previously archived Agent instance (#78). Restores the
+       * instance to 'ready' while keeping the historical transcript visible.
+       */
+      kind: 'restore-instance'
+      projectId: ProjectId
+      agentInstanceId: AgentInstanceId
+    }
 
 /** Commands whose successful result may carry a LayoutTargetEffect. */
 export function commandMayProduceLayoutTargetEffect(

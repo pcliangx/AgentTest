@@ -3930,3 +3930,166 @@ describe('MockScenarioAdapter — permission clock and multi-request handling', 
     ).toBe('resolved')
   })
 })
+
+// ---------------------------------------------------------------------------
+// archive-instance / restore-instance (#78)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — archive-instance', () => {
+  it('creates a confirmation for archiving a ready agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const cxReview = snap.agents.find((a) => a.name === 'cx_review')!
+    const result = await adapter.dispatch({
+      kind: 'archive-instance',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: cxReview.agentInstanceId
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(after.pendingConfirmation).toBeDefined()
+    expect(after.pendingConfirmation!.action).toBe('关闭 Agent 实例')
+    // The agent is NOT yet archived — confirmation is still pending.
+    expect(
+      after.agents.find((a) => a.agentInstanceId === cxReview.agentInstanceId)!
+        .runtimeState
+    ).toBe('ready')
+  })
+
+  it('archives on confirm: interrupts run, clears queue, suppresses attention', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    const ccData = snap.agents.find((a) => a.name === 'cc_data')!
+    // cc_data has an active Run + permission-requested attention.
+    await adapter.dispatch({
+      kind: 'archive-instance',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: ccData.agentInstanceId
+    })
+    snap = await adapter.getSnapshot()
+    const confirmId = snap.pendingConfirmation!.confirmationId
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      confirmationId: confirmId
+    })
+    const after = await adapter.getSnapshot()
+    const archived = after.agents.find(
+      (a) => a.agentInstanceId === ccData.agentInstanceId
+    )!
+    expect(archived.runtimeState).toBe('archived')
+    expect(archived.activeRunId).toBeUndefined()
+    // No open attention items for the archived agent.
+    const openForAgent = after.attentionItems.filter(
+      (i) =>
+        i.state === 'open' &&
+        'agentInstanceId' in i &&
+        i.agentInstanceId === ccData.agentInstanceId
+    )
+    expect(openForAgent).toHaveLength(0)
+    // Confirmation consumed.
+    expect(after.pendingConfirmation).toBeUndefined()
+  })
+
+  it('rejects archiving an already-archived agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Archive cx_review first, then try to archive it again.
+    const cxReview = snap.agents.find((a) => a.name === 'cx_review')!
+    await adapter.dispatch({
+      kind: 'archive-instance',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: cxReview.agentInstanceId
+    })
+    snap = await adapter.getSnapshot()
+    const confirmId = snap.pendingConfirmation!.confirmationId
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      confirmationId: confirmId
+    })
+    snap = await adapter.getSnapshot()
+    // Now cx_review is archived — a second archive attempt should reject.
+    const result = await adapter.dispatch({
+      kind: 'archive-instance',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: cxReview.agentInstanceId
+    })
+    expect(result.ok).toBe(false)
+  })
+})
+
+describe('MockScenarioAdapter — restore-instance', () => {
+  it('restores an archived agent to ready and keeps its transcript', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Archive cx_review first.
+    const cxReview = snap.agents.find((a) => a.name === 'cx_review')!
+    await adapter.dispatch({
+      kind: 'archive-instance',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: cxReview.agentInstanceId
+    })
+    snap = await adapter.getSnapshot()
+    const confirmId = snap.pendingConfirmation!.confirmationId
+    await adapter.dispatch({
+      kind: 'confirm-dangerous-action',
+      commandId: cmdId(2),
+      expectedRevision: snap.revision,
+      confirmationId: confirmId
+    })
+    snap = await adapter.getSnapshot()
+    const archived = snap.agents.find(
+      (a) => a.agentInstanceId === cxReview.agentInstanceId
+    )!
+    // The archived agent should have chat entries preserved.
+    const entriesBefore = snap.chatEntries.filter(
+      (e) => e.agentInstanceId === archived.agentInstanceId
+    )
+    const result = await adapter.dispatch({
+      kind: 'restore-instance',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: archived.agentInstanceId
+    })
+    expect(result.ok).toBe(true)
+    snap = await adapter.getSnapshot()
+    const restored = snap.agents.find(
+      (a) => a.agentInstanceId === archived.agentInstanceId
+    )!
+    expect(restored.runtimeState).toBe('ready')
+    expect(restored.doctor).toBe('ready')
+    // Transcript entries are unchanged.
+    const entriesAfter = snap.chatEntries.filter(
+      (e) => e.agentInstanceId === archived.agentInstanceId
+    )
+    expect(entriesAfter).toEqual(entriesBefore)
+  })
+
+  it('rejects restoring a non-archived agent', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const ready = snap.agents.find((a) => a.name === 'cx_review')!
+    const result = await adapter.dispatch({
+      kind: 'restore-instance',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      projectId: DEFAULT_PROJECT_ID,
+      agentInstanceId: ready.agentInstanceId
+    })
+    expect(result.ok).toBe(false)
+  })
+})

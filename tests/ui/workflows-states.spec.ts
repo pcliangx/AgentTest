@@ -491,6 +491,49 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     })
 
     // ==================================================================
+    // Workflow: Agent archive and restore (#78)
+    // ==================================================================
+
+    await recordedStep(evidence, 'workflow: archive an agent via confirmation and restore it', async () => {
+      // Navigate to the Agents surface.
+      await nav().getByRole('button', { name: 'Agent', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Agent 工作区' })).toBeVisible()
+
+      // Close a ready agent (cx_review) from the Agent Directory.
+      const directory = page.getByRole('region', { name: 'Agent 目录' })
+      await directory.getByRole('button', { name: '关闭 cx_review' }).click()
+
+      // A confirmation dialog appears with the non-bypassable reason.
+      const dialog = page.getByRole('dialog', { name: '关闭 Agent 实例' })
+      await expect(dialog).toBeVisible()
+      await expect(dialog).toContainText('不可逆')
+
+      // Confirm the archive.
+      await dialog.getByRole('button', { name: '确认' }).click()
+      await expect(dialog).toBeHidden()
+
+      // The agent directory still lists cx_review but with 已归档 state.
+      await expect(
+        directory.getByRole('button', { name: /^cx_review/ })
+      ).toContainText('已归档')
+
+      // Open the archived agent — its read-only notice bar appears.
+      await directory.getByRole('button', { name: /^cx_review/ }).click()
+      await expect(
+        page.getByRole('status').filter({ hasText: '已归档' })
+      ).toBeVisible()
+      // The reopen button is visible.
+      await expect(page.getByRole('button', { name: '重开实例' })).toBeVisible()
+
+      // Reopen the instance.
+      await page.getByRole('button', { name: '重开实例' }).click()
+      // The read-only notice is gone.
+      await expect(
+        page.getByRole('status').filter({ hasText: '已归档' })
+      ).toHaveCount(0)
+    })
+
+    // ==================================================================
     // Final verification
     // ==================================================================
 

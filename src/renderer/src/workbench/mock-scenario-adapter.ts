@@ -320,6 +320,11 @@ export class MockScenarioAdapter implements WorkbenchPort {
         confirmationRevision: number
         dirtyAgents: QuitPreviewViewModel['handoffDirtyAgents']
       }
+    | {
+        type: 'archive-instance'
+        projectId: ProjectId
+        agentInstanceId: AgentInstanceId
+      }
     | null = null
   /** Revision at which the quit preview was generated; null when no preview (#12). */
   private quitPreviewRevision: number | null = null
@@ -1208,6 +1213,33 @@ export class MockScenarioAdapter implements WorkbenchPort {
           // commitHandoffExecute already records activity and clears the
           // confirmation, so skip the generic post-confirm block below.
           return null
+        } else if (pendingAction.type === 'archive-instance') {
+          // #78: execute the archive — interrupt Run, clear queue, suppress
+          // Attention, keep transcript. Activity and confirmation clean up
+          // at the shared tail below.
+          const agent = this.snapshot.agents.find(
+            (a) => a.agentInstanceId === pendingAction.agentInstanceId
+          )
+          if (!agent) {
+            return this.reject(command, 'invalid-target', 'Agent 不存在')
+          }
+          agent.runtimeState = 'archived'
+          agent.activeRunId = undefined
+          // Clear queue items for this agent.
+          this.snapshot.queue = this.snapshot.queue.filter(
+            (q) => q.agentInstanceId !== pendingAction.agentInstanceId
+          )
+          // Resolve (remove) open Attention items for this agent.
+          this.snapshot.attentionItems = this.snapshot.attentionItems.filter(
+            (a) =>
+              !(
+                a.kind !== 'completed' &&
+                'agentInstanceId' in a &&
+                a.agentInstanceId === pendingAction.agentInstanceId
+              )
+          )
+          activityProjectId = pendingAction.projectId
+          activityAgentInstanceId = pendingAction.agentInstanceId
         } else {
           // merge-changes or discard-changes: both carry agentInstanceId
           const agentId = pendingAction.agentInstanceId
@@ -2853,6 +2885,78 @@ export class MockScenarioAdapter implements WorkbenchPort {
             return null
           }
         }
+        return null
+      }
+      case 'archive-instance': {
+        // #78: close = archive. The adapter interrupts Runs, clears queue
+        // items, suppresses Attention, and preserves the transcript.
+        const busy = this.rejectIfConfirmationPending(command)
+        if (busy) return busy
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === command.agentInstanceId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        if (agent.runtimeState === 'archived') {
+          return this.reject(command, 'invalid-target', 'Agent 已归档')
+        }
+        // Build the confirmation impact text.
+        const impactParts: string[] = []
+        if (agent.activeRunId) {
+          impactParts.push('将中断当前 Run')
+        }
+        const queuedCount = this.snapshot.queue.filter(
+          (q) => q.agentInstanceId === command.agentInstanceId
+        ).length
+        if (queuedCount > 0) {
+          impactParts.push(`清出 ${queuedCount} 个排队任务`)
+        }
+        const attentionCount = this.snapshot.attentionItems.filter(
+          (a) =>
+            a.kind !== 'completed' &&
+            'agentInstanceId' in a &&
+            a.agentInstanceId === command.agentInstanceId
+        ).length
+        if (attentionCount > 0) {
+          impactParts.push(`${attentionCount} 个待处理事项将随归档消除`)
+        }
+        if (impactParts.length === 0) {
+          impactParts.push('实例将变为只读归档状态')
+        }
+        this.pendingAction = {
+          type: 'archive-instance',
+          projectId: command.projectId,
+          agentInstanceId: command.agentInstanceId
+        }
+        this.snapshot.pendingConfirmation = {
+          confirmationId: id(crypto.randomUUID(), 'ConfirmationId'),
+          action: '关闭 Agent 实例',
+          target: agent.name,
+          impact: impactParts.join('；') + '。完整对话记录与 Run 记录仍可在归档视图中查看。',
+          nonBypassableReason: '关闭实例为不可逆操作，需要二次确认'
+        }
+        return null
+      }
+      case 'restore-instance': {
+        const agent = this.snapshot.agents.find(
+          (a) => a.agentInstanceId === command.agentInstanceId
+        )
+        if (!agent) {
+          return this.reject(command, 'invalid-target', 'Agent 不存在')
+        }
+        if (agent.runtimeState !== 'archived') {
+          return this.reject(command, 'invalid-target', 'Agent 未归档')
+        }
+        agent.runtimeState = 'ready'
+        agent.doctor = 'ready'
+        agent.activeRunId = undefined
+        this.prependActivity({
+          projectId: command.projectId,
+          timestamp: this.clock(),
+          kind: 'dangerous-action-confirmed',
+          summary: `重开了 Agent「${agent.name}」，历史记录保留`
+        })
         return null
       }
       default:
