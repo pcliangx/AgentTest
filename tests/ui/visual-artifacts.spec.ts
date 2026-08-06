@@ -47,8 +47,9 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
     await mkdir(VISUAL_DIR, { recursive: true })
 
     const nav = () => page.getByRole('navigation', { name: '主导航' })
-    // #76: the App-level entries live in the rail's top tier.
     const appTier = () => nav().getByRole('group', { name: 'App 级' })
+    const statusbarNav = () =>
+      page.getByRole('navigation', { name: '全局快捷入口' })
 
     const capture = async (name: string): Promise<void> => {
       const path = join(VISUAL_DIR, `${name}.png`)
@@ -104,14 +105,13 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
 
     for (const [name, appLabel, regionName] of [
       ['09-connections', '连接', '全局连接'],
-      ['10-provider-health', 'Provider 健康', 'Provider 健康'],
-      ['11-global-settings', '全局设置', '全局设置']
+      ['10-provider-health', 'Provider 健康', 'Provider 健康']
     ] as const) {
       await recordedStep(evidence, `capture ${name}`, () =>
         captureSurface(
           name,
           () =>
-            appTier()
+            statusbarNav()
               .getByRole('button', { name: appLabel, exact: true })
               .click(),
           async () => {
@@ -123,8 +123,28 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       )
     }
 
+    await recordedStep(evidence, 'capture 11-global-settings', () =>
+      captureSurface(
+        '11-global-settings',
+        () =>
+          appTier()
+            .getByRole('button', { name: '全局设置', exact: true })
+            .click(),
+        async () => {
+          await expect(
+            page.getByRole('region', { name: '全局设置' })
+          ).toBeVisible()
+        }
+      )
+    )
+
     await recordedStep(evidence, 'capture 12-attention-drawer', async () => {
-      await page.getByRole('button', { name: 'Global Attention' }).click()
+      await nav().getByRole('button', { name: '概览', exact: true }).click()
+      await page
+        .getByRole('region', { name: '项目概览' })
+        .getByRole('button', { name: '处理' })
+        .first()
+        .click()
       await expect(
         page.getByRole('complementary', { name: 'Global Attention' })
       ).toBeVisible()
@@ -181,18 +201,18 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       )
 
       // The bar must not jump between project and global views (#75 AC1).
-      await appTier()
+      await statusbarNav()
         .getByRole('button', { name: '连接', exact: true })
         .click()
       await expect(
         page.getByRole('region', { name: '全局连接' })
       ).toBeVisible()
       await expect(bar).toBeVisible()
-      // #76: the bar is Projects-only — it marks nothing while a global work
-      // surface is active; the current marker lives on the App-tier button.
+      // The bar is Projects-only — it marks nothing while a global work
+      // surface is active; the current marker lives in the statusbar.
       await expect(bar.locator('[aria-current="page"]')).toHaveCount(0)
       await expect(
-        appTier().getByRole('button', { name: '连接', exact: true })
+        statusbarNav().getByRole('button', { name: '连接', exact: true })
       ).toHaveAttribute('aria-current', 'page')
       const globalBox = await bar.boundingBox()
       expect(globalBox?.x).toBe(projectBox?.x)

@@ -48,6 +48,69 @@ import { SettingsSurface } from './settings-surface'
 import { KnowledgeSurface } from './knowledge-surface'
 import { TasksSurface } from './tasks-surface'
 
+const STATUSBAR_NAV_BUTTON =
+  'relative grid h-[22px] w-[48px] shrink-0 place-items-center rounded-md outline-none transition-[background-color,box-shadow,color] focus-visible:ring-1 focus-visible:ring-brand active:scale-95'
+
+/** Statusbar nav item — same named-field convention as sidebar.tsx. */
+const STATUSBAR_NAV_ITEMS: Array<{
+  surface: GlobalSurface
+  label: string
+  icon: React.ReactNode
+  divided: boolean
+}> = [
+  { surface: 'connections', label: '连接', icon: <LinkIcon />, divided: false },
+  {
+    surface: 'provider-health',
+    label: 'Provider 健康',
+    icon: <PulseIcon />,
+    divided: true
+  }
+]
+
+function statusbarNavButtonClass(active: boolean): string {
+  return `${STATUSBAR_NAV_BUTTON} ${
+    active
+      ? 'bg-paper text-brand shadow-xs'
+      : 'text-ink-secondary hover:bg-paper hover:text-ink hover:shadow-xs'
+  }`
+}
+
+function LinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6.25 9.75 9.75 6.25" />
+      <path d="M5.25 11.75 4.5 12.5a2.12 2.12 0 0 1-3-3l2-2a2.12 2.12 0 0 1 3 0" />
+      <path d="m10.75 4.25.75-.75a2.12 2.12 0 0 1 3 3l-2 2a2.12 2.12 0 0 1-3 0" />
+    </svg>
+  )
+}
+
+function PulseIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M1.5 8h2.25l1.5-3.5 2.5 7 1.75-5 1 1.5h4" />
+    </svg>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Hook — the renderer's sole connection to the port
 // ---------------------------------------------------------------------------
@@ -915,9 +978,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               () => setPermissionsNavNonce(0)
             )
           }}
-          showAttention={showAttention}
-          attentionCount={snapshot.global.attentionCount}
-          onOpenAttention={() => setShowAttention(true)}
         >
           {project && !inGlobalView && (
             <ContextPane
@@ -1124,13 +1184,45 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         )}
       </div>
 
-      {/* Shell footer of the frozen baseline (#65): root, branch, layout
-          auto-save note and the Project/Global run capacity line. Capacity
-          and counts come from the contract ViewModel — never hard-coded. */}
-      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[10px] text-muted">
-        <span className="max-w-[38%] truncate">{project?.rootPath ?? '—'}</span>
-        <span>{project?.currentBranch ?? '—'}</span>
-        <span>布局自动保存</span>
+      {/* #95: persistent global entry points now share the footer with the
+          frozen #65 status facts. Navigation and facts are separate groups;
+          contract-owned capacity/count values are never hard-coded. */}
+      <footer className="flex h-[27px] shrink-0 items-center gap-2 border-t border-line bg-raised px-2.5 text-[10px] text-muted">
+        <nav
+          aria-label="全局快捷入口"
+          className="flex h-full shrink-0 items-center border-r border-line pr-2"
+        >
+          {STATUSBAR_NAV_ITEMS.map(({ surface, label, icon, divided }) => {
+            const isActive =
+              inGlobalView && snapshot.activeGlobalSurface === surface
+            return (
+              <button
+                key={surface}
+                aria-label={label}
+                aria-current={isActive ? 'page' : undefined}
+                className={`${statusbarNavButtonClass(isActive)} ${
+                  divided
+                    ? 'before:absolute before:left-0 before:h-4 before:w-px before:bg-line'
+                    : ''
+                }`}
+                title={label}
+                onClick={() =>
+                  void sendExplicitNavigation(() => navigateGlobal(surface))
+                }
+              >
+                {icon}
+              </button>
+            )
+          })}
+        </nav>
+        <span
+          className="min-w-0 max-w-[28%] truncate"
+          title={project?.rootPath ?? '—'}
+        >
+          {project?.rootPath ?? '—'}
+        </span>
+        <span className="shrink-0">{project?.currentBranch ?? '—'}</span>
+        <span className="shrink-0">布局自动保存</span>
         <span className="ml-auto shrink-0">
           Project {project?.activeRunCount ?? 0} /{' '}
           {snapshot.global.concurrency.projectLimit} · Global{' '}

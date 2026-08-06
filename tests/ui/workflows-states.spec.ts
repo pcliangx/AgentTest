@@ -86,6 +86,17 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     const nav = () => page.getByRole('navigation', { name: '主导航' })
     const main = () => page.getByRole('main')
     const header = () => page.locator('header')
+    const statusbarNav = () =>
+      page.getByRole('navigation', { name: '全局快捷入口' })
+    const openAttentionDrawer = async () => {
+      await nav().getByRole('button', { name: '概览', exact: true }).click()
+      await page
+        .getByRole('region', { name: '项目概览' })
+        .getByRole('button', { name: '处理' })
+        .first()
+        .click()
+      return page.getByRole('complementary', { name: 'Global Attention' })
+    }
     // #75: project switching is the persistent top switch bar.
     const switchBarProject = (name: string) =>
       page
@@ -123,16 +134,14 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       const list = page.getByRole('list', { name: 'Agent 列表' })
       await expect(list.getByText('cc_data')).toBeVisible()
       // Verify the active Run produces a permission request in the drawer.
-      await page.getByRole('button', { name: 'Global Attention' }).click()
-      const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      const drawer = await openAttentionDrawer()
       await expect(drawer.getByText('写入文件').first()).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(drawer).toBeHidden()
     })
 
     await recordedStep(evidence, 'visual: interrupted (Attention item)', async () => {
-      await page.getByRole('button', { name: 'Global Attention' }).click()
-      const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      const drawer = await openAttentionDrawer()
       await expect(drawer).toBeVisible()
       // "中断" attention kind badge for cc_etl's interrupted Run.
       await expect(drawer.getByText('中断', { exact: true })).toBeVisible()
@@ -227,8 +236,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: Permission deny through Attention drawer', async () => {
-      await page.getByRole('button', { name: 'Global Attention' }).click()
-      const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      const drawer = await openAttentionDrawer()
 
       // The actionable permission request for cc_data has decision buttons.
       // (#68: permission cards live inside the 需要处理 radar group, each
@@ -255,8 +263,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: Attention item resolve (unconditional)', async () => {
-      await page.getByRole('button', { name: 'Global Attention' }).click()
-      const drawer = page.getByRole('complementary', { name: 'Global Attention' })
+      const drawer = await openAttentionDrawer()
       await expect(drawer).toBeVisible()
 
       // Non-permission items always have a "标记已处理" button.
@@ -466,10 +473,8 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: High-risk confirmation for connection deletion', async () => {
-      // Navigate to global Connections (#76: the entry lives in the rail's
-      // App tier).
-      await nav()
-        .getByRole('group', { name: 'App 级' })
+      // Navigate to global Connections from the persistent statusbar (#95).
+      await statusbarNav()
         .getByRole('button', { name: '连接', exact: true })
         .click()
       await expect(page.getByRole('region', { name: '全局连接' })).toBeVisible()
