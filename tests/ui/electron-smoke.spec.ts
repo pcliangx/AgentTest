@@ -234,7 +234,7 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       await fourthPanel.scrollIntoViewIfNeeded()
       await expect(fourthPanel).toBeInViewport({ ratio: 0.75 })
 
-      await fourthPanel.getByRole('button', { name: 'Focus 此 Panel' }).click()
+      await fourthPanel.getByRole('button', { name: '独占此 Panel' }).click()
       await expect(panels).toHaveCount(1)
       await expect(page.getByRole('tab', { name: /^cc_etl\b/ })).toHaveCount(1)
       await page.keyboard.press('Escape')
@@ -252,8 +252,8 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       const ccDataPanel = panels.filter({
         has: page.getByRole('tab', { name: /^cc_data\b/ })
       })
-      await ccDataPanel.getByRole('button', { name: 'Focus 此 Panel' }).click()
-      await expect(page.getByRole('button', { name: '退出 Focus' })).toBeFocused()
+      await ccDataPanel.getByRole('button', { name: '独占此 Panel' }).click()
+      await expect(page.getByRole('button', { name: '退出独占' })).toBeFocused()
       await expect(panels).toHaveCount(1)
       await page.keyboard.press('Escape')
       await expect(panels).toHaveCount(4)

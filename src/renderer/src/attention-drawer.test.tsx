@@ -917,10 +917,10 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
 
     const panels = () => screen.getAllByRole('group', { name: 'Agent 面板' })
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
     expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    await user.click(screen.getByRole('button', { name: '退出独占' }))
 
     await user.click(
       within(panels()[0]).getByRole('button', { name: '向右分割' })
@@ -1105,7 +1105,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
     // semantics (no retained Run detail) must still replace the old Run.
     const panel = screen.getByRole('group', { name: 'Agent 面板' })
     await user.click(
-      within(panel).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panel).getByRole('button', { name: '独占此 Panel' })
     )
     await act(async () => {
       await port.releaseDeferredEtlTarget()
@@ -1145,7 +1145,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
 
     const panel = screen.getByRole('group', { name: 'Agent 面板' })
     await user.click(
-      within(panel).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panel).getByRole('button', { name: '独占此 Panel' })
     )
     await act(async () => {
       await port.releaseDeferredEtlTarget()
@@ -1475,7 +1475,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
     await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     const panel = screen.getByRole('group', { name: 'Agent 面板' })
     await user.click(
-      within(panel).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panel).getByRole('button', { name: '独占此 Panel' })
     )
     expect(port.hasDeferredFocus()).toBe(true)
 
