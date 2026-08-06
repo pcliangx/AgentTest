@@ -61,7 +61,11 @@ describe('Home — startup landing (#76)', () => {
   it('shows the recent projects with name, root path and last-opened time, most recent first', async () => {
     const { home } = await renderShell()
     const list = within(home).getByRole('list', { name: '最近项目' })
-    const rows = within(list).getAllByRole('button')
+    // #88: each row has an open button (no aria-label, name = project name)
+    // plus a ⚙ settings quick action — count the open buttons.
+    const rows = within(list)
+      .getAllByRole('button')
+      .filter((b) => !b.getAttribute('aria-label')?.startsWith('设置'))
     expect(rows).toHaveLength(2)
     // 销售数据分析 opened 1h ago, 用户研究 1d ago.
     expect(rows[0]).toHaveTextContent('销售数据分析')
@@ -69,7 +73,7 @@ describe('Home — startup landing (#76)', () => {
     expect(rows[1]).toHaveTextContent('用户研究')
     expect(rows[1]).toHaveTextContent('~/Projects/user-research')
     // Both rows show a formatted last-opened time, never a bare timestamp.
-    expect(rows[0].querySelector('time')?.textContent).toBeTruthy()
+    expect(rows[0].closest('li')?.querySelector('time')?.textContent).toBeTruthy()
     expect(rows[0]).not.toHaveTextContent(/\d{13}/)
   })
 
@@ -77,7 +81,7 @@ describe('Home — startup landing (#76)', () => {
     const { user, home } = await renderShell()
     const list = within(home).getByRole('list', { name: '最近项目' })
     await user.click(
-      within(list).getByRole('button', { name: /用户研究/ })
+      within(list).getByRole('button', { name: /^用户研究/ })
     )
     expect(
       await screen.findByRole('heading', { name: '用户研究', level: 2 })
@@ -134,7 +138,9 @@ describe('Home — quick create (#76)', () => {
     const nextHome = await screen.findByRole('region', { name: '首页' })
     const rows = within(
       within(nextHome).getByRole('list', { name: '最近项目' })
-    ).getAllByRole('button')
+    )
+      .getAllByRole('button')
+      .filter((b) => !b.getAttribute('aria-label')?.startsWith('设置'))
     expect(rows).toHaveLength(3)
     expect(rows[0]).toHaveTextContent('增长实验平台')
     expect(rows[0]).toHaveTextContent('~/Projects/growth-lab')

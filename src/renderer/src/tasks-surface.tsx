@@ -281,7 +281,7 @@ export function TasksSurface({
   }
 
   const cardClass = (highlighted: boolean): string =>
-    `space-y-2 rounded-lg border px-3 py-2 ${
+    `space-y-2 rounded-xl border px-4 py-3 shadow-card ${
       highlighted
         ? 'border-brand bg-brand-soft ring-1 ring-brand'
         : 'border-line bg-paper'

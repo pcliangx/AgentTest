@@ -1191,14 +1191,17 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       </div>
 
       {activeAgent ? (
-        <AgentView
-          key={activeAgent.agentInstanceId}
-          project={project}
-          agent={activeAgent}
-          snapshot={snapshot}
-          planDispatch={ctx.planDispatch}
-          sendCommand={ctx.sendCommand}
-        />
+        /* #88: keyed fade-in when switching tabs — reduced-motion is
+           handled globally by the base layer transition kill-switch. */
+        <div key={activeAgent.agentInstanceId} className="min-h-0 min-w-0 flex-1 animate-[fade-in_140ms_ease-out]">
+          <AgentView
+            project={project}
+            agent={activeAgent}
+            snapshot={snapshot}
+            planDispatch={ctx.planDispatch}
+            sendCommand={ctx.sendCommand}
+          />
+        </div>
       ) : (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-sm text-muted">未选择 Agent</p>
@@ -1360,10 +1363,11 @@ function AgentView({
       aria-label="Agent 视图"
       className="flex min-h-0 flex-1 flex-col"
     >
-      {/* Head card (#67): mono avatar + name title, Provider/worktree
-          sublabel, and the run state double-coded by dot + text. */}
-      <header className="flex min-h-[48px] shrink-0 items-center gap-2 border-b border-line px-3">
-        <ProviderIcon providerId={agent.providerId} size={31} className="shrink-0" />
+      {/* Head card (#67, #88): provider icon + name title, Provider/worktree
+          sublabel, and the run state double-coded by dot + text. The state
+          pill gets a brand accent when the agent is active. */}
+      <header className="flex min-h-[52px] shrink-0 items-center gap-3 border-b border-line bg-gradient-to-r from-wash via-paper to-paper px-3.5">
+        <ProviderIcon providerId={agent.providerId} size={32} className="shrink-0" />
         <div className="min-w-0">
           <h3 className="truncate font-mono text-[13px] font-bold text-ink">
             {agent.name}
@@ -1373,7 +1377,13 @@ function AgentView({
             {WORKTREE_MODE_LABEL[agent.worktreeMode]}
           </p>
         </div>
-        <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-wash px-2 py-1 text-[10px] text-muted">
+        <span
+          className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
+            agent.runtimeState === 'ready'
+              ? 'bg-teal-soft text-teal'
+              : 'bg-wash text-muted'
+          }`}
+        >
           <StatusDot state={statusDotState(agent.runtimeState)} />
           {RUNTIME_STATE_LABEL[agent.runtimeState]}
         </span>

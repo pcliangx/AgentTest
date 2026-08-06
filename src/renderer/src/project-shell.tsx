@@ -520,9 +520,26 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
 
   if (!snapshot) {
+    // #88: skeleton shell while the first snapshot loads — keeps the layout
+    // stable and reads as "loading" without relying on a spinner alone.
     return (
-      <div className="flex h-full items-center justify-center bg-wash text-muted">
-        加载中…
+      <div className="flex h-full flex-col bg-wash" aria-busy="true" aria-label="加载中">
+        <div className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal" />
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-raised px-4 py-2.5">
+          <div className="h-3 w-36 animate-pulse rounded bg-line" />
+          <div className="ml-auto h-3 w-24 animate-pulse rounded bg-line" />
+        </div>
+        <div className="flex min-h-0 flex-1 gap-4 p-4">
+          <div className="w-[220px] shrink-0 space-y-3">
+            <div className="h-4 w-24 animate-pulse rounded bg-line" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-line" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-line" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="h-32 w-full animate-pulse rounded-xl bg-line" />
+            <div className="h-24 w-3/4 animate-pulse rounded-xl bg-line" />
+          </div>
+        </div>
       </div>
     )
   }
@@ -884,9 +901,14 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   return (
     <div className="flex h-full flex-col bg-paper text-ink">
-      {/* Custom 38px titlebar (#65): drag region, window title, global run
-          status and the ⌘K placeholder (visual only until the command
-          palette ships). `Agent Squad HQ` stays its own text node. */}
+      {/* Custom 38px titlebar (#65, #88): drag region, window title, global
+          run status and the ⌘K placeholder (visual only until the command
+          palette ships). `Agent Squad HQ` stays its own text node. The top
+          edge carries a 2px brand accent line. */}
+      <div
+        aria-hidden="true"
+        className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal"
+      />
       <header className="titlebar flex h-[38px] shrink-0 items-center border-b border-line bg-raised">
         {RESERVE_TRAFFIC_LIGHT_AREA && (
           <div aria-hidden="true" className="h-full w-[72px] shrink-0" />
@@ -1044,6 +1066,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               projects={snapshot.projects}
               sendCommand={sendCommand}
               onOpenProject={openProject}
+              onOpenSettings={(targetId) =>
+                void sendExplicitNavigation(
+                  () => navigate(targetId, 'settings'),
+                  () => setPermissionsNavNonce(0)
+                )
+              }
             />
           )}
           {snapshot.activeGlobalSurface === 'connections' && (

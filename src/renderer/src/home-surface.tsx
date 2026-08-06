@@ -22,12 +22,15 @@ import type {
 export function HomeSurface({
   projects,
   sendCommand,
-  onOpenProject
+  onOpenProject,
+  onOpenSettings
 }: {
   projects: ProjectViewModel[]
   sendCommand: (body: WorkbenchCommandBody) => Promise<CommandResult>
   /** Enter a Project on its own last surface — the switch bar's path. */
   onOpenProject: (projectId: ProjectId) => void
+  /** Jump straight into a Project's Settings surface (#88). */
+  onOpenSettings: (projectId: ProjectId) => void
 }) {
   return (
     <section role="region" aria-label="首页" className="mx-auto max-w-[860px] space-y-5">
@@ -81,7 +84,11 @@ export function HomeSurface({
       <QuickCreateCard sendCommand={sendCommand} />
 
       {projects.length > 0 && (
-        <RecentProjectsCard projects={projects} onOpenProject={onOpenProject} />
+        <RecentProjectsCard
+          projects={projects}
+          onOpenProject={onOpenProject}
+          onOpenSettings={onOpenSettings}
+        />
       )}
     </section>
   )
@@ -188,10 +195,12 @@ function projectTint(name: string): string {
 
 function RecentProjectsCard({
   projects,
-  onOpenProject
+  onOpenProject,
+  onOpenSettings
 }: {
   projects: ProjectViewModel[]
   onOpenProject: (projectId: ProjectId) => void
+  onOpenSettings: (projectId: ProjectId) => void
 }) {
   // Adapter-owned recency truth (#76): most recently opened first;
   // fixtures without a stamp sort last, keeping the contract's optionality.
@@ -206,21 +215,22 @@ function RecentProjectsCard({
       </div>
       <ul aria-label="最近项目" className="divide-y divide-line/70">
         {recent.map((project) => (
-          <li key={project.projectId}>
-            <button
-              className="card-hover flex w-full items-center gap-3.5 px-4 py-3 text-left"
-              onClick={() => onOpenProject(project.projectId)}
-            >
-              {/* #88: gradient cover block — decorative; the name text below
-                  carries the accessible identity. */}
+          <li key={project.projectId} className="group relative">
+            {/* Whole-card open affordance — the name/status area is a
+                button so the row is keyboard-accessible without losing the
+                separate settings quick action. */}
+            <div className="card-hover flex w-full items-center gap-3.5 px-4 py-3">
               <span
                 aria-hidden="true"
                 className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-[15px] font-bold text-paper shadow-sm ${projectTint(project.name)}`}
               >
                 {project.name.slice(0, 1)}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-semibold text-ink">
+              <button
+                className="min-w-0 flex-1 text-left"
+                onClick={() => onOpenProject(project.projectId)}
+              >
+                <span className="block truncate text-[13px] font-semibold text-ink group-hover:text-brand-ink">
                   {project.name}
                 </span>
                 <span className="mt-0.5 block truncate text-[11px] text-muted">
@@ -229,7 +239,7 @@ function RecentProjectsCard({
                     ? ' · Git 就绪'
                     : ' · Git 未就绪'}
                 </span>
-              </span>
+              </button>
               <span className="shrink-0 text-right">
                 <time className="block text-[10px] text-muted">
                   {project.lastOpenedAt
@@ -242,7 +252,15 @@ function RecentProjectsCard({
                   </span>
                 )}
               </span>
-            </button>
+              <button
+                aria-label={`设置 ${project.name}`}
+                title="打开项目设置"
+                className="mini-button opacity-60 transition-opacity group-hover:opacity-100"
+                onClick={() => onOpenSettings(project.projectId)}
+              >
+                ⚙
+              </button>
+            </div>
           </li>
         ))}
       </ul>

@@ -337,9 +337,9 @@ export function KnowledgeSurface({
       ) : container ? (
         <article
           aria-label={`当前知识资源：${container.label ?? '未命名资源'}`}
-          className="overflow-hidden rounded-[11px] border border-line bg-paper"
+          className="overflow-hidden rounded-xl border border-line bg-paper shadow-card"
         >
-          <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-4 py-2.5">
             <div>
               <h3 className="text-sm font-medium text-ink">
                 {container.label ?? 'Knowledge 连接状态'}

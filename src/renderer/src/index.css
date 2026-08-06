@@ -416,6 +416,18 @@
     }
   }
 
+  /* #88: tab/view switch fade-in. */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   /* --- Tab drag-and-drop (#77) -----------------------------------------
      Shared classes for the pointer drag insertion indicator and target
      strip highlight. The indicator is a 2px brand line (shape, not just
