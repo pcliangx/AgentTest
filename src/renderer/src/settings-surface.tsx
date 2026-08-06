@@ -738,7 +738,7 @@ export function SettingsSurface({
             ) : (
               <span
                 aria-hidden="true"
-                className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-brand-soft font-mono text-sm font-bold text-brand"
+                className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-sm font-bold text-brand"
               >
                 {detailHead.icon}
               </span>
@@ -1072,7 +1072,7 @@ export function SettingsSurface({
           <div
             role="dialog"
             aria-label="应用配置变更"
-            className="w-full max-w-lg space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay"
+            className="w-full max-w-lg space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay"
           >
             <h3 className="text-sm font-medium text-ink">
               应用配置变更
@@ -1153,7 +1153,7 @@ function NavItem({
     >
       <span
         aria-hidden="true"
-        className="grid h-[27px] w-[27px] place-items-center rounded-[7px] bg-wash text-[11px] font-bold text-ink"
+        className="grid h-[27px] w-[27px] place-items-center rounded-md bg-wash text-[11px] font-bold text-ink"
       >
         {icon}
       </span>
@@ -1200,7 +1200,7 @@ function FormBlock({
           {badge}
         </div>
       )}
-      {note && <p className="mb-2 text-[9px] text-muted">{note}</p>}
+      {note && <p className="mb-2 text-[10px] leading-relaxed text-muted">{note}</p>}
       {children}
     </div>
   )

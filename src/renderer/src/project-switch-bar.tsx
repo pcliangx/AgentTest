@@ -293,7 +293,7 @@ function OverflowMenu({
           ref={menuRef}
           role="menu"
           aria-label="更多项目"
-          className="absolute right-0 top-full z-30 mt-1 min-w-[160px] rounded-[10px] border border-line bg-paper p-1 shadow-overlay"
+          className="absolute right-0 top-full z-30 mt-1 min-w-[160px] rounded-lg border border-line bg-paper p-1 shadow-overlay"
           onKeyDown={(event) => {
             const items = menuItems()
             const index = items.findIndex(

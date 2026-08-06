@@ -577,7 +577,7 @@ export function DispatchPicker({
     >
       <div
         inert={awaitingBroadcast ? true : undefined}
-        className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-[11px] border border-line bg-paper p-4 shadow-overlay"
+        className="flex max-h-[80%] w-[40rem] flex-col space-y-3 overflow-auto rounded-xl border border-line bg-paper p-4 shadow-overlay"
       >
         <h3 className="text-sm font-medium text-ink">派发给 Agent</h3>
         {taskContext && (
@@ -778,7 +778,7 @@ export function DispatchPicker({
           tabIndex={-1}
           className="absolute inset-0 z-40 flex items-center justify-center bg-backdrop"
         >
-          <div className="w-72 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+          <div className="w-72 space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay">
             <h4 className="text-sm font-medium text-ink">
               确认广播派发
             </h4>

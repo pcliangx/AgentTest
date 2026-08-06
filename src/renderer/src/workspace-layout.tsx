@@ -973,7 +973,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
     <div
       role="group"
       aria-label="Agent 面板"
-      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[11px] border bg-paper ${
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-paper ${
         isLayoutFocused
           ? 'border-brand shadow-panel-focus'
           : 'border-line shadow-panel'
@@ -1286,7 +1286,7 @@ function ClosePanelDialog({
       aria-label="关闭 Panel"
       className="absolute inset-0 z-10 flex items-center justify-center bg-backdrop"
     >
-      <div className="w-80 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+      <div className="w-80 space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay">
         <h3 className="text-sm font-medium text-ink">关闭 Panel</h3>
         <p className="text-xs text-muted">
           该 Panel 仍含有 Agent 标签，关闭前请选择迁移目标；标签只改变视图位置，不影响运行状态。

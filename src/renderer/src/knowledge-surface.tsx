@@ -321,7 +321,7 @@ export function KnowledgeSurface({
   return (
     <section role="region" aria-label="Knowledge" className="space-y-4">
       <header>
-        <h2 className="text-lg font-medium text-ink">Knowledge</h2>
+        <h2 className="text-base font-semibold text-ink">Knowledge</h2>
         <p className="text-xs text-muted">
           受控浏览器 chrome 与身份边界预览
         </p>
