@@ -214,7 +214,7 @@ describe('Left navigation — two tiers (#76)', () => {
     }
     // #92: the unified header no longer hosts the global entries — they
     // live exclusively in the left navigation's App tier.
-    const header = document.querySelector('header.titlebar')!
+    const header = document.querySelector('header.titlebar') as HTMLElement
     expect(
       within(header).queryByRole('button', { name: '连接' })
     ).not.toBeInTheDocument()

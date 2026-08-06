@@ -979,77 +979,12 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
           : 'border-line shadow-panel'
       }`}
     >
-      {/* Narrow Panels (three-up at 1280×800) cannot fit every op — the
-          toolbar scrolls horizontally instead of wrapping button text. */}
-      <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-line bg-raised py-1 pl-0 pr-1.5">
-        <span
-          aria-hidden="true"
-          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[10px] font-bold text-muted"
-        >
-          P{panelIndex}
-        </span>
-        {!ctx.temporaryFocusPanelId && (
-          <>
-            <button
-              className="mini-button"
-              onClick={() =>
-                void sendLayout({
-                  kind: 'split-panel',
-                  panelId,
-                  direction: 'horizontal'
-                })
-              }
-            >
-              向右分割
-            </button>
-            <button
-              className="mini-button"
-              onClick={() =>
-                void sendLayout({
-                  kind: 'split-panel',
-                  panelId,
-                  direction: 'vertical'
-                })
-              }
-            >
-              向下分割
-            </button>
-            <button
-              className="mini-button"
-              title="以此 Panel 为主，生成一主两辅布局"
-              onClick={() =>
-                void sendLayout({ kind: 'apply-analysis-preset', panelId })
-              }
-            >
-              Analysis 预设
-            </button>
-          </>
-        )}
-        <span className="flex-1" />
-        {!ctx.temporaryFocusPanelId && (
-          <button
-            aria-label="Focus 此 Panel"
-            data-focus-trigger={panelId}
-            className="mini-button"
-            onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
-          >
-            Focus
-          </button>
-        )}
-        {!ctx.temporaryFocusPanelId && ctx.panelCount > 1 && (
-          <button
-            className="mini-button"
-            onClick={() => ctx.onRequestClosePanel(panelId)}
-          >
-            关闭 Panel
-          </button>
-        )}
-      </div>
-
+      {/* #92: merged toolbar + tab strip into one row — P label prefixes
+          the tabs; layout actions float at the right. Saves ~28px. */}
       <div
         role="tablist"
         aria-label="Agent 标签"
-        className={`relative z-20 flex shrink-0 overflow-x-auto border-b border-line bg-raised ${
+        className={`relative z-20 flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-raised py-1 pl-1.5 pr-1.5 ${
           ctx.draggingTab && ctx.tabStripInsertion?.panelId === panelId
             ? 'tab-strip-drop-target'
             : ''
@@ -1098,6 +1033,12 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
           }
         }}
       >
+        <span
+          aria-hidden="true"
+          className="grid min-w-[28px] shrink-0 place-items-center font-mono text-[10px] font-bold text-muted"
+        >
+          P{panelIndex}
+        </span>
         {panel.tabs.map((tabId, tabIndex) => {
           const agent = snapshot.agents.find(
             (a) => a.agentInstanceId === tabId
@@ -1188,6 +1129,66 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
               className="tab-insertion-indicator ml-1"
             />
           )}
+        {/* #92: layout actions floated to the tab strip's right edge. */}
+        <span className="flex-1" />
+        {!ctx.temporaryFocusPanelId && (
+          <>
+            <button
+              aria-label="向右分割"
+              className="mini-button shrink-0"
+              onClick={() =>
+                void sendLayout({
+                  kind: 'split-panel',
+                  panelId,
+                  direction: 'horizontal'
+                })
+              }
+            >
+              ⇆
+            </button>
+            <button
+              aria-label="向下分割"
+              className="mini-button shrink-0"
+              onClick={() =>
+                void sendLayout({
+                  kind: 'split-panel',
+                  panelId,
+                  direction: 'vertical'
+                })
+              }
+            >
+              ⇅
+            </button>
+            <button
+              className="mini-button shrink-0"
+              title="以此 Panel 为主，生成一主两辅布局"
+              onClick={() =>
+                void sendLayout({ kind: 'apply-analysis-preset', panelId })
+              }
+            >
+              Analysis 预设
+            </button>
+          </>
+        )}
+        {!ctx.temporaryFocusPanelId && (
+          <button
+            aria-label="Focus 此 Panel"
+            data-focus-trigger={panelId}
+            className="mini-button shrink-0"
+            onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
+          >
+            Focus
+          </button>
+        )}
+        {!ctx.temporaryFocusPanelId && ctx.panelCount > 1 && (
+          <button
+            aria-label="关闭 Panel"
+            className="mini-button shrink-0"
+            onClick={() => ctx.onRequestClosePanel(panelId)}
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {activeAgent ? (
