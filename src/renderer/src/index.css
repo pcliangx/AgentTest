@@ -37,6 +37,15 @@
   --color-dot-idle: #7e8799;
   --color-backdrop: rgb(17 24 39 / 36%);
 
+  /* Provider brand colors (#79) — original SVG abstractions, not third-party
+     trademark assets. Each pair carries a solid and a soft variant. */
+  --color-provider-cc: #d97757;
+  --color-provider-cc-soft: #fdf0eb;
+  --color-provider-cx: #1a1a1a;
+  --color-provider-cx-soft: #ececec;
+  --color-provider-km: #1e40af;
+  --color-provider-km-soft: #e0e7ff;
+
   --font-sans:
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;

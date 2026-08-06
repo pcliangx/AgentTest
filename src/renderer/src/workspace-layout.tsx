@@ -29,6 +29,7 @@ import {
   WORKTREE_MODE_LABEL
 } from './agent-display'
 import { StatusDot, statusDotState } from './status-dot'
+import { ProviderIcon } from './provider-icon'
 import type { PlanDispatch, SendCommand } from './agents-surface'
 import type { ProjectDispatchBlockReason } from './workbench/dispatchability'
 import { useDispatchPlan } from './use-dispatch-plan'
@@ -1363,12 +1364,7 @@ function AgentView({
       {/* Head card (#67): mono avatar + name title, Provider/worktree
           sublabel, and the run state double-coded by dot + text. */}
       <header className="flex min-h-[48px] shrink-0 items-center gap-2 border-b border-line px-3">
-        <span
-          aria-hidden="true"
-          className="grid h-[31px] w-[31px] shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-[9px] font-bold text-brand-ink"
-        >
-          {providerCode(agent.providerId)}
-        </span>
+        <ProviderIcon providerId={agent.providerId} size={31} className="shrink-0" />
         <div className="min-w-0">
           <h3 className="truncate font-mono text-[13px] font-bold text-ink">
             {agent.name}

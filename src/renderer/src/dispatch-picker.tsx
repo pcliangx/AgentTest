@@ -9,7 +9,8 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import type { SendCommand } from './agents-surface'
-import { RUNTIME_STATE_LABEL, providerCode } from './agent-display'
+import { RUNTIME_STATE_LABEL } from './agent-display'
+import { ProviderIcon } from './provider-icon'
 import { StatusDot, statusDotState } from './status-dot'
 import { StatusChip } from './status-chip'
 import { useDispatchPlan } from './use-dispatch-plan'
@@ -614,12 +615,7 @@ export function DispatchPicker({
                     disabled={disabled}
                     onClick={() => toggleManual(a.agentInstanceId)}
                   >
-                    <span
-                      aria-hidden="true"
-                      className="grid h-6 w-6 place-items-center rounded-md bg-brand-soft font-mono text-[8px] font-bold text-brand"
-                    >
-                      {providerCode(a.providerId)}
-                    </span>
+                    <ProviderIcon providerId={a.providerId} size={24} />
                     <span className="min-w-0 text-sm">
                       {a.name} · {RUNTIME_STATE_LABEL[a.runtimeState]}
                       {disabled ? '（不可派发）' : ''}

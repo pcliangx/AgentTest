@@ -1402,7 +1402,8 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     await user.click(screen.getByRole('button', { name: /^cx_review/ }))
     const heading = await screen.findByRole('heading', { name: 'cx_review' })
     const header = heading.closest('header') as HTMLElement
-    expect(within(header).getByText('CX')).toBeInTheDocument()
+    // #79: Provider brand icon replaces the old CX text avatar.
+    expect(header.querySelector('svg')).not.toBeNull()
     expect(header).toHaveTextContent('Codex · 独立 worktree')
     // Run state is double-coded: status dot plus text, never color alone.
     expect(header.querySelector('.state-dot')).toHaveClass('state-dot-ready')

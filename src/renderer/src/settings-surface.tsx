@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type {
   AgentInstanceViewModel,
+  AgentProviderId,
   CommandResult,
   ConfigurationOwner,
   ProjectViewModel,
@@ -18,10 +19,10 @@ import {
 import {
   RUNTIME_STATE_LABEL,
   WORKTREE_MODE_LABEL,
-  providerCode,
   providerLabel
 } from './agent-display'
 import { StatusDot, statusDotState } from './status-dot'
+import { ProviderIcon } from './provider-icon'
 import { CONNECTION_STATUS_LABEL } from './connection-display'
 import type { SendCommand } from './agents-surface'
 
@@ -562,10 +563,16 @@ export function SettingsSurface({
     return badge[section] ? <DetailBadge>{badge[section]}</DetailBadge> : null
   })()
 
-  const detailHead = (() => {
+  const detailHead: {
+    icon: string
+    providerId?: AgentProviderId
+    title: string
+    note: string
+  } = (() => {
     if (section === 'instances' && selectedAgent) {
       return {
-        icon: providerCode(selectedAgent.providerId),
+        icon: '',
+        providerId: selectedAgent.providerId,
         title: selectedAgent.name,
         note: `${providerLabel(selectedAgent.providerId)} · ${
           RUNTIME_STATE_LABEL[selectedAgent.runtimeState]
@@ -696,12 +703,7 @@ export function SettingsSurface({
                       setSection('instances')
                     }}
                   >
-                    <span
-                      aria-hidden="true"
-                      className="grid h-[27px] w-[27px] place-items-center rounded-[7px] bg-brand-soft font-mono text-[9px] font-bold text-brand"
-                    >
-                      {providerCode(agent.providerId)}
-                    </span>
+                    <ProviderIcon providerId={agent.providerId} size={27} />
                     <span className="min-w-0">
                       <strong className="block truncate text-[10px] font-semibold text-ink">
                         {agent.name}
@@ -723,12 +725,16 @@ export function SettingsSurface({
 
         <div className="min-w-0 flex-1 overflow-auto">
           <header className="sticky top-0 z-10 flex min-h-[60px] items-center gap-3 border-b border-line bg-paper/95 px-5 py-2 backdrop-blur-sm">
-            <span
-              aria-hidden="true"
-              className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-brand-soft font-mono text-sm font-bold text-brand"
-            >
-              {detailHead.icon}
-            </span>
+            {detailHead.providerId ? (
+              <ProviderIcon providerId={detailHead.providerId} size={38} className="shrink-0" />
+            ) : (
+              <span
+                aria-hidden="true"
+                className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-brand-soft font-mono text-sm font-bold text-brand"
+              >
+                {detailHead.icon}
+              </span>
+            )}
             <span className="min-w-0">
               <h2 className="truncate text-[17px] font-semibold text-ink">
                 {detailHead.title}

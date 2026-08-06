@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   ActivityEntry,
   AgentInstanceId,
+  AgentProviderId,
   AttentionItemId,
   AttentionTarget,
   CommandResult,
@@ -15,10 +16,10 @@ import type {
 import { ATTENTION_KIND_LABEL } from './attention-display'
 import {
   RUNTIME_STATE_LABEL,
-  providerCode,
   providerLabel
 } from './agent-display'
 import { STATUS_DOT_LABEL, StatusDot, statusDotState } from './status-dot'
+import { ProviderIcon } from './provider-icon'
 import { fieldDescriptor } from './workbench/configuration'
 
 /**
@@ -371,7 +372,7 @@ export function AttentionDrawer({
                 return (
                   <li key={agent.agentInstanceId}>
                     <RadarRow
-                      avatar={providerCode(agent.providerId)}
+                      providerId={agent.providerId}
                       name={agent.name}
                       sublabel={
                         summary ??
@@ -414,7 +415,7 @@ export function AttentionDrawer({
                 return (
                   <li key={entry.activityId}>
                     <RadarRow
-                      avatar={providerCode(agent.providerId)}
+                      providerId={agent.providerId}
                       name={agent.name}
                       sublabel={entry.summary}
                       dotState={dotState}
@@ -445,14 +446,14 @@ export function AttentionDrawer({
  *  sublabel does not already name the state. Rows are navigation deep
  *  links into the owning Agent, never action buttons. */
 function RadarRow({
-  avatar,
+  providerId,
   name,
   sublabel,
   dotState,
   dotLabel,
   onOpen
 }: {
-  avatar: string
+  providerId: AgentProviderId
   name: string
   sublabel: string
   dotState: ReturnType<typeof statusDotState>
@@ -465,12 +466,7 @@ function RadarRow({
       className="grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-wash"
       onClick={onOpen}
     >
-      <span
-        aria-hidden="true"
-        className="grid h-7 w-7 place-items-center rounded-lg bg-brand-soft font-mono text-[9px] font-bold text-brand"
-      >
-        {avatar}
-      </span>
+      <ProviderIcon providerId={providerId} size={28} />
       <span className="min-w-0">
         <strong className="block truncate font-mono text-[10px] font-semibold text-ink">
           {name}
