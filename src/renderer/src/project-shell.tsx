@@ -49,20 +49,29 @@ import { KnowledgeSurface } from './knowledge-surface'
 import { TasksSurface } from './tasks-surface'
 
 const STATUSBAR_NAV_BUTTON =
-  'relative grid h-[22px] w-[48px] shrink-0 place-items-center rounded-md outline-none transition-[background-color,box-shadow,color] focus-visible:ring-1 focus-visible:ring-brand'
+  'relative grid h-[22px] w-[48px] shrink-0 place-items-center rounded-md outline-none transition-[background-color,box-shadow,color] focus-visible:ring-1 focus-visible:ring-brand active:scale-95'
 
-function statusbarNavButtonClass(
-  active: boolean,
-  divided = false
-): string {
+/** Statusbar nav item — same named-field convention as sidebar.tsx. */
+const STATUSBAR_NAV_ITEMS: Array<{
+  surface: GlobalSurface
+  label: string
+  icon: React.ReactNode
+  divided: boolean
+}> = [
+  { surface: 'connections', label: '连接', icon: <LinkIcon />, divided: false },
+  {
+    surface: 'provider-health',
+    label: 'Provider 健康',
+    icon: <PulseIcon />,
+    divided: true
+  }
+]
+
+function statusbarNavButtonClass(active: boolean): string {
   return `${STATUSBAR_NAV_BUTTON} ${
     active
       ? 'bg-paper text-brand shadow-xs'
       : 'text-ink-secondary hover:bg-paper hover:text-ink hover:shadow-xs'
-  } ${
-    divided
-      ? 'before:absolute before:left-0 before:h-4 before:w-px before:bg-line'
-      : ''
   }`
 }
 
@@ -1183,12 +1192,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           aria-label="全局快捷入口"
           className="flex h-full shrink-0 items-center border-r border-line pr-2"
         >
-          {(
-            [
-              ['connections', '连接', <LinkIcon />],
-              ['provider-health', 'Provider 健康', <PulseIcon />]
-            ] as const
-          ).map(([surface, label, icon], index) => {
+          {STATUSBAR_NAV_ITEMS.map(({ surface, label, icon, divided }) => {
             const isActive =
               inGlobalView && snapshot.activeGlobalSurface === surface
             return (
@@ -1196,7 +1200,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 key={surface}
                 aria-label={label}
                 aria-current={isActive ? 'page' : undefined}
-                className={statusbarNavButtonClass(isActive, index > 0)}
+                className={`${statusbarNavButtonClass(isActive)} ${
+                  divided
+                    ? 'before:absolute before:left-0 before:h-4 before:w-px before:bg-line'
+                    : ''
+                }`}
                 title={label}
                 onClick={() =>
                   void sendExplicitNavigation(() => navigateGlobal(surface))
