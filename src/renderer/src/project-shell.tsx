@@ -902,57 +902,44 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   return (
     <div className="flex h-full flex-col bg-paper text-ink">
-      {/* Custom 38px titlebar (#65, #88): drag region, window title, global
-          run status and the ⌘K placeholder (visual only until the command
-          palette ships). `Agent Squad HQ` stays its own text node. The top
-          edge carries a 2px brand accent line. */}
+      {/* #92: Unified 44px bar — merges the former 38px titlebar + 44px
+          switch bar into one. Brand + project switch on the left; status,
+          actions and window controls on the right. The 2px brand accent
+          stays on the top edge. The whole bar is a drag region except
+          interactive elements. */}
       <div
         aria-hidden="true"
         className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal"
       />
-      <header className="titlebar glass-surface flex h-[38px] shrink-0 items-center border-b border-line">
+      <header
+        className="titlebar glass-surface flex h-11 shrink-0 items-center gap-2 border-b border-line pr-3"
+      >
         {RESERVE_TRAFFIC_LIGHT_AREA && (
           <div aria-hidden="true" className="h-full w-[72px] shrink-0" />
         )}
-        <div className="ml-[18px] flex min-w-0 items-baseline gap-1.5 text-[11px] text-muted">
-          <strong className="shrink-0 font-semibold text-ink">
-            Agent Squad HQ
-          </strong>
-          {project && <span className="truncate">/ {project.name}</span>}
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-3 pr-3 text-[11px] text-muted">
-          <span className="flex items-center gap-1.5">
-            <span aria-hidden="true" className="live-dot" />
-            后台 {snapshot.global.concurrency.activeGlobal} 个 Run
-          </span>
-          <span
-            className="rounded-md border border-line bg-paper px-1.5 py-0.5 text-[10px] text-muted"
-            title="命令面板即将推出"
-          >
-            ⌘K 命令
-          </span>
-        </div>
-      </header>
-
-      {/* Persistent quick-switch bar (#75): one button per Project,
-          identical on every surface so any Project is one click away. It
-          replaced the context pane's 切换项目 select and the global view's
-          ← 返回项目 button; the global entries moved into the left
-          navigation's App tier in #76. 派发给 Agent / 关闭窗口 / 退出 keep
-          their pre-#65 positions and accessible names on the right. */}
-      <header
-        inert={showPicker ? true : undefined}
-        className="glass-surface flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line px-3"
-      >
+        {/* Brand mark — `Agent Squad HQ` stays its own text node (#65). */}
+        <strong className="ml-[14px] shrink-0 font-semibold text-ink text-[12px]">
+          Agent Squad HQ
+        </strong>
+        {project && (
+          <span className="shrink-0 text-[11px] text-muted">/ {project.name}</span>
+        )}
+        {/* #92: Project switch bar is always present — in global views no
+            project is marked active, matching the pre-merge behaviour. */}
         <ProjectSwitchBar
           projects={snapshot.projects}
           activeProjectId={inGlobalView ? undefined : project?.projectId}
           onSwitchProject={openProject}
         />
-        <div className="flex shrink-0 items-center gap-2">
+        {/* Right cluster: run status, ⌘K, actions. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2.5 text-[11px] text-muted">
+          <span className="hidden items-center gap-1.5 sm:flex">
+            <span aria-hidden="true" className="live-dot" />
+            {snapshot.global.concurrency.activeGlobal} Run
+          </span>
           {project && (
             <button
-              className="btn btn-primary min-h-[29px]"
+              className="btn btn-primary min-h-[28px]"
               onClick={() => {
                 setPickerTask(null)
                 setShowPicker(true)
@@ -964,6 +951,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           {!inGlobalView && connection && (
             <span className="chip">{connection.label}</span>
           )}
+          <span
+            className="hidden rounded-md border border-line bg-paper px-1.5 py-0.5 text-[10px] text-muted md:inline"
+            title="命令面板即将推出"
+          >
+            ⌘K
+          </span>
           <button
             className="mini-button"
             onClick={() => setShowCloseNotice(true)}
@@ -971,7 +964,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             关闭窗口
           </button>
           <button
-            className="btn btn-danger min-h-[29px]"
+            className="btn btn-danger min-h-[28px]"
             onClick={() => {
               void sendCommand({ kind: 'request-quit-preview' })
             }}

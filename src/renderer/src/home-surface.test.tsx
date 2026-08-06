@@ -212,8 +212,9 @@ describe('Left navigation — two tiers (#76)', () => {
         within(projectTier).getByRole('button', { name: label })
       ).toBeVisible()
     }
-    // The header no longer hosts the global entries.
-    const header = document.querySelectorAll('header')[1]
+    // #92: the unified header no longer hosts the global entries — they
+    // live exclusively in the left navigation's App tier.
+    const header = document.querySelector('header.titlebar') as HTMLElement
     expect(
       within(header).queryByRole('button', { name: '连接' })
     ).not.toBeInTheDocument()
