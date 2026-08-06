@@ -956,10 +956,12 @@ export function SettingsSurface({
             </div>
 
             {section === 'providers' && (
-              <ProvidersSection
-                providers={snapshot.global.providers}
-                sendCommand={sendCommand}
-              />
+              <div className="card px-5">
+                <ProvidersSection
+                  providers={snapshot.global.providers}
+                  sendCommand={sendCommand}
+                />
+              </div>
             )}
 
             {section === 'matrix' && (

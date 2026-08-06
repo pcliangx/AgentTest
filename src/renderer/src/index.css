@@ -137,6 +137,7 @@
     box-shadow: var(--shadow-lift);
   }
   .btn:active:not(:disabled) {
+    box-shadow: none;
     transform: translateY(1px);
   }
   .btn:disabled {

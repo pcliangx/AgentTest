@@ -522,11 +522,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   if (!snapshot) {
     // #88: skeleton shell while the first snapshot loads — keeps the layout
     // stable and reads as "loading" without relying on a spinner alone.
+    // The visible text stays even when reduced-motion kills the pulse.
     return (
       <div className="flex h-full flex-col bg-wash" aria-busy="true" aria-label="加载中">
         <div className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal" />
         <div className="flex shrink-0 items-center gap-3 border-b border-line bg-raised px-4 py-2.5">
-          <div className="h-3 w-36 animate-pulse rounded bg-line" />
+          <strong className="text-[11px] font-semibold text-ink">Agent Squad HQ</strong>
           <div className="ml-auto h-3 w-24 animate-pulse rounded bg-line" />
         </div>
         <div className="flex min-h-0 flex-1 gap-4 p-4">

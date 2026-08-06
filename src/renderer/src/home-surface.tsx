@@ -120,7 +120,7 @@ function QuickCreateCard({
   }
 
   return (
-    <div className="card">
+    <div className="card max-w-[640px]">
       <div className="flex items-center justify-between border-b border-line bg-raised px-4 py-2.5">
         <h3 className="section-label">快速建项目</h3>
         <span className="text-[10px] text-muted">演示模式</span>
@@ -182,8 +182,8 @@ function QuickCreateCard({
 /** Deterministic brand-tint palette per project name (decorative only). */
 const PROJECT_TINTS = [
   'from-brand to-brand-ink',
-  'from-teal to-teal-border',
-  'from-amber to-amber-border',
+  'from-teal to-teal',
+  'from-amber to-amber',
   'from-provider-cc to-provider-cc-soft'
 ] as const
 
