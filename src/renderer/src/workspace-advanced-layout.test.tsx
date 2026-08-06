@@ -100,14 +100,14 @@ describe('Workspace layout — Focus', () => {
 
     // Enter Focus on the second panel (cc_sql's).
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
     expect(panels()).toHaveLength(1)
     within(panels()[0]).getByRole('tab', { name: /cc_sql/ })
 
     // Exit Focus: the original tree returns — two panels, both tabs, the
     // divider ratio exactly where it was.
-    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    await user.click(screen.getByRole('button', { name: '退出独占' }))
     expect(panels()).toHaveLength(2)
     expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
     expect(screen.getAllByRole('tab', { name: /cc_sql/ })).toHaveLength(1)
@@ -122,7 +122,7 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
     expect(panels()).toHaveLength(1)
 
@@ -137,7 +137,7 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
 
     // The focused panel still activates its tabs through the same command.
@@ -148,7 +148,7 @@ describe('Workspace layout — Focus', () => {
     expect(ccEtlTab).toHaveAttribute('aria-selected', 'true')
 
     // Everything comes back on exit — nothing was restructured.
-    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    await user.click(screen.getByRole('button', { name: '退出独占' }))
     expect(panels()).toHaveLength(2)
     expect(screen.getAllByRole('tab', { name: /cc_data/ })).toHaveLength(1)
   })
@@ -159,12 +159,12 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
 
     // The trigger button unmounted — focus must land inside the Focus UI,
     // not fall back to body where Escape would never reach the handler.
-    const exitButton = screen.getByRole('button', { name: '退出 Focus' })
+    const exitButton = screen.getByRole('button', { name: '退出独占' })
     expect(document.activeElement).toBe(exitButton)
 
     // The real keyboard path: Escape from the current active element.
@@ -173,7 +173,7 @@ describe('Workspace layout — Focus', () => {
 
     // Focus returns to the original trigger in the restored tree.
     expect(document.activeElement).toBe(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
   })
 
@@ -184,7 +184,7 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
 
     // cc_data lives in the hidden panel; the user explicitly asked for it.
@@ -209,7 +209,7 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
     expect(panels()).toHaveLength(1)
 
@@ -235,7 +235,7 @@ describe('Workspace layout — Focus', () => {
       )
       await user.click(
         within(panels()[1]).getByRole('button', {
-          name: 'Focus 此 Panel'
+          name: '独占此 Panel'
         })
       )
       expect(panels()).toHaveLength(1)
@@ -272,7 +272,7 @@ describe('Workspace layout — Focus', () => {
         screen.queryByRole('dialog', { name: '新建 Agent' })
       ).not.toBeInTheDocument()
       expect(panels()).toHaveLength(1)
-      expect(screen.getByRole('button', { name: '退出 Focus' })).toBeVisible()
+      expect(screen.getByRole('button', { name: '退出独占' })).toBeVisible()
       expect(opener).toHaveFocus()
       expect(document.activeElement).not.toBe(document.body)
     }
@@ -303,7 +303,7 @@ describe('Workspace layout — Focus', () => {
       screen.getByRole('button', { name: '在新 Panel 打开 cc_sql' })
     )
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
 
     // Closing the focused panel's only tab prunes it and auto-exits Focus;
@@ -311,7 +311,7 @@ describe('Workspace layout — Focus', () => {
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_sql' }))
     expect(panels()).toHaveLength(1)
     expect(document.activeElement).toBe(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
   })
 
@@ -320,9 +320,9 @@ describe('Workspace layout — Focus', () => {
     const directory = screen.getByRole('region', { name: 'Agent 目录' })
 
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
-    expect(screen.getByRole('button', { name: '退出 Focus' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: '退出独占' })).toHaveFocus()
 
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
 
@@ -330,7 +330,7 @@ describe('Workspace layout — Focus', () => {
       0
     )
     expect(
-      screen.queryByRole('button', { name: '退出 Focus' })
+      screen.queryByRole('button', { name: '退出独占' })
     ).not.toBeInTheDocument()
     expect(screen.getByText(/尚未打开 Agent/)).toBeVisible()
     expect(
@@ -351,7 +351,7 @@ describe('Workspace layout — Focus', () => {
     ).not.toBeInTheDocument()
 
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
 
@@ -369,7 +369,7 @@ describe('Workspace layout — Analysis preset', () => {
   it('builds the one-main-two-auxiliary tree from a single panel', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Analysis 预设' })
+      within(panels()[0]).getByRole('button', { name: '三栏分析' })
     )
 
     expect(panels()).toHaveLength(3)
@@ -400,7 +400,7 @@ describe('Workspace layout — Analysis preset', () => {
 
     // Apply the preset with cc_etl's panel as the main one.
     await user.click(
-      within(panels()[2]).getByRole('button', { name: 'Analysis 预设' })
+      within(panels()[2]).getByRole('button', { name: '三栏分析' })
     )
 
     expect(panels()).toHaveLength(3)
@@ -551,7 +551,7 @@ describe('Workspace layout — keyboard parity', () => {
     await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
     // Analysis preset from the single panel: [ main | (aux1 / aux2) ].
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Analysis 预设' })
+      within(panels()[0]).getByRole('button', { name: '三栏分析' })
     )
     expect(panels()).toHaveLength(3)
 
@@ -766,11 +766,11 @@ describe('Workspace layout — keyboard parity', () => {
     // Entering and exiting Focus must also restore focus by the raw panel
     // ID, not by an attribute selector.
     await user.click(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
-    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    await user.click(screen.getByRole('button', { name: '退出独占' }))
     expect(document.activeElement).toBe(
-      within(panels()[0]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[0]).getByRole('button', { name: '独占此 Panel' })
     )
   })
 })
@@ -850,10 +850,10 @@ describe('Workspace layout — density', () => {
     expect(panels()).toHaveLength(4)
     expect(screen.getByRole('note')).toHaveTextContent(/超出建议密度/)
     await user.click(
-      within(panels()[1]).getByRole('button', { name: 'Focus 此 Panel' })
+      within(panels()[1]).getByRole('button', { name: '独占此 Panel' })
     )
     expect(panels()).toHaveLength(1)
-    await user.click(screen.getByRole('button', { name: '退出 Focus' }))
+    await user.click(screen.getByRole('button', { name: '退出独占' }))
     expect(panels()).toHaveLength(4)
   })
 })

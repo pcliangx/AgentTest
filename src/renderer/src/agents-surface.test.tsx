@@ -309,12 +309,13 @@ describe('Agents surface — New Agent', () => {
       (await screen.findByRole('region', { name: 'Agent 目录' })).textContent
     ).toContain('cc_review2')
     expect(directoryNames(directory)).toHaveLength(9)
-    // A new unique tab appears and becomes active, showing 就绪 state.
+    // A new unique tab appears and becomes active, showing 已完成 state
+    // (#97: unified display state maps 'ready' → 'completed').
     const tabs = await screen.findAllByRole('tab', { name: /cc_review2/ })
     expect(tabs).toHaveLength(1)
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('region', { name: 'Agent 视图' })).toHaveTextContent(
-      '就绪'
+      '已完成'
     )
   })
 

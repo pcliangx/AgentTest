@@ -429,10 +429,10 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
       const panels = page.getByRole('group', { name: 'Agent 面板' })
       const firstPanel = panels.first()
       // Capture the trigger button for focus-return verification.
-      const focusBtn = firstPanel.getByRole('button', { name: 'Focus 此 Panel' })
+      const focusBtn = firstPanel.getByRole('button', { name: '独占此 Panel' })
       await focusBtn.click()
       // Focus exit button should be focused on entry.
-      const exitBtn = page.getByRole('button', { name: '退出 Focus' })
+      const exitBtn = page.getByRole('button', { name: '退出独占' })
       await expect(exitBtn).toBeFocused()
       // Escape restores.
       await page.keyboard.press('Escape')

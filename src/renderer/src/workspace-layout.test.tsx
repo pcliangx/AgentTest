@@ -1247,24 +1247,26 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       agentName: 'cc_data',
       // #9 attention items badge entries with open agent-targeted items.
       badge: '',
-      stateLabel: '收尾中',
+      directoryLabel: '收尾中',
+      displayLabel: '运行中',
       chatText: '新指令将进入第 1 位',
       terminalDisabled: true
     },
     {
       agentName: 'cc_etl',
       badge: ' 有待处理事项',
-      stateLabel: '已中断',
+      directoryLabel: '已中断',
+      displayLabel: '失败',
       chatText: '暂无对话记录',
       terminalDisabled: false
     }
   ] as const)(
-    'shows $stateLabel text, accessible name and actions for $agentName',
-    async ({ agentName, badge, stateLabel, chatText, terminalDisabled }) => {
+    'shows $displayLabel text, accessible name and actions for $agentName',
+    async ({ agentName, badge, directoryLabel, displayLabel, chatText, terminalDisabled }) => {
       const { user, directory } = await gotoLifecycleView()
       const directoryEntry = within(directory).getByRole('button', {
         name: new RegExp(
-          `^${agentName}${badge} Claude Code · ${stateLabel}`
+          `^${agentName}${badge} Claude Code · ${directoryLabel}`
         )
       })
       await user.click(directoryEntry)
@@ -1275,7 +1277,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       const view = heading.closest(
         '[aria-label="Agent 视图"]'
       ) as HTMLElement
-      expect(heading.closest('header')).toHaveTextContent(stateLabel)
+      expect(heading.closest('header')).toHaveTextContent(displayLabel)
       expect(
         within(view).getByRole('log', { name: '对话记录' })
       ).toHaveTextContent(chatText)
@@ -1309,7 +1311,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       const view = heading.closest(
         '[aria-label="Agent 视图"]'
       ) as HTMLElement
-      expect(heading.closest('header')).toHaveTextContent('就绪')
+      expect(heading.closest('header')).toHaveTextContent('已完成')
       expect(heading.closest('header')).not.toHaveTextContent('运行完成')
 
       await user.click(within(view).getByRole('button', { name: '活动' }))
@@ -1408,7 +1410,7 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     expect(header).toHaveTextContent('Codex · 独立 worktree')
     // Run state is double-coded: status dot plus text, never color alone.
     expect(header.querySelector('.state-dot')).toHaveClass('state-dot-ready')
-    expect(within(header).getByText('就绪')).toBeInTheDocument()
+    expect(within(header).getByText('已完成')).toBeInTheDocument()
 
     const view = heading.closest('[aria-label="Agent 视图"]') as HTMLElement
     const chatNav = within(view).getByRole('button', { name: '对话' })

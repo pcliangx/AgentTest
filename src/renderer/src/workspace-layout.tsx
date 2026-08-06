@@ -27,6 +27,7 @@ import {
   TERMINAL_STATE_LABEL,
   WORKTREE_MODE_LABEL
 } from './agent-display'
+import { agentDisplayState, AGENT_DISPLAY_STATE_LABEL } from './agent-state-selectors'
 import { StatusDot, statusDotState } from './status-dot'
 import { ProviderIcon } from './provider-icon'
 import type { PlanDispatch, SendCommand } from './agents-surface'
@@ -354,12 +355,12 @@ export function WorkspaceArea({
             </span>
             <button
               ref={exitFocusButtonRef}
-              aria-label="退出 Focus"
+              aria-label="退出独占"
               aria-keyshortcuts="Escape"
               className="mini-button"
               onClick={() => void sendLayout({ kind: 'focus-panel' })}
             >
-              退出 Focus
+              退出独占
             </button>
           </div>
           <div className="flex min-h-0 min-w-0 flex-1">
@@ -1128,7 +1129,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                 )}
                 <span className="min-w-0 flex-1 truncate text-xs text-muted">
                   {providerLabel(agent.providerId)} ·{' '}
-                  {RUNTIME_STATE_LABEL[agent.runtimeState]}
+                  {AGENT_DISPLAY_STATE_LABEL[agentDisplayState(agent.runtimeState)]}
                 </span>
                 <button
                   aria-label={`关闭标签 ${agent.name}`}
@@ -1183,18 +1184,18 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                 void sendLayout({ kind: 'apply-analysis-preset', panelId })
               }
             >
-              Analysis 预设
+              三栏分析
             </button>
           </>
         )}
         {canEditLayout && (
           <button
-            aria-label="Focus 此 Panel"
+            aria-label="独占此 Panel"
             data-focus-trigger={panelId}
             className="mini-button shrink-0"
             onClick={() => void sendLayout({ kind: 'focus-panel', panelId })}
           >
-            Focus
+            独占
           </button>
         )}
         {canEditLayout && ctx.panelCount > 1 && (
@@ -1397,13 +1398,13 @@ function AgentView({
         </div>
         <span
           className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
-            agent.runtimeState === 'ready'
+            agentDisplayState(agent.runtimeState) === 'completed'
               ? 'bg-teal-soft text-teal'
               : 'bg-wash text-muted'
           }`}
         >
           <StatusDot state={statusDotState(agent.runtimeState)} />
-          {RUNTIME_STATE_LABEL[agent.runtimeState]}
+          {AGENT_DISPLAY_STATE_LABEL[agentDisplayState(agent.runtimeState)]}
         </span>
       </header>
 
