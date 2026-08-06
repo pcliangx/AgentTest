@@ -136,7 +136,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
       // #98: capacity labels are scope-annotated.
       await expect(footer).toContainText('当前 Project')
       await expect(footer).toContainText('2 / 3')
-      await expect(footer).toContainText('全部')
+      await expect(footer).toContainText('全局')
       await expect(footer).toContainText('2 / 6')
       const quickBox = await statusbarNav().boundingBox()
       const rootBox = await footer
