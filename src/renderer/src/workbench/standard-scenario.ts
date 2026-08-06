@@ -186,6 +186,9 @@ export function createStandardScenario(
     schemaVersion: 1,
     revision: 0,
     activeProjectId: projectId,
+    // #76: the app lands on the home page; entering a Project is one click
+    // on the switch bar or a 最近项目 row.
+    activeGlobalSurface: 'home',
     projects: [
       {
         projectId,
@@ -199,6 +202,7 @@ export function createStandardScenario(
         attentionCount: 9,
         rootPath: '~/Projects/sales-analysis',
         currentBranch: 'main',
+        lastOpenedAt: now - 3_600_000,
         primaryConnectionId: connId,
         resourceBindings: [
           {
@@ -240,6 +244,7 @@ export function createStandardScenario(
         attentionCount: 2,
         rootPath: '~/Projects/user-research',
         currentBranch: 'develop',
+        lastOpenedAt: now - 86_400_000,
         // No primary connection and no resource bindings — exercises the
         // "unbound" preview path (#6).
         resourceBindings: [],

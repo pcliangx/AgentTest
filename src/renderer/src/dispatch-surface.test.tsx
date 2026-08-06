@@ -624,6 +624,8 @@ describe('Dispatch — Agent Tab composer', () => {
   it('blocks the composer while Terminal takeover is opening', async () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].currentSurface = 'agents'
+    // Land on the project (not the #76 home page) as these tests expect.
+    snapshot.activeGlobalSurface = undefined
     snapshot.agents.find((agent) => agent.name === 'cc_data')!.terminalState =
       'opening'
     const port = new SnapshotRecordingPort(snapshot)
@@ -641,6 +643,8 @@ describe('Dispatch — Agent Tab composer', () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].lifecycle = 'archived'
     snapshot.projects[0].currentSurface = 'agents'
+    // Land on the project (not the #76 home page) as these tests expect.
+    snapshot.activeGlobalSurface = undefined
     const port = new SnapshotRecordingPort(snapshot)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
@@ -666,6 +670,8 @@ describe('Dispatch — Agent Tab composer', () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].rootAvailability = 'unavailable'
     snapshot.projects[0].currentSurface = 'agents'
+    // Land on the project (not the #76 home page) as these tests expect.
+    snapshot.activeGlobalSurface = undefined
     const port = new SnapshotRecordingPort(snapshot)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
@@ -691,6 +697,8 @@ describe('Dispatch — Agent Tab composer', () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].repositoryReadiness = 'not-ready'
     snapshot.projects[0].currentSurface = 'agents'
+    // Land on the project (not the #76 home page) as these tests expect.
+    snapshot.activeGlobalSurface = undefined
     const port = new SnapshotRecordingPort(snapshot)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
@@ -717,6 +725,8 @@ describe('Dispatch — Agent Tab composer', () => {
   it('explains why the composer is disabled for an archived Agent', async () => {
     const snapshot = createStandardScenario()
     snapshot.projects[0].currentSurface = 'agents'
+    // Land on the project (not the #76 home page) as these tests expect.
+    snapshot.activeGlobalSurface = undefined
     snapshot.agents.find((agent) => agent.name === 'cc_data')!.runtimeState =
       'archived'
     const port = new SnapshotRecordingPort(snapshot)
@@ -1617,7 +1627,13 @@ describe('Dispatch — Agent Picker and @@ routing', () => {
     const port = new RecordingPort()
     render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
-    // Overview is the default landing surface; it lists recent activity.
+    // #76: the app lands on 首页 — enter the project to reach its Overview,
+    // which lists recent activity.
+    await user.click(
+      within(
+        screen.getByRole('navigation', { name: '快捷切换' })
+      ).getByRole('button', { name: '销售数据分析' })
+    )
     const overview = await screen.findByRole('region', { name: '项目概览' })
     expect(overview).toHaveTextContent('@@cc_etl')
     expect(

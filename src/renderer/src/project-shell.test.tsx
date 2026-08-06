@@ -26,9 +26,23 @@ function switchBar() {
   return screen.getByRole('navigation', { name: '快捷切换' })
 }
 
+/**
+ * Helper: enter the active project from the #76 home landing page, so
+ * project-surface tests start from the Overview as before.
+ */
+async function enterProject(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    within(switchBar()).getByRole('button', { name: '销售数据分析' })
+  )
+  return screen.findByRole('region', { name: '项目概览' })
+}
+
 describe('ProjectShell — snapshot rendering', () => {
   it('renders the active project name as a heading', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await enterProject(user)
     const heading = await screen.findByRole('heading', {
       name: '销售数据分析',
       level: 2
@@ -37,42 +51,61 @@ describe('ProjectShell — snapshot rendering', () => {
   })
 
   it('shows root availability and repository readiness', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    const region = await screen.findByRole('region', { name: '项目概览' })
+    await waitForLoad()
+    const region = await enterProject(user)
     expect(region).toHaveTextContent('可用')
     expect(region).toHaveTextContent('已就绪')
   })
 
   it('shows the connection summary', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    const region = await screen.findByRole('region', { name: '项目概览' })
+    await waitForLoad()
+    const region = await enterProject(user)
     expect(region).toHaveTextContent(/飞书/)
   })
 
   it('shows agent, run and attention counts', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    const region = await screen.findByRole('region', { name: '项目概览' })
+    await waitForLoad()
+    const region = await enterProject(user)
     expect(region).toHaveTextContent('8')
     expect(region).toHaveTextContent('Agent')
   })
 
   it('renders recent activity entries', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    const region = await screen.findByRole('region', { name: '项目概览' })
+    await waitForLoad()
+    const region = await enterProject(user)
     expect(region).toHaveTextContent(/cc_data 开始清洗/)
   })
 })
 
 describe('ProjectShell — shell chrome (#65)', () => {
   it('shows Agent Squad HQ as its own titlebar text node plus the project name', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
-    // The product mark must be a standalone text node — screenshot and
-    // a11y queries rely on exactly one exact match (#65 titlebar).
-    expect(screen.getByText('Agent Squad HQ', { exact: true })).toBeVisible()
+    await enterProject(user)
+    // The product mark must be a standalone text node in the titlebar —
+    // screenshot and a11y queries rely on exactly one exact match there
+    // (#65 titlebar; #76 adds another "Agent Squad HQ" heading on 首页,
+    // so scope to the titlebar header).
+    const titlebar = document.querySelector('header.titlebar')
+    expect(titlebar).not.toBeNull()
     expect(
-      screen.getByText((content, element) =>
-        element?.tagName === 'SPAN' && content.startsWith('/ 销售数据分析')
+      within(titlebar as HTMLElement).getByText('Agent Squad HQ', {
+        exact: true
+      })
+    ).toBeVisible()
+    expect(
+      within(titlebar as HTMLElement).getByText(
+        (content, element) =>
+          element?.tagName === 'SPAN' && content.startsWith('/ 销售数据分析')
       )
     ).toBeVisible()
   })
@@ -218,7 +251,8 @@ describe('ProjectShell — project switcher (#75)', () => {
   it('switches active project on selection', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    await screen.findByRole('heading', { name: '销售数据分析', level: 2 })
+    await waitForLoad()
+    await enterProject(user)
     await user.click(
       within(switchBar()).getByRole('button', { name: '用户研究' })
     )
@@ -322,6 +356,8 @@ describe('ProjectShell — stale snapshot safety', () => {
     const newerSnap = createStandardScenario()
     newerSnap.revision = 1
     newerSnap.projects[0].currentSurface = 'tasks'
+    // Land on the project (not the #76 home page) as this test expects.
+    newerSnap.activeGlobalSurface = undefined
     port.emit({
       kind: 'view-model-updated',
       revision: 1,
@@ -544,7 +580,9 @@ describe('ProjectShell — empty project', () => {
     }
     const user = userEvent.setup()
     render(<ProjectShell port={emptyPort} />)
-    await screen.findByText('没有可用的 Project')
+    // #76: with no projects the app still lands on 首页 — its create area
+    // is the empty state's main body.
+    await screen.findByRole('region', { name: '首页' })
     // Navigate to Connections
     await user.click(screen.getByRole('button', { name: '连接' }))
     // Global nav must still be visible in global view

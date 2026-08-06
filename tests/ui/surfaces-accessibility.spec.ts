@@ -4,7 +4,7 @@
  * One Electron session navigates through every Project surface and global
  * entry point, verifying:
  *
- * - A dual-sidebar layout (Project nav + global entries in the header).
+ * - A two-tier left rail (App-level entries above the Project surfaces, #76).
  * - B run-radar / policy-matrix content on Settings and Agents surfaces.
  * - C palette (Dispatch Picker) and readiness (Settings) content.
  * - Landmarks, tablist/tab, dialog, divider, accessible names.
@@ -29,7 +29,7 @@ import {
 } from './helpers/smoke-harness'
 
 const COVERAGE = [
-  'A dual sidebar (Project nav + global entries)',
+  'A two-tier rail (App entries + Project surfaces)',
   'B run radar / policy matrix on Settings and Agents',
   'C palette (Dispatch Picker) and readiness summary',
   'Overview surface',
@@ -75,6 +75,9 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     const nav = () => page.getByRole('navigation', { name: '主导航' })
     const main = () => page.getByRole('main')
     const header = () => page.locator('header')
+    // #76: the rail's top tier holds the App-level entries that used to
+    // live in the header (首页 / 连接 / Provider 健康 / 全局设置).
+    const appTier = () => nav().getByRole('group', { name: 'App 级' })
 
     // ------------------------------------------------------------------
     // A — Dual sidebar: Project navigation + global entries
@@ -93,10 +96,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
         ).toBeVisible()
       }
 
-      // Global entries in the header form the second sidebar.
-      for (const label of ['连接', 'Provider 健康', '全局设置']) {
+      // #76: the global entries form the rail's App tier above the Project
+      // surfaces — the header no longer hosts them.
+      for (const label of ['首页', '连接', 'Provider 健康', '全局设置']) {
         await expect(
-          header().getByRole('button', { name: label, exact: true })
+          appTier().getByRole('button', { name: label, exact: true })
         ).toBeVisible()
       }
 
@@ -319,7 +323,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     // Global surfaces
     // ------------------------------------------------------------------
     await recordedStep(evidence, 'global Connections surface', async () => {
-      await header().getByRole('button', { name: '连接', exact: true }).click()
+      await appTier().getByRole('button', { name: '连接', exact: true }).click()
       await expect(page.getByRole('region', { name: '全局连接' })).toBeVisible()
       // Connection statuses are text labels, not color-only.
       await expect(main().getByText('已连接', { exact: true })).toBeVisible()
@@ -328,14 +332,14 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     })
 
     await recordedStep(evidence, 'global Provider Health with non-color status', async () => {
-      await header().getByRole('button', { name: 'Provider 健康', exact: true }).click()
+      await appTier().getByRole('button', { name: 'Provider 健康', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Provider 健康' })).toBeVisible()
       await expect(main().getByText('可用', { exact: true }).first()).toBeVisible()
       await expect(main().getByText('已阻断', { exact: true })).toBeVisible()
     })
 
     await recordedStep(evidence, 'global Global Settings placeholder', async () => {
-      await header().getByRole('button', { name: '全局设置', exact: true }).click()
+      await appTier().getByRole('button', { name: '全局设置', exact: true }).click()
       await expect(page.getByRole('region', { name: '全局设置' })).toBeVisible()
     })
 

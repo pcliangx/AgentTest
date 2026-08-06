@@ -137,6 +137,80 @@ describe('MockScenarioAdapter — navigate', () => {
     expect(updated!.correlationId).toEqual(cmdId(1))
     expect(updated!.snapshot.projects[0].currentSurface).toBe('tasks')
   })
+
+  it('stamps lastOpenedAt only when entering a Project, not on in-project surface switches (#76, PR #82)', async () => {
+    let now = 1_000
+    const adapter = new MockScenarioAdapter(undefined, { now: () => now })
+    const start = await adapter.getSnapshot()
+    expect(start.activeGlobalSurface).toBe('home')
+    const salesOpenedBefore = start.projects[0].lastOpenedAt
+
+    // Entering the Project from the home page stamps it.
+    await adapter.dispatch(navigate(cmdId(1), start.revision, 'overview'))
+    let snap = await adapter.getSnapshot()
+    expect(snap.projects[0].lastOpenedAt).toBe(1_000)
+    expect(snap.projects[0].lastOpenedAt).not.toBe(salesOpenedBefore)
+
+    // Switching surfaces inside the same Project is not a new open.
+    now = 2_000
+    await adapter.dispatch(navigate(cmdId(2), snap.revision, 'tasks'))
+    snap = await adapter.getSnapshot()
+    expect(snap.projects[0].currentSurface).toBe('tasks')
+    expect(snap.projects[0].lastOpenedAt).toBe(1_000)
+
+    // Leaving for a global surface and coming back IS a new open.
+    await adapter.dispatch({
+      kind: 'navigate-global',
+      commandId: cmdId(3),
+      expectedRevision: snap.revision,
+      surface: 'connections'
+    })
+    now = 3_000
+    const mid = await adapter.getSnapshot()
+    await adapter.dispatch(navigate(cmdId(4), mid.revision, 'tasks'))
+    snap = await adapter.getSnapshot()
+    expect(snap.projects[0].lastOpenedAt).toBe(3_000)
+
+    // Switching to ANOTHER Project stamps that one (PR #82 round 2).
+    now = 4_000
+    await adapter.dispatch(
+      navigate(cmdId(5), snap.revision, 'overview', id('proj-research', 'ProjectId'))
+    )
+    snap = await adapter.getSnapshot()
+    expect(snap.projects[1].lastOpenedAt).toBe(4_000)
+    // …and the one left behind keeps its own stamp.
+    expect(snap.projects[0].lastOpenedAt).toBe(3_000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// create-project (#76)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — create-project', () => {
+  it('rejects a blank name or root path without touching the snapshot', async () => {
+    const adapter = new MockScenarioAdapter()
+    const before = await adapter.getSnapshot()
+    const missingName = await adapter.dispatch({
+      kind: 'create-project',
+      commandId: cmdId(1),
+      expectedRevision: before.revision,
+      name: '   ',
+      rootPath: '~/Projects/growth-lab'
+    })
+    expect(missingName.ok).toBe(false)
+    const missingPath = await adapter.dispatch({
+      kind: 'create-project',
+      commandId: cmdId(2),
+      expectedRevision: before.revision,
+      name: '增长实验平台',
+      rootPath: '  '
+    })
+    expect(missingPath.ok).toBe(false)
+    const after = await adapter.getSnapshot()
+    expect(after.projects).toHaveLength(before.projects.length)
+    expect(after.revision).toBe(before.revision)
+  })
 })
 
 // ---------------------------------------------------------------------------

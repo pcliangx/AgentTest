@@ -323,6 +323,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     | null = null
   /** Revision at which the quit preview was generated; null when no preview (#12). */
   private quitPreviewRevision: number | null = null
+  /** Ordinal source for demo create-project identities (#76). */
+  private createdProjectCount = 0
 
   constructor(
     snapshot: WorkbenchViewModel = createStandardScenario(),
@@ -442,13 +444,66 @@ export class MockScenarioAdapter implements WorkbenchPort {
         if (!project) {
           return this.reject(command, 'invalid-target', 'Project 不存在')
         }
+        // Recency truth for the home page's 最近项目 list (#76): ENTERING a
+        // Project stamps it — switching surfaces inside the same Project is
+        // not a new open (PR #82 review). The renderer never derives this.
+        const enteringProject =
+          this.snapshot.activeGlobalSurface !== undefined ||
+          this.snapshot.activeProjectId !== command.projectId
         project.currentSurface = command.surface
         this.snapshot.activeProjectId = command.projectId
         this.snapshot.activeGlobalSurface = undefined
+        if (enteringProject) {
+          project.lastOpenedAt = this.clock()
+        }
         return null
       }
       case 'navigate-global': {
         this.snapshot.activeGlobalSurface = command.surface
+        return null
+      }
+      case 'create-project': {
+        // #76 demo flow: name + root path text in, Project lands in the
+        // list and becomes the active one. The durable ProjectStore and
+        // the native directory picker are Phase 2.
+        const name = command.name.trim()
+        if (!name) {
+          return this.reject(command, 'invalid-target', '项目名不能为空')
+        }
+        // The quick-create flow requires both fields (#76 spec: 项目名 +
+        // 根目录); the real directory picker is Phase 2.
+        const rootPath = command.rootPath.trim()
+        if (!rootPath) {
+          return this.reject(command, 'invalid-target', '根目录不能为空')
+        }
+        const ordinal = ++this.createdProjectCount
+        const projectId = id(`proj-created-${ordinal}`, 'ProjectId')
+        const panelId = id(`panel-created-${ordinal}`, 'PanelId')
+        this.snapshot.projects.push({
+          projectId,
+          name,
+          lifecycle: 'active',
+          rootAvailability: 'available',
+          // The demo flow validates no Git repository — report it honestly.
+          repositoryReadiness: 'not-ready',
+          activity: 'idle',
+          activeRunCount: 0,
+          queuedRunCount: 0,
+          attentionCount: 0,
+          rootPath,
+          lastOpenedAt: this.clock(),
+          resourceBindings: [],
+          currentSurface: 'overview',
+          layout: {
+            root: { kind: 'panel', panelId },
+            panels: {
+              [panelId]: { tabs: [] }
+            },
+            focusedPanelId: panelId
+          }
+        })
+        this.snapshot.activeProjectId = projectId
+        this.snapshot.activeGlobalSurface = undefined
         return null
       }
       case 'preview-knowledge-security-event': {

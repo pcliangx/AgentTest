@@ -78,7 +78,11 @@ export type AgentRuntimeState =
 
 export type TerminalState = 'closed' | 'opening' | 'active' | 'failed'
 export type PermissionDecision = 'deny' | 'allow-once' | 'allow-current-run'
-export type GlobalSurface = 'connections' | 'provider-health' | 'global-settings'
+export type GlobalSurface =
+  | 'home'
+  | 'connections'
+  | 'provider-health'
+  | 'global-settings'
 export type AgentOpenMode = 'current-panel' | 'background' | 'new-panel'
 export type AgentWorktreeMode = 'isolated' | 'read-only-shared'
 
@@ -220,6 +224,13 @@ export interface ProjectViewModel {
    */
   rootPath?: string
   currentBranch?: string
+  /**
+   * Epoch ms of the last time this Project became the active one (#76).
+   * Adapter-owned recency truth for the home page's 最近项目 list — the
+   * renderer never derives or mutates it; optional only so older fixtures
+   * keep compiling.
+   */
+  lastOpenedAt?: number
   primaryConnectionId?: ConnectionId
   /** Authoritative resource bindings scoped to the primary connection (#6). */
   resourceBindings: ResourceBindingViewModel[]
@@ -809,6 +820,17 @@ export function layoutOperationMayProduceTargetEffect(
 export type WorkbenchCommandBody =
   | { kind: 'navigate-global'; surface: GlobalSurface }
   | { kind: 'navigate'; projectId: ProjectId; surface: ProjectSurface }
+  | {
+      /**
+       * Create a Project from the home page's quick-create area (#76) and
+       * land directly inside it. Demo boundary: the root path arrives as
+       * text; real directory picking (`dialog.showOpenDialog`) and the
+       * durable ProjectStore are Phase 2.
+       */
+      kind: 'create-project'
+      name: string
+      rootPath: string
+    }
   | {
       kind: 'preview-knowledge-security-event'
       projectId: ProjectId

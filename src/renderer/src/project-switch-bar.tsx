@@ -5,18 +5,15 @@ import {
   useRef,
   useState
 } from 'react'
-import type {
-  GlobalSurface,
-  ProjectId,
-  ProjectViewModel
-} from './workbench/contract'
+import type { ProjectId, ProjectViewModel } from './workbench/contract'
 
 /**
- * The persistent top quick-switch bar (#75): global home entries (连接 /
- * Provider 健康 / 全局设置) on the left, then one button per Project, all
- * rendered at the same position on every surface so any destination is one
- * click away. It replaces the context pane's 切换项目 select (#66) and the
- * global view's ← 返回项目 button.
+ * The persistent top quick-switch bar (#75): one button per Project,
+ * rendered at the same position on every surface so any Project is one
+ * click away. It replaced the context pane's 切换项目 select (#66) and the
+ * global view's ← 返回项目 button; in #76 the global entries (首页 / 连接 /
+ * Provider 健康 / 全局设置) moved into the left navigation's App-level
+ * tier, leaving this bar to Projects only.
  *
  * Overflow: the bar shows as many Project buttons as the available width
  * allows and folds the rest into a keyboard-operable 更多 menu. Widths are
@@ -24,27 +21,21 @@ import type {
  * what fits), recomputed on resize. In unmeasurable environments (jsdom,
  * first paint) every button stays visible.
  *
- * Switching semantics are unchanged: the same navigate / navigate-global
- * commands as the retired entries; the current destination is double-encoded
- * by weight + background and carries `aria-current="page"` (UX-v0.2 §15).
+ * Switching semantics are unchanged: the same navigate command as the
+ * retired select; the current Project is double-encoded by weight +
+ * background and carries `aria-current="page"` (UX-v0.2 §15).
  */
 
-const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
-  { surface: 'connections', label: '连接' },
-  { surface: 'provider-health', label: 'Provider 健康' },
-  { surface: 'global-settings', label: '全局设置' }
-]
-
 /**
- * Active/inactive tones of the bar's items — one definition so the global
- * entries, the Project buttons, the 更多 trigger and its menu items can
- * never drift apart. Active state adds weight and a wash background —
- * never color alone (UX-v0.2 §15).
+ * Active/inactive tones of the bar's items — one definition so the Project
+ * buttons, the 更多 trigger and its menu items can never drift apart.
+ * Active state adds weight and a wash background — never color alone
+ * (UX-v0.2 §15).
  */
 const ACTIVE_ITEM_TONE = 'bg-wash font-semibold text-ink'
 const INACTIVE_ITEM_TONE = 'text-muted hover:bg-wash hover:text-ink'
 
-/** One item style shared by the global entries, the Project buttons and the 更多 trigger. */
+/** One item style shared by the Project buttons and the 更多 trigger. */
 const switchBarItemClass = (isActive: boolean): string =>
   `h-[29px] shrink-0 rounded-lg px-2 text-[11px] transition-colors ${
     isActive ? ACTIVE_ITEM_TONE : INACTIVE_ITEM_TONE
@@ -81,16 +72,12 @@ export function computeVisibleProjectCount(
 export function ProjectSwitchBar({
   projects,
   activeProjectId,
-  activeGlobalSurface,
-  onSwitchProject,
-  onNavigateGlobal
+  onSwitchProject
 }: {
   projects: ProjectViewModel[]
-  /** Undefined while a global work surface is active. */
+  /** Undefined while a global work surface (e.g. 首页) is active. */
   activeProjectId: ProjectId | undefined
-  activeGlobalSurface: GlobalSurface | undefined
   onSwitchProject: (projectId: ProjectId) => void
-  onNavigateGlobal: (surface: GlobalSurface) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
@@ -157,27 +144,8 @@ export function ProjectSwitchBar({
       aria-label="快捷切换"
       className="flex min-w-0 flex-1 items-center gap-2"
     >
-      <div
-        role="group"
-        aria-label="全局工作面"
-        className="flex shrink-0 items-center gap-1"
-      >
-        {GLOBAL_ENTRIES.map(({ surface, label }) => (
-          <button
-            key={surface}
-            aria-current={
-              activeGlobalSurface === surface ? 'page' : undefined
-            }
-            className={switchBarItemClass(activeGlobalSurface === surface)}
-            onClick={() => onNavigateGlobal(surface)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       {projects.length > 0 && (
         <>
-          <span aria-hidden="true" className="h-5 w-px shrink-0 bg-line" />
           <div
             ref={containerRef}
             className="flex min-w-0 flex-1 items-center gap-1"

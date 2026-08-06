@@ -37,6 +37,7 @@ import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { StatusChip } from './status-chip'
 import { ContextPane } from './context-pane'
+import { HomeSurface } from './home-surface'
 import { ProjectSwitchBar } from './project-switch-bar'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
@@ -222,7 +223,24 @@ const NAV_ITEMS: Array<{
   { surface: 'tasks', glyph: '✓' },
   { surface: 'knowledge', glyph: '◇' },
   { surface: 'handoffs', glyph: '⇄' },
-  { surface: 'activity', glyph: '≋' }
+  { surface: 'activity', glyph: '≋' },
+  { surface: 'settings', glyph: '⚙' }
+]
+
+/**
+ * App-level tier of the two-tier left navigation (#76): the three global
+ * entries moved out of the header (#75's switch bar owns the header now),
+ * and 首页 is the persistent landing page. Text-first rows — the glyphs
+ * stay with the Project tier so the two tiers read differently.
+ */
+const APP_NAV_ITEMS: Array<{
+  surface: GlobalSurface
+  label: string
+}> = [
+  { surface: 'home', label: '首页' },
+  { surface: 'connections', label: '连接' },
+  { surface: 'provider-health', label: 'Provider 健康' },
+  { surface: 'global-settings', label: '全局设置' }
 ]
 
 /**
@@ -233,6 +251,14 @@ const navRailItemClass = (isActive: boolean): string =>
   `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
     isActive
       ? 'bg-nav-active text-nav'
+      : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
+  }`
+
+/** App-tier rows of the #76 two-tier rail: text-first, no glyph column. */
+const appNavItemClass = (isActive: boolean): string =>
+  `grid min-h-[30px] w-full shrink-0 place-items-center rounded-[10px] px-0.5 text-center text-[10px] leading-tight transition-colors ${
+    isActive
+      ? 'bg-nav-active font-semibold text-nav'
       : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
   }`
 
@@ -737,6 +763,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     return result
   }
 
+  // Entering a Project on its own last surface — one path shared by the #75
+  // switch bar and the #76 home page's recent list (PR #82 review).
+  const openProject = (targetId: ProjectId): void => {
+    const target = snapshot.projects.find((p) => p.projectId === targetId)
+    if (!target) return
+    void sendExplicitNavigation(
+      () => navigate(targetId, target.currentSurface),
+      () => setPermissionsNavNonce(0)
+    )
+  }
+
   // Permanent policy is never created from a request; the Permission Center
   // only navigates into the Settings permissions section (UX-v0.2 §10).
   // Local state (drawer close, section remount) commits only after the
@@ -874,10 +911,11 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         </div>
       </header>
 
-      {/* Persistent quick-switch bar (#75): global entries + one button per
-          Project, identical on every surface so any destination is one
-          click away. It replaces the context pane's 切换项目 select and the
-          global view's ← 返回项目 button; 派发给 Agent / 关闭窗口 / 退出 keep
+      {/* Persistent quick-switch bar (#75): one button per Project,
+          identical on every surface so any Project is one click away. It
+          replaced the context pane's 切换项目 select and the global view's
+          ← 返回项目 button; the global entries moved into the left
+          navigation's App tier in #76. 派发给 Agent / 关闭窗口 / 退出 keep
           their pre-#65 positions and accessible names on the right. */}
       <header
         inert={showPicker ? true : undefined}
@@ -886,20 +924,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <ProjectSwitchBar
           projects={snapshot.projects}
           activeProjectId={inGlobalView ? undefined : project?.projectId}
-          activeGlobalSurface={snapshot.activeGlobalSurface}
-          onSwitchProject={(targetId) => {
-            const target = snapshot.projects.find(
-              (p) => p.projectId === targetId
-            )
-            if (!target) return
-            void sendExplicitNavigation(
-              () => navigate(targetId, target.currentSurface),
-              () => setPermissionsNavNonce(0)
-            )
-          }}
-          onNavigateGlobal={(surface) => {
-            void sendExplicitNavigation(() => navigateGlobal(surface))
-          }}
+          onSwitchProject={openProject}
         />
         <div className="flex shrink-0 items-center gap-2">
           {project && (
@@ -952,8 +977,10 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           }
         }}
       >
-        {/* 82px icon rail of the frozen A shell (#65): brand mark, six
-            workspace surfaces, then Attention and Settings at the bottom. */}
+        {/* Two-tier 82px left navigation (#76, evolving the #65 rail):
+            brand mark, the App-level tier (首页 + the three global entries
+            that left the header), then the Project tier's seven surfaces;
+            Attention stays pinned at the bottom. */}
         <nav
           aria-label="主导航"
           className="flex w-[82px] shrink-0 flex-col items-center gap-[5px] overflow-y-auto overflow-x-hidden bg-nav px-2 pb-2.5 pt-3"
@@ -965,10 +992,38 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             HQ
           </div>
           <div
+            role="group"
+            aria-label="App 级"
+            className="flex w-full flex-col items-center gap-[3px]"
+          >
+            {APP_NAV_ITEMS.map(({ surface, label }) => {
+              const isActive =
+                inGlobalView && snapshot.activeGlobalSurface === surface
+              return (
+                <button
+                  key={surface}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={appNavItemClass(isActive)}
+                  onClick={() => {
+                    void sendExplicitNavigation(() => navigateGlobal(surface))
+                  }}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <div
             aria-hidden="true"
             className="my-1 h-px w-[30px] shrink-0 bg-nav-line"
           />
-          {NAV_ITEMS.map((item) => renderNavItem(item.surface, item.glyph))}
+          <div
+            role="group"
+            aria-label="项目工作面"
+            className="flex w-full flex-col items-center gap-[5px]"
+          >
+            {NAV_ITEMS.map((item) => renderNavItem(item.surface, item.glyph))}
+          </div>
           <div aria-hidden="true" className="flex-1" />
           <button
             aria-label="Global Attention"
@@ -980,11 +1035,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             </span>
             <span>关注</span>
           </button>
-          {renderNavItem('settings', '⚙')}
         </nav>
 
         {inGlobalView ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
+          {snapshot.activeGlobalSurface === 'home' && (
+            <HomeSurface
+              projects={snapshot.projects}
+              sendCommand={sendCommand}
+              onOpenProject={openProject}
+            />
+          )}
           {snapshot.activeGlobalSurface === 'connections' && (
             <ConnectionsSurface
               connections={snapshot.global.connections}
