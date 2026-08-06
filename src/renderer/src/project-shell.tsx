@@ -248,7 +248,7 @@ const APP_NAV_ITEMS: Array<{
  * surface items and the Attention entry can never drift apart.
  */
 const navRailItemClass = (isActive: boolean): string =>
-  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-lg px-0.5 py-[5px] text-[9px] transition-colors ${
+  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-lg px-0.5 py-[5px] text-[10px] transition-colors ${
     isActive
       ? 'bg-nav-active text-nav'
       : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
@@ -1052,7 +1052,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             className={navRailItemClass(showAttention)}
             onClick={() => setShowAttention(true)}
           >
-            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[9px] font-bold text-paper">
+            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[10px] font-bold text-paper">
               {snapshot.global.attentionCount}
             </span>
             <span>关注</span>
@@ -1261,7 +1261,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       {/* Shell footer of the frozen baseline (#65): root, branch, layout
           auto-save note and the Project/Global run capacity line. Capacity
           and counts come from the contract ViewModel — never hard-coded. */}
-      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[9px] text-muted">
+      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[10px] text-muted">
         <span className="max-w-[38%] truncate">{project?.rootPath ?? '—'}</span>
         <span>{project?.currentBranch ?? '—'}</span>
         <span>布局自动保存</span>

@@ -1378,7 +1378,8 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     const active = within(tablist).getByRole('tab', { name: /^cc_data/ })
     expect(active).toHaveAttribute('aria-selected', 'true')
     expect(active.className).toContain('border-b-brand')
-    expect(active.className).toContain('bg-paper')
+    // #88: active tab carries the brand-tinted gradient.
+    expect(active.className).toContain('bg-gradient-to-b')
     // Decorative dot (#65) — the accessible name still starts with the
     // Agent name, the state is named by the adjacent sublabel.
     const dot = active.querySelector('.state-dot')

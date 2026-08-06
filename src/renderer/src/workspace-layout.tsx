@@ -984,7 +984,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-line bg-raised py-1 pl-0 pr-1.5">
         <span
           aria-hidden="true"
-          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[9px] font-bold text-muted"
+          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[10px] font-bold text-muted"
         >
           P{panelIndex}
         </span>
@@ -1124,9 +1124,9 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                 data-tab-id={tabId}
                 tabIndex={selected ? 0 : -1}
                 draggable
-                className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm ${
+                className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm transition-colors ${
                   selected
-                    ? 'border-b-brand bg-paper text-ink'
+                    ? 'border-b-brand bg-gradient-to-b from-paper to-brand-soft/40 text-ink'
                     : 'border-b-transparent text-muted hover:bg-wash'
                 }`}
                 onClick={() =>

@@ -471,7 +471,7 @@ function RadarRow({
         <strong className="block truncate font-mono text-[10px] font-semibold text-ink">
           {name}
         </strong>
-        <small className="block truncate text-[9px] text-muted">
+        <small className="block truncate text-[10px] text-muted">
           {sublabel}
         </small>
       </span>
