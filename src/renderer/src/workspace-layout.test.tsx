@@ -1418,7 +1418,7 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     ).toContain('border-transparent')
   })
 
-  it('renders the current-task block, conversation entries and mono tool chips', async () => {
+  it('renders the current-task block, conversation entries and tool call cards (#88)', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(screen.getByRole('button', { name: /^cc_data/ }))
     const view = await screen.findByRole('region', { name: 'Agent 视图' })
@@ -1429,11 +1429,14 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     expect(log).toHaveTextContent(
       '正在执行。当前 Run 使用创建时记录的权限与配置快照。'
     )
-    // Tool event as a mono chip, double-coded by dot label and text.
-    const chip = within(log).getByText(/^tool · 分析 worktree 中的输入文件$/)
-    expect(chip).toHaveClass('font-mono')
+    // Rich markdown: list item + inline code are rendered structurally.
+    expect(within(log).getByText('sales_q2.csv')).toBeInTheDocument()
+    expect(within(log).getByText('order_id')).toBeInTheDocument()
+    // Tool event as a status card, double-coded by dot label and text.
+    const chip = within(log).getByText(/clean_sales\.py/)
+    const card = chip.closest('.mb-3') as HTMLElement
     expect(
-      within(chip).getByRole('img', { name: '工具运行中' })
+      within(card).getByRole('img', { name: '工具运行中' })
     ).toBeInTheDocument()
     // Queue hint stays a light info bar with planner-owned position facts.
     const hint = within(log).getByText(/当前 Project 已有 2 项排队/)
@@ -1443,9 +1446,10 @@ describe('Workspace layout — panel chrome and Agent view (#67)', () => {
     await user.click(screen.getByRole('button', { name: /^kimi_visual/ }))
     const kimiView = await screen.findByRole('region', { name: 'Agent 视图' })
     const kimiLog = within(kimiView).getByRole('log', { name: '对话记录' })
-    const settledChip = within(kimiLog).getByText(/^tool · 读取 region_sales.csv$/)
+    const settledChip = within(kimiLog).getByText(/region_sales\.csv/)
+    const settledCard = settledChip.closest('.mb-3') as HTMLElement
     expect(
-      within(settledChip).getByRole('img', { name: '工具已完成' })
+      within(settledCard).getByRole('img', { name: '工具已完成' })
     ).toBeInTheDocument()
   })
 
