@@ -473,7 +473,11 @@ export async function initialSignature(page: Page): Promise<unknown> {
     title: await page.title(),
     protocol: new URL(page.url()).protocol,
     scenario: new URL(page.url()).searchParams.get('scenario'),
-    project: await page.getByLabel('切换项目').inputValue(),
+    // #75: the current project is the switch-bar button with aria-current.
+    project: await page
+      .getByRole('navigation', { name: '快捷切换' })
+      .locator('[data-switch-item][aria-current="page"]')
+      .textContent(),
     panelCount: await page.getByRole('group', { name: 'Agent 面板' }).count(),
     tabs: await page.getByRole('tab').allTextContents(),
     viewport: await page.evaluate<{ width: number; height: number }>(

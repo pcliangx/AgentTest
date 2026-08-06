@@ -445,9 +445,11 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
 
-    await user.selectOptions(
-      await screen.findByLabelText('切换项目'),
-      'proj-research'
+    const switchBar = await screen.findByRole('navigation', {
+      name: '快捷切换'
+    })
+    await user.click(
+      within(switchBar).getByRole('button', { name: '用户研究' })
     )
     await user.click(screen.getByRole('button', { name: '知识' }))
 
@@ -484,9 +486,11 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
 
-    await user.selectOptions(
-      await screen.findByLabelText('切换项目'),
-      'proj-research'
+    const switchBar = await screen.findByRole('navigation', {
+      name: '快捷切换'
+    })
+    await user.click(
+      within(switchBar).getByRole('button', { name: '用户研究' })
     )
     await user.click(screen.getByRole('button', { name: '知识' }))
 
@@ -750,9 +754,11 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       <ProjectShell port={new ThrowingKnowledgeAdapter('navigate-global')} />
     )
 
-    await user.selectOptions(
-      await screen.findByLabelText('切换项目'),
-      'proj-research'
+    const switchBar = await screen.findByRole('navigation', {
+      name: '快捷切换'
+    })
+    await user.click(
+      within(switchBar).getByRole('button', { name: '用户研究' })
     )
     await user.click(screen.getByRole('button', { name: '知识' }))
     const surface = await screen.findByRole('region', { name: 'Knowledge' })

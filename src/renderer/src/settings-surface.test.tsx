@@ -43,6 +43,15 @@ function summaryPanel(): HTMLElement {
   return screen.getByRole('complementary', { name: '待应用摘要' })
 }
 
+/** #75: project switching lives in the persistent top switch bar. */
+async function switchToProject(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string
+) {
+  const bar = screen.getByRole('navigation', { name: '快捷切换' })
+  await user.click(within(bar).getByRole('button', { name }))
+}
+
 /**
  * #68: instances are picked from the settings catalog rail's Agent Instances
  * list (the frozen variant-A layout), which also jumps to the instances
@@ -738,11 +747,13 @@ describe('Settings A — atomic apply', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/已应用/)
     await user.click(screen.getByRole('button', { name: '常规' }))
     expect(screen.getByText('当前：销售分析 v2（v3）')).toBeDefined()
-    // Project name takes effect immediately — the switcher shows it.
-    // (#65: the switcher now lives in the shell header, not the nav rail.)
+    // Project name takes effect immediately — the top switch bar shows it.
+    // (#75: the switcher is the persistent bar, not the context pane.)
     expect(
-      screen.getByRole('combobox', { name: '切换项目' })
-    ).toHaveTextContent('销售分析 v2')
+      within(
+        screen.getByRole('navigation', { name: '快捷切换' })
+      ).getByRole('button', { name: '销售分析 v2' })
+    ).toBeVisible()
   })
 
   it('keeps every draft and shows an error when any owner fails validation', async () => {
@@ -914,10 +925,7 @@ describe('Settings A — project scoping', () => {
 
     // Switch to the other project: another project's drafts must not leak
     // into this summary, and there is nothing to apply here.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
-    )
+    await switchToProject(user, '用户研究')
     await user.click(screen.getByRole('button', { name: '设置' }))
     expect(within(summaryPanel()).getByText('暂无待应用变更')).toBeDefined()
     expect(screen.getByRole('button', { name: '应用全部变更' })).toBeDisabled()
@@ -929,25 +937,16 @@ describe('Settings A — project scoping', () => {
 
     // Put BOTH projects on the Settings surface, so switching projects
     // remounts the SettingsSurface with the research project's instances.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
-    )
+    await switchToProject(user, '用户研究')
     await user.click(screen.getByRole('button', { name: '设置' }))
 
     // Back to sales (still on Settings) and pick cc_sql again.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '销售数据分析'
-    )
+    await switchToProject(user, '销售数据分析')
     await selectInstance(user, 'cc_sql')
 
     // Switch to research while both stay on Settings: the selection must
     // be rebuilt for the research project, never left dangling on cc_sql.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
-    )
+    await switchToProject(user, '用户研究')
     await user.click(screen.getByRole('button', { name: 'Agent 实例' }))
 
     // The rail selects the research project's first instance (#68).

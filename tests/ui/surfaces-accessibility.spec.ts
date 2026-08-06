@@ -100,8 +100,16 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
         ).toBeVisible()
       }
 
-      // Project selector has an accessible name.
-      await expect(page.getByLabel('切换项目')).toBeVisible()
+      // The persistent quick-switch bar (#75) exposes every project with
+      // accessible names — one click from any surface.
+      const switchBar = page.getByRole('navigation', { name: '快捷切换' })
+      await expect(switchBar).toBeVisible()
+      await expect(
+        switchBar.getByRole('button', { name: '销售数据分析', exact: true })
+      ).toBeVisible()
+      await expect(
+        switchBar.getByRole('button', { name: '用户研究', exact: true })
+      ).toBeVisible()
     })
 
     // ------------------------------------------------------------------
@@ -335,7 +343,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     // Return to Project and verify divider + keyboard operations
     // ------------------------------------------------------------------
     await recordedStep(evidence, 'return to Project Agents and verify divider ARIA', async () => {
-      await header().getByRole('button', { name: '← 返回项目' }).click()
+      // #75: the switch bar replaced ← 返回项目.
+      await page
+        .getByRole('navigation', { name: '快捷切换' })
+        .getByRole('button', { name: '销售数据分析', exact: true })
+        .click()
       await nav().getByRole('button', { name: 'Agent', exact: true }).click()
 
       // Open two more panels to create a split with a divider.

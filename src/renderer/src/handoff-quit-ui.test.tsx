@@ -48,9 +48,10 @@ describe('ProjectShell — Handoffs surface (#12 AC1)', () => {
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
     // Switch to research project
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      'proj-research'
+    await user.click(
+      within(
+        screen.getByRole('navigation', { name: '快捷切换' })
+      ).getByRole('button', { name: '用户研究' })
     )
     await user.click(screen.getByRole('button', { name: '交接' }))
 

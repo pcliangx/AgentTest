@@ -575,9 +575,10 @@ describe('Agents surface — per-project filter isolation (#20)', () => {
     expect(directoryNames(directory)).toHaveLength(0)
 
     // Switch to the other project and open its Agents surface.
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
+    await user.click(
+      within(
+        screen.getByRole('navigation', { name: '快捷切换' })
+      ).getByRole('button', { name: '用户研究' })
     )
     await screen.findByRole('heading', { name: '用户研究', level: 2 })
     await user.click(screen.getByRole('button', { name: 'Agent' }))

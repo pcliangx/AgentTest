@@ -86,6 +86,12 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     const nav = () => page.getByRole('navigation', { name: '主导航' })
     const main = () => page.getByRole('main')
     const header = () => page.locator('header')
+    // #75: project switching is the persistent top switch bar.
+    const switchBarProject = (name: string) =>
+      page
+        .getByRole('navigation', { name: '快捷切换' })
+        .getByRole('button', { name, exact: true })
+        .click()
 
     // ==================================================================
     // Visual states (AC2)
@@ -146,7 +152,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
 
     await recordedStep(evidence, 'visual: empty and unconnected Knowledge state', async () => {
       // Switch to the research project which has an unconnected Knowledge.
-      await page.getByLabel('切换项目').selectOption('proj-research')
+      await switchBarProject('用户研究')
       await nav().getByRole('button', { name: '知识', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Knowledge' })).toBeVisible()
       // Unconnected state text is visible.
@@ -157,7 +163,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
 
     await recordedStep(evidence, 'visual: loading gate (snapshot loaded)', async () => {
       // Switch back to sales project.
-      await page.getByLabel('切换项目').selectOption('proj-sales')
+      await switchBarProject('销售数据分析')
       // The initial loading gate ("加载中…") has resolved — verify the
       // app shows interactive content, not the loading placeholder.
       await expect(nav()).toBeVisible()
