@@ -910,7 +910,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         aria-hidden="true"
         className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal"
       />
-      <header className="titlebar flex h-[38px] shrink-0 items-center border-b border-line bg-raised">
+      <header className="titlebar glass-surface flex h-[38px] shrink-0 items-center border-b border-line">
         {RESERVE_TRAFFIC_LIGHT_AREA && (
           <div aria-hidden="true" className="h-full w-[72px] shrink-0" />
         )}
@@ -942,7 +942,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           their pre-#65 positions and accessible names on the right. */}
       <header
         inert={showPicker ? true : undefined}
-        className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-paper px-3"
+        className="glass-surface flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line px-3"
       >
         <ProjectSwitchBar
           projects={snapshot.projects}

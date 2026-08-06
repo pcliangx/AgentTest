@@ -65,6 +65,37 @@
   --shadow-card: 0 1px 3px rgb(23 32 51 / 5%), 0 4px 14px rgb(23 32 51 / 4%);
   --shadow-card-hover:
     0 2px 6px rgb(23 32 51 / 7%), 0 10px 26px rgb(23 32 51 / 8%);
+  /* #90: edge hairline for subtle separation. */
+  --shadow-xs: 0 1px 0 rgb(23 32 51 / 3%);
+
+  /* #90: App Wash — pre-blurred pastel brand blobs painted at body level.
+     Zero backdrop-filter cost; panels use transparent veils to let the wash
+     glow through. */
+  --wash-brand: rgba(61, 104, 245, 0.14);
+  --wash-teal: rgba(15, 138, 131, 0.12);
+  --wash-amber: rgba(173, 106, 0, 0.10);
+  --app-wash:
+    radial-gradient(48% 42% at 8% -4%, var(--wash-brand) 0%, transparent 68%),
+    radial-gradient(40% 36% at 92% 4%, var(--wash-teal) 0%, transparent 66%),
+    radial-gradient(44% 40% at 88% 96%, var(--wash-amber) 0%, transparent 64%),
+    linear-gradient(var(--color-wash), var(--color-wash));
+
+  /* #90: Glass material for floating/sticky layers (titlebar, switch bar,
+       sticky headers). Frosted surface + backdrop blur. */
+  --glass-regular: rgba(248, 249, 252, 0.72);
+  --glass-blur: 20px;
+  --glass-backdrop: blur(var(--glass-blur)) saturate(1.5);
+
+  /* #90: Text hierarchy — five levels from strong to faint. */
+  --color-ink-secondary: #3d4a63;
+  --color-soft: #8a96ab;
+  --color-faint: #b4bccd;
+
+  /* #90: Motion duration scale — three tiers replacing the flat 120ms. */
+  --dur-quick: 100ms;
+  --dur-normal: 200ms;
+  --dur-gentle: 300ms;
+  --ease-product: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 @layer base {
@@ -78,8 +109,26 @@
   body {
     font: 13px/1.5 var(--font-sans);
     color: var(--color-ink);
-    background: var(--color-wash);
+    background: var(--app-wash);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* #90: Glass material helper — apply to floating/sticky layers. */
+  .glass-surface {
+    background: var(--glass-regular);
+    -webkit-backdrop-filter: var(--glass-backdrop);
+    backdrop-filter: var(--glass-backdrop);
+  }
+
+  /* #90: Degrade glass to solid where backdrop-filter is unsupported
+     (Chromium/Electron always supports it, but the fallback keeps the
+     contract honest for any web-embed context). */
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .glass-surface {
+      background: var(--color-raised);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
 
   /* Focus must stay visible on every interactive element (UX-v0.2 §15). */
@@ -126,10 +175,10 @@
     font-size: 12px;
     font-weight: 650;
     transition:
-      background-color 120ms ease,
-      border-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 120ms ease;
+      background-color var(--dur-quick) ease,
+      border-color var(--dur-quick) ease,
+      box-shadow var(--dur-quick) ease,
+      transform var(--dur-quick) ease;
   }
   .btn:hover:not(:disabled) {
     border-color: var(--color-line-strong);
@@ -428,6 +477,35 @@
       transform: translateY(0);
     }
   }
+
+  /* #90: Single-element entrance (chat messages, cards entering on view
+     switch). Reduced-motion is covered by the global kill-switch. */
+  @keyframes entrance-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .enter-up {
+    animation: entrance-up 350ms var(--ease-product) both;
+  }
+
+  /* #90: Staggered list entrance — use on a parent that wraps N children;
+     each child gets an incremental delay via nth-child. */
+  .stagger-up > * {
+    animation: entrance-up 350ms var(--ease-product) both;
+  }
+  .stagger-up > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-up > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger-up > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger-up > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger-up > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger-up > *:nth-child(6) { animation-delay: 200ms; }
 
   /* --- Tab drag-and-drop (#77) -----------------------------------------
      Shared classes for the pointer drag insertion indicator and target

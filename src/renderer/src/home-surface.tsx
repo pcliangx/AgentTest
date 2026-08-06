@@ -34,8 +34,8 @@ export function HomeSurface({
 }) {
   return (
     <section role="region" aria-label="首页" className="mx-auto max-w-[860px] space-y-5">
-      {/* #88 Hero — gradient brand panel that makes the product promise
-          visible at a glance. */}
+      {/* #88 Hero — gradient brand panel. #90: children stagger via
+          .stagger-up nth-child (no inline styles needed). */}
       <div className="relative overflow-hidden rounded-2xl border border-brand-border bg-gradient-to-br from-brand via-brand to-brand-ink px-6 py-8 text-paper shadow-panel-focus">
         <div
           aria-hidden="true"
@@ -45,7 +45,7 @@ export function HomeSurface({
           aria-hidden="true"
           className="pointer-events-none absolute -bottom-20 -left-10 h-48 w-48 rounded-full bg-paper/10 blur-3xl"
         />
-        <div className="relative">
+        <div className="stagger-up relative">
           <div className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
@@ -81,14 +81,18 @@ export function HomeSurface({
         </div>
       </div>
 
-      <QuickCreateCard sendCommand={sendCommand} />
+      <div className="stagger-up">
+        <QuickCreateCard sendCommand={sendCommand} />
+      </div>
 
       {projects.length > 0 && (
-        <RecentProjectsCard
-          projects={projects}
-          onOpenProject={onOpenProject}
-          onOpenSettings={onOpenSettings}
-        />
+        <div className="stagger-up">
+          <RecentProjectsCard
+            projects={projects}
+            onOpenProject={onOpenProject}
+            onOpenSettings={onOpenSettings}
+          />
+        </div>
       )}
     </section>
   )
