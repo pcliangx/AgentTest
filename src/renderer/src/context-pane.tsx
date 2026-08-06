@@ -13,7 +13,6 @@ import type {
 import { id } from './workbench/contract'
 import { resolveProviderModelSelection } from './workbench/provider-capability'
 import {
-  providerCode,
   providerLabel,
   RUNTIME_STATE_LABEL
 } from './agent-display'
