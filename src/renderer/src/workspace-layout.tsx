@@ -237,11 +237,25 @@ export function WorkspaceArea({
   }
 
   if (!layout.root || Object.keys(layout.panels).length === 0) {
+    // #92 spec 5: empty conversation area — guided entry with suggested
+    // actions instead of a bare placeholder.
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-muted">
-          尚未打开任何 Agent，请从左侧目录选择。
-        </p>
+      <div className="flex flex-1 items-center justify-center p-6">
+        <div className="max-w-sm rounded-xl border border-line bg-paper px-6 py-5 text-center shadow-card">
+          <div
+            aria-hidden="true"
+            className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-brand-soft text-[24px]"
+          >
+            ⌘
+          </div>
+          <h3 className="text-sm font-semibold text-ink">
+            尚未打开 Agent
+          </h3>
+          <p className="mt-1.5 text-xs text-muted">
+            从左侧 Agent Directory 选择一个实例开始对话，
+            或点击「新建 Agent」创建第一个。
+          </p>
+        </div>
       </div>
     )
   }

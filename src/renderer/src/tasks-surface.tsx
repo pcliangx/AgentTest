@@ -508,7 +508,13 @@ export function TasksSurface({
           本地 Project Task
         </h3>
         {projectLocalTasks.length === 0 ? (
-          <p className="text-xs text-muted">暂无本地任务</p>
+          // #92 spec 5: empty task list — guided entry
+          <div className="rounded-lg border border-dashed border-line bg-raised px-4 py-3 text-center">
+            <p className="text-xs text-muted">还没有本地任务</p>
+            <p className="mt-1 text-[11px] text-soft">
+              从飞书同步 External Task，或点击「新建本地 Task」手动创建
+            </p>
+          </div>
         ) : (
           projectLocalTasks.map(renderLocalTask)
         )}

@@ -64,21 +64,17 @@ describe('Context pane — fixed presence (#66)', () => {
   })
 })
 
-describe('Context pane — Project identity card (#75)', () => {
-  it('shows the project name as static text plus the root path summary', async () => {
+describe('Context pane — directory footer (#66)', () => {
+  it('shows the root path summary in the footer', async () => {
     const { directory } = await renderShell()
-    // Switching moved to the persistent top switch bar in #75 — the pane
-    // keeps context display only, no 切换项目 select remains.
+    // #92: the project identity card moved to the unified sidebar brand
+    // mark + header. The directory footer still carries the root path.
     expect(
       within(directory).queryByRole('combobox', { name: '切换项目' })
     ).not.toBeInTheDocument()
     expect(
-      within(directory).getByText('销售数据分析')
+      within(directory).getByText('~/Projects/sales-analysis')
     ).toBeVisible()
-    // Card summary + footer both show the contract-owned root path.
-    expect(
-      within(directory).getAllByText('~/Projects/sales-analysis')
-    ).toHaveLength(2)
   })
 
   it('follows the project switched from the top bar', async () => {
@@ -90,7 +86,11 @@ describe('Context pane — Project identity card (#75)', () => {
     )
     // The pane remounts per Project — re-query before asserting.
     const next = await screen.findByRole('region', { name: 'Agent 目录' })
-    expect(within(next).getByText('用户研究')).toBeVisible()
+    // Project name is in the header; the directory shows this project's
+    // agents and root path.
+    expect(
+      within(next).getByText('~/Projects/user-research')
+    ).toBeVisible()
     expect(
       within(next).getByRole('button', { name: /^cc_report/ })
     ).toBeInTheDocument()

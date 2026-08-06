@@ -122,11 +122,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     await recordedStep(evidence, 'Overview surface with stat cards and activity', async () => {
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       await expect(page.getByRole('region', { name: '项目概览' })).toBeVisible()
-      // Stat cards are visible with numeric values.
+      // #92: Dashboard stat strip labels are visible with numeric values.
       await expect(main().getByText('Agent', { exact: true })).toBeVisible()
-      await expect(main().getByText('活动运行')).toBeVisible()
-      await expect(main().getByText('排队')).toBeVisible()
-      await expect(main().getByText('关注')).toBeVisible()
+      await expect(main().getByText('活动运行', { exact: true })).toBeVisible()
+      await expect(main().getByText('排队', { exact: true })).toBeVisible()
+      await expect(main().getByText('关注', { exact: true })).toBeVisible()
       // Recent activity heading.
       await expect(main().getByText('最近活动')).toBeVisible()
     })
