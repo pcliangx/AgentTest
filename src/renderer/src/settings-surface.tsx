@@ -24,6 +24,7 @@ import {
 import { StatusDot, statusDotState } from './status-dot'
 import { ProviderIcon } from './provider-icon'
 import { CONNECTION_STATUS_LABEL } from './connection-display'
+import { StatusChip } from './status-chip'
 import type { SendCommand } from './agents-surface'
 
 /**
@@ -89,6 +90,12 @@ const EDIT_SECTIONS = [
     label: '存储',
     icon: '▣',
     description: '本地数据、备份与导出'
+  },
+  {
+    key: 'providers',
+    label: '模型与提供商',
+    icon: '⬡',
+    description: '扫描本机 CLI、接入 Provider、测试连接'
   }
 ] as const
 
@@ -121,6 +128,7 @@ const PROJECT_SECTION_FIELDS: Record<SectionKey, string[]> = {
   integrations: fieldsOf('project', 'integrations'),
   permissions: fieldsOf('project', 'permissions'),
   storage: [],
+  providers: [],
   matrix: [],
   readiness: []
 }
@@ -943,6 +951,13 @@ export function SettingsSurface({
               </FormBlock>
             )}
 
+            {section === 'providers' && (
+              <ProvidersSection
+                providers={snapshot.global.providers}
+                sendCommand={sendCommand}
+              />
+            )}
+
             {section === 'matrix' && (
               <div className="py-4">
                 <PolicyMatrix
@@ -1752,6 +1767,203 @@ function ReviewLine({
         )}
       </span>
       <span className="shrink-0 text-right">{children}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 模型与提供商 — CLI scan, enable, test (#80)
+// ---------------------------------------------------------------------------
+
+function ProvidersSection({
+  providers,
+  sendCommand
+}: {
+  providers: WorkbenchViewModel['global']['providers']
+  sendCommand: SendCommand
+}) {
+  const installed = providers.filter((p) => p.installState === 'installed')
+  const installable = providers.filter((p) => p.installState === 'installable')
+  const [showInstallable, setShowInstallable] = useState(false)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, string>>({})
+  // #80: test results keyed by providerId for O(1) lookup.
+
+  const copyCommand = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd)
+      setCopied(cmd)
+      setTimeout(() => setCopied(null), 2000)
+    } catch {
+      // clipboard may be blocked; show the command for manual copy
+      setCopied(cmd)
+      setTimeout(() => setCopied(null), 2000)
+    }
+  }
+
+  const runTest = (providerId: AgentProviderId, name: string) => {
+    void sendCommand({ kind: 'test-provider', providerId }).then((result) => {
+      setTestResults((prev) => ({
+        ...prev,
+        [providerId]: result.ok ? `「${name}」CLI 可用` : result.message
+      }))
+    })
+  }
+
+  return (
+    <div className="space-y-4 py-2">
+      {/* Rescan action bar */}
+      <div className="flex items-center justify-between">
+        <h3 className="section-label">
+          你的 CLI（已检测 {installed.length}）
+        </h3>
+        <button
+          className="mini-button"
+          onClick={() => void sendCommand({ kind: 'rescan-providers' })}
+        >
+          重新扫描
+        </button>
+      </div>
+
+      {/* Detected CLI cards */}
+      <div className="space-y-2">
+        {installed.map((provider) => (
+          <div
+            key={provider.providerId}
+            className="card flex items-center gap-3 px-3 py-2.5"
+          >
+            <ProviderIcon providerId={provider.providerId} size={36} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <strong className="text-sm font-semibold text-ink">
+                  {provider.displayName}
+                </strong>
+                {provider.version && (
+                  <span className="font-mono text-[10px] text-muted">
+                    v{provider.version}
+                  </span>
+                )}
+                <StatusChip tone={provider.enabled ? 'good' : 'neutral'}>
+                  {provider.enabled ? '已接入' : '未接入'}
+                </StatusChip>
+              </div>
+              {provider.vendorDescription && (
+                <p className="mt-0.5 truncate text-[10px] text-muted">
+                  {provider.vendorDescription}
+                </p>
+              )}
+              <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted">
+                <span>
+                  模型来源：
+                  {provider.modelSource === 'live-list'
+                    ? '来自 CLI 的实时列表'
+                    : 'CLI 默认设置'}
+                </span>
+                {/* #80: model count only for live-list providers with models. */}
+                {provider.modelSource === 'live-list' &&
+                  provider.models.length > 0 && (
+                    <span>
+                      {provider.models.length} 个模型
+                      {(() => {
+                        const current = provider.models.find((m) =>
+                          m.displayName.includes('current')
+                        )
+                        return current ? (
+                          <span className="ml-1 text-brand">
+                            · {current.displayName}
+                          </span>
+                        ) : null
+                      })()}
+                    </span>
+                  )}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <button
+                className="mini-button"
+                onClick={() => runTest(provider.providerId, provider.displayName)}
+              >
+                测试
+              </button>
+              {!provider.enabled && (
+                <button
+                  className="btn btn-primary min-h-[26px]"
+                  onClick={() =>
+                    void sendCommand({
+                      kind: 'enable-provider',
+                      providerId: provider.providerId
+                    })
+                  }
+                >
+                  接入
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        {Object.keys(testResults).length > 0 && (
+          <p role="status" className="text-xs text-muted">
+            {Object.values(testResults).join('；')}
+          </p>
+        )}
+      </div>
+
+      {/* Installable section — collapsed by default */}
+      {installable.length > 0 && (
+        <div className="card">
+          <button
+            className="flex w-full items-center justify-between px-3 py-2"
+            aria-expanded={showInstallable}
+            onClick={() => setShowInstallable(!showInstallable)}
+          >
+            <span className="section-label">
+              可安装（{installable.length}）
+            </span>
+            <span className="text-xs text-muted">
+              {showInstallable ? '收起' : '展开'}
+            </span>
+          </button>
+          {showInstallable && (
+            <div className="space-y-2 border-t border-line px-3 py-2">
+              {installable.map((provider) => (
+                <div
+                  key={provider.providerId}
+                  className="flex items-center gap-3 rounded-lg bg-wash px-2.5 py-2"
+                >
+                  <ProviderIcon providerId={provider.providerId} size={28} />
+                  <div className="min-w-0 flex-1">
+                    <strong className="text-xs font-semibold text-ink">
+                      {provider.displayName}
+                    </strong>
+                    {provider.vendorDescription && (
+                      <p className="truncate text-[10px] text-muted">
+                        {provider.vendorDescription}
+                      </p>
+                    )}
+                  </div>
+                  {provider.installCommand && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <code className="rounded bg-paper px-2 py-1 font-mono text-[10px] text-ink">
+                        {provider.installCommand}
+                      </code>
+                      <button
+                        aria-label={`复制安装命令 ${provider.displayName}`}
+                        className="mini-button"
+                        onClick={() => copyCommand(provider.installCommand!)}
+                      >
+                        {copied === provider.installCommand ? '已复制' : '复制'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <p className="text-[10px] text-muted">
+                应用不代执行安装命令；请手动复制后在终端运行。
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

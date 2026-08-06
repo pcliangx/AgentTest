@@ -453,8 +453,10 @@ function NewAgentDialog({
   sendCommand: SendCommand
   onClose: () => void
 }) {
+  // #80: only enabled providers appear as new-Agent options; a detected
+  // but not-yet-enabled CLI stays out until the user connects it.
   const readyProviders = snapshot.global.providers.filter(
-    (p) => p.status === 'ready'
+    (p) => p.enabled !== false && p.status === 'ready'
   )
   const projectConfiguration = snapshot.appliedConfigurations.find(
     (configuration) =>

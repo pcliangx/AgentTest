@@ -17,7 +17,10 @@ export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = {
   'external-task-write-failed': '外部任务写入失败',
   'external-task-conflict-resolved': '拟议修改已放弃',
   'queue-cancelled': '排队已取消',
-  'dangerous-action-confirmed': '高风险操作已确认'
+  'dangerous-action-confirmed': '高风险操作已确认',
+  'provider-rescanned': 'CLI 已扫描',
+  'provider-tested': 'Provider 已测试',
+  'provider-enabled': 'Provider 已接入'
 }
 
 export function activityKindLabel(kind: ActivityKind): string {
@@ -48,5 +51,8 @@ export const ACTIVITY_KIND_CHIP: Record<
   'external-task-write-failed': { tone: 'danger', icon: '✕' },
   'external-task-conflict-resolved': { tone: 'good', icon: '✓' },
   'queue-cancelled': { tone: 'warn', icon: '⚠' },
-  'dangerous-action-confirmed': { tone: 'neutral', icon: '●' }
+  'dangerous-action-confirmed': { tone: 'neutral', icon: '●' },
+  'provider-rescanned': { tone: 'brand', icon: '⟳' },
+  'provider-tested': { tone: 'good', icon: '✓' },
+  'provider-enabled': { tone: 'good', icon: '⚡' }
 }

@@ -544,6 +544,9 @@ export type ActivityKind =
   | 'external-task-conflict-resolved'
   | 'queue-cancelled'
   | 'dangerous-action-confirmed'
+  | 'provider-rescanned'
+  | 'provider-tested'
+  | 'provider-enabled'
 
 interface ActivityEntryBase {
   activityId: ActivityId
@@ -752,6 +755,36 @@ export interface WorkbenchViewModel {
       displayName: string
       status: 'ready' | 'blocked'
       models: Array<{ modelId: string; displayName: string }>
+      /**
+       * Detected CLI version string (#80); absent when the CLI is not
+       * installed.
+       */
+      version?: string
+      /**
+       * Where the model list comes from (#80): the CLI's bundled defaults
+       * or a live query at scan time.
+       */
+      modelSource?: 'cli-default' | 'live-list'
+      /**
+       * Installation state (#80): 'installed' when detected on the machine,
+       * 'installable' when supported but not found.
+       */
+      installState?: 'installed' | 'installable'
+      /**
+       * Whether the detected CLI is connected as an active Provider (#80) —
+       * a detected-but-not-enabled CLI does not appear in new-Agent options
+       * or Provider Health until explicitly enabled.
+       */
+      enabled?: boolean
+      /**
+       * Shell command to install the CLI (#80), shown in the installable
+       * section. The app never executes it — copy only.
+       */
+      installCommand?: string
+      /**
+       * Vendor / short description (#80).
+       */
+      vendorDescription?: string
     }>
   }
 }
@@ -1010,6 +1043,28 @@ export type WorkbenchCommandBody =
       kind: 'restore-instance'
       projectId: ProjectId
       agentInstanceId: AgentInstanceId
+    }
+  | {
+      /**
+       * Re-scan the machine for installed agent CLI tools (#80). Mock
+       * implementation refreshes detection data; real PATH/version probing
+       * is Phase 3 (Provider Doctor).
+       */
+      kind: 'rescan-providers'
+    }
+  | {
+      /**
+       * Test a provider's CLI (#80) — mock returns a fixed pass/fail.
+       */
+      kind: 'test-provider'
+      providerId: AgentProviderId
+    }
+  | {
+      /**
+       * Enable a detected CLI as an active Provider (#80).
+       */
+      kind: 'enable-provider'
+      providerId: AgentProviderId
     }
 
 /** Commands whose successful result may carry a LayoutTargetEffect. */

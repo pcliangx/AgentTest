@@ -4093,3 +4093,76 @@ describe('MockScenarioAdapter — restore-instance', () => {
     expect(result.ok).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// rescan-providers / test-provider / enable-provider (#80)
+// ---------------------------------------------------------------------------
+
+describe('MockScenarioAdapter — providers (#80)', () => {
+  it('rescan-providers succeeds and emits activity', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const result = await adapter.dispatch({
+      kind: 'rescan-providers',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.some((a) => a.summary.includes('重新扫描'))
+    ).toBe(true)
+  })
+
+  it('test-provider returns ok and emits activity', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const claudeCode = snap.global.providers[0].providerId
+    const result = await adapter.dispatch({
+      kind: 'test-provider',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      providerId: claudeCode
+    })
+    expect(result.ok).toBe(true)
+    const after = await adapter.getSnapshot()
+    expect(
+      after.activity.some((a) => a.summary.includes('CLI 可用'))
+    ).toBe(true)
+  })
+
+  it('enable-provider sets enabled=true and status=ready', async () => {
+    const adapter = new MockScenarioAdapter()
+    let snap = await adapter.getSnapshot()
+    // Find the installable (not-enabled) provider: qwen-coder.
+    const qwen = snap.global.providers.find(
+      (p) => !p.enabled
+    )!
+    const result = await adapter.dispatch({
+      kind: 'enable-provider',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      providerId: qwen.providerId
+    })
+    expect(result.ok).toBe(true)
+    snap = await adapter.getSnapshot()
+    const enabled = snap.global.providers.find(
+      (p) => p.providerId === qwen.providerId
+    )!
+    expect(enabled.enabled).toBe(true)
+    expect(enabled.status).toBe('ready')
+  })
+
+  it('enable-provider rejects an already-enabled provider', async () => {
+    const adapter = new MockScenarioAdapter()
+    const snap = await adapter.getSnapshot()
+    const claudeCode = snap.global.providers[0].providerId
+    const result = await adapter.dispatch({
+      kind: 'enable-provider',
+      commandId: cmdId(1),
+      expectedRevision: snap.revision,
+      providerId: claudeCode
+    })
+    expect(result.ok).toBe(false)
+  })
+})
