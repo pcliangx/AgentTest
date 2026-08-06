@@ -32,6 +32,15 @@ async function gotoTasks(user: User) {
   return screen.findByRole('region', { name: '任务' })
 }
 
+async function openAttentionFromOverview(user: User) {
+  await user.click(screen.getByRole('button', { name: '概览' }))
+  const overview = await screen.findByRole('region', { name: '项目概览' })
+  await user.click(
+    within(overview).getAllByRole('button', { name: '处理' })[0]
+  )
+  return screen.findByRole('complementary', { name: 'Global Attention' })
+}
+
 function taskCard(title: string): HTMLElement {
   const card = screen
     .getByText(title)
@@ -430,11 +439,7 @@ describe('Tasks surface — high-risk operations (#10)', () => {
 describe('Tasks surface — attention deep links (#10)', () => {
   it('deep-links an external task attention item to its highlighted card', async () => {
     const { user } = await renderShell()
-    const trigger = screen.getByRole('button', { name: 'Global Attention' })
-    await user.click(trigger)
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：飞书任务「Q2 销售目标」存在版本冲突'
@@ -448,11 +453,7 @@ describe('Tasks surface — attention deep links (#10)', () => {
 
   it('deep-links a project task attention item to its highlighted card', async () => {
     const { user } = await renderShell()
-    const trigger = screen.getByRole('button', { name: 'Global Attention' })
-    await user.click(trigger)
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：本地任务「月度报表」已完成'

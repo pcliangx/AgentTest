@@ -406,14 +406,43 @@ describe('ProjectShell — command ID uniqueness', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProjectShell — global surfaces', () => {
-  it('shows global navigation entries in project view', async () => {
+  it('moves the global quick entries to the statusbar in the specified order', async () => {
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
-    expect(screen.getByRole('button', { name: '连接' })).toBeVisible()
+    const quickEntries = screen.getByRole('navigation', {
+      name: '全局快捷入口'
+    })
+    const buttons = within(quickEntries).getAllByRole('button')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0]).toHaveAccessibleName('连接')
+    expect(buttons[1]).toHaveAccessibleName('Provider 健康')
+    for (const button of buttons) {
+      expect(button.className).toContain('h-[22px]')
+      expect(button.className).toContain('w-[48px]')
+    }
     expect(
-      screen.getByRole('button', { name: 'Provider 健康' })
+      within(quickEntries).queryByRole('button', {
+        name: 'Global Attention'
+      })
+    ).toBeNull()
+    expect(
+      within(quickEntries).getByRole('button', { name: '连接' })
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: '全局设置' })).toBeVisible()
+    expect(
+      within(quickEntries).getByRole('button', { name: 'Provider 健康' })
+    ).toBeVisible()
+
+    const appTier = within(
+      screen.getByRole('navigation', { name: '主导航' })
+    ).getByRole('group', { name: 'App 级' })
+    expect(within(appTier).queryByRole('button', { name: '连接' })).toBeNull()
+    expect(
+      within(appTier).queryByRole('button', { name: 'Provider 健康' })
+    ).toBeNull()
+    expect(within(appTier).getByRole('button', { name: '首页' })).toBeVisible()
+    expect(
+      within(appTier).getByRole('button', { name: '全局设置' })
+    ).toBeVisible()
   })
 
   it('navigates to Connections showing multiple connections', async () => {

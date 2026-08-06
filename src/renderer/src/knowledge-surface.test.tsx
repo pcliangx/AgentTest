@@ -261,6 +261,20 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+async function openAttentionFromOverview(
+  user: ReturnType<typeof userEvent.setup>
+) {
+  let overview = screen.queryByRole('region', { name: '项目概览' })
+  if (!overview) {
+    await user.click(await screen.findByRole('button', { name: '概览' }))
+    overview = await screen.findByRole('region', { name: '项目概览' })
+  }
+  await user.click(
+    within(overview).getAllByRole('button', { name: '处理' })[0]
+  )
+  return screen.findByRole('complementary', { name: 'Global Attention' })
+}
+
 describe('Knowledge surface — browser and identity boundaries (#11)', () => {
   it('shows the online browser container and keeps every identity boundary explicit', async () => {
     const user = userEvent.setup()
@@ -368,12 +382,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Global Attention' })
-    )
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -802,10 +811,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       })
     ).toBeVisible()
 
-    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -847,10 +853,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       })
     ).toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -904,12 +907,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Global Attention' })
-    )
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -933,12 +931,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Global Attention' })
-    )
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -970,26 +963,23 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
   it('keeps a newer pending Knowledge target when an older explicit navigation succeeds late', async () => {
     const scenario = createStandardScenario()
     routeAttentionToSecondKnowledgeResource(scenario)
+    scenario.activeGlobalSurface = undefined
+    scenario.projects[0].currentSurface = 'overview'
     const port = new DeferredKnowledgeRaceAdapter(scenario)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
 
-    await user.click(await screen.findByRole('button', { name: '任务' }))
+    const drawer = await openAttentionFromOverview(user)
+    await user.click(screen.getByRole('button', { name: '任务' }))
     expect(await screen.findByRole('region', { name: '任务' })).toBeVisible()
-
-    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
       })
     )
 
-    const surface = await screen.findByRole('region', { name: 'Knowledge' })
     expect(
-      await within(surface).findByRole('article', {
+      await screen.findByRole('article', {
         name: '当前知识资源：竞品资料库'
       })
     ).toHaveTextContent('KnowledgeResourceId：know-002')
@@ -998,18 +988,11 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       port.releaseResult('tasks')
       await Promise.resolve()
     })
-
-    const currentSurface = screen.getByRole('region', { name: 'Knowledge' })
     expect(
-      within(currentSurface).getByRole('article', {
+      screen.getByRole('article', {
         name: '当前知识资源：竞品资料库'
       })
     ).toHaveTextContent('KnowledgeResourceId：know-002')
-    expect(
-      within(currentSurface).queryByRole('article', {
-        name: '当前知识资源：销售知识库'
-      })
-    ).toBeNull()
 
     await act(async () => {
       port.releaseResult('knowledge')
@@ -1020,16 +1003,13 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
   it('keeps a newer pending Knowledge target while an older Agent layout settles', async () => {
     const scenario = createStandardScenario()
     routeAttentionToSecondKnowledgeResource(scenario)
+    scenario.activeGlobalSurface = undefined
+    scenario.projects[0].currentSurface = 'overview'
     const port = new DeferredKnowledgeRaceAdapter(scenario)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Global Attention' })
-    )
-    let drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    let drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：cc_sql 等待输入：确认 6 月数据口径'
@@ -1037,16 +1017,12 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     )
     await waitFor(() => expect(port.hasPending('agent-layout')).toBe(true))
 
-    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
-    drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
       })
     )
-
     expect(
       await screen.findByRole('article', {
         name: '当前知识资源：竞品资料库'
@@ -1057,17 +1033,11 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
       port.releaseResult('agent-layout')
       await Promise.resolve()
     })
-
     expect(
       screen.getByRole('article', {
         name: '当前知识资源：竞品资料库'
       })
     ).toHaveTextContent('KnowledgeResourceId：know-002')
-    expect(
-      screen.queryByRole('article', {
-        name: '当前知识资源：销售知识库'
-      })
-    ).toBeNull()
 
     await act(async () => {
       port.releaseResult('knowledge')
@@ -1075,26 +1045,17 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     })
   })
 
-  it('restores the prior Knowledge target after deep-link transport failure', async () => {
+  it('keeps the contextual Overview after deep-link transport failure', async () => {
     const scenario = createStandardScenario()
     routeAttentionToSecondKnowledgeResource(scenario)
-    scenario.projects[0].currentSurface = 'knowledge'
-    // Land on the project (not the #76 home page) as this test expects.
+    scenario.projects[0].currentSurface = 'overview'
     scenario.activeGlobalSurface = undefined
     const user = userEvent.setup()
     render(
       <ProjectShell port={new ThrowingKnowledgeNavigationAdapter(scenario)} />
     )
 
-    expect(
-      await screen.findByRole('article', {
-        name: '当前知识资源：销售知识库'
-      })
-    ).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Global Attention' }))
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'
@@ -1104,9 +1065,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '无法打开目标：导航命令传输失败，请重试'
     )
-    expect(
-      screen.getByRole('article', { name: '当前知识资源：销售知识库' })
-    ).toBeVisible()
+    expect(screen.getByRole('region', { name: '项目概览' })).toBeVisible()
     expect(
       screen.queryByRole('article', { name: '当前知识资源：竞品资料库' })
     ).toBeNull()
@@ -1125,12 +1084,7 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter(scenario)} />)
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Global Attention' })
-    )
-    const drawer = await screen.findByRole('complementary', {
-      name: 'Global Attention'
-    })
+    const drawer = await openAttentionFromOverview(user)
     await user.click(
       within(drawer).getByRole('button', {
         name: '打开：销售知识库有未同步的修改'

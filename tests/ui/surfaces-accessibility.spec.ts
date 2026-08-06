@@ -75,8 +75,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     const nav = () => page.getByRole('navigation', { name: '主导航' })
     const main = () => page.getByRole('main')
     const header = () => page.locator('header')
-    // #76: the rail's top tier holds the App-level entries that used to
-    // live in the header (首页 / 连接 / Provider 健康 / 全局设置).
+    const statusbarNav = () =>
+      page.getByRole('navigation', { name: '全局快捷入口' })
+    // #95: the sidebar App tier keeps the lower-frequency destinations;
+    // Connections and Provider Health live in the statusbar, while Attention
+    // remains contextual to a concrete Overview item.
     const appTier = () => nav().getByRole('group', { name: 'App 级' })
 
     // ------------------------------------------------------------------
@@ -96,13 +99,46 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
         ).toBeVisible()
       }
 
-      // #76: the global entries form the rail's App tier above the Project
-      // surfaces — the header no longer hosts them.
-      for (const label of ['首页', '连接', 'Provider 健康', '全局设置']) {
+      for (const label of ['首页', '全局设置']) {
         await expect(
           appTier().getByRole('button', { name: label, exact: true })
         ).toBeVisible()
       }
+      for (const label of ['连接', 'Provider 健康']) {
+        await expect(
+          statusbarNav().getByRole('button', { name: label, exact: true })
+        ).toBeVisible()
+      }
+      const statusbarButtons = statusbarNav().getByRole('button')
+      await expect(statusbarButtons).toHaveCount(2)
+      await expect(statusbarButtons.nth(0)).toHaveAccessibleName('连接')
+      await expect(statusbarButtons.nth(1)).toHaveAccessibleName(
+        'Provider 健康'
+      )
+      const buttonBoxes = await Promise.all(
+        [0, 1].map((index) => statusbarButtons.nth(index).boundingBox())
+      )
+      expect(buttonBoxes.every(Boolean)).toBe(true)
+      expect(new Set(buttonBoxes.map((box) => box!.width)).size).toBe(1)
+      expect(new Set(buttonBoxes.map((box) => box!.height)).size).toBe(1)
+      const footer = page.locator('footer')
+      await expect(
+        footer.getByText('~/Projects/sales-analysis', { exact: true })
+      ).toBeVisible()
+      await expect(footer.getByText('main', { exact: true })).toBeVisible()
+      await expect(
+        footer.getByText('布局自动保存', { exact: true })
+      ).toBeVisible()
+      await expect(
+        footer.getByText('Project 2 / 3 · Global 2 / 6', { exact: true })
+      ).toBeVisible()
+      const quickBox = await statusbarNav().boundingBox()
+      const rootBox = await footer
+        .getByText('~/Projects/sales-analysis', { exact: true })
+        .boundingBox()
+      expect(quickBox).not.toBeNull()
+      expect(rootBox).not.toBeNull()
+      expect(quickBox!.x + quickBox!.width).toBeLessThanOrEqual(rootBox!.x)
 
       // The persistent quick-switch bar (#75) exposes every project with
       // accessible names — one click from any surface.
@@ -274,7 +310,9 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     // Attention drawer dialog
     // ------------------------------------------------------------------
     await recordedStep(evidence, 'Attention drawer with permission requests and items', async () => {
-      const attentionBtn = page.getByRole('button', { name: 'Global Attention' })
+      await nav().getByRole('button', { name: '概览', exact: true }).click()
+      const overview = page.getByRole('region', { name: '项目概览' })
+      const attentionBtn = overview.getByRole('button', { name: '处理' }).first()
       await attentionBtn.click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()
@@ -323,7 +361,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     // Global surfaces
     // ------------------------------------------------------------------
     await recordedStep(evidence, 'global Connections surface', async () => {
-      await appTier().getByRole('button', { name: '连接', exact: true }).click()
+      await statusbarNav().getByRole('button', { name: '连接', exact: true }).click()
       await expect(page.getByRole('region', { name: '全局连接' })).toBeVisible()
       // Connection statuses are text labels, not color-only.
       await expect(main().getByText('已连接', { exact: true })).toBeVisible()
@@ -332,7 +370,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     })
 
     await recordedStep(evidence, 'global Provider Health with non-color status', async () => {
-      await appTier().getByRole('button', { name: 'Provider 健康', exact: true }).click()
+      await statusbarNav().getByRole('button', { name: 'Provider 健康', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Provider 健康' })).toBeVisible()
       await expect(main().getByText('可用', { exact: true }).first()).toBeVisible()
       await expect(main().getByText('已阻断', { exact: true })).toBeVisible()

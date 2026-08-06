@@ -9,7 +9,7 @@ import type { WorkbenchViewModel } from './workbench/contract'
 
 /**
  * The App-level home page (#76): startup landing, quick project creation,
- * recent-project direct access and the two-tier left navigation. Tests
+ * recent-project direct access and the compact left navigation. Tests
  * drive the shell through the MockScenarioAdapter and observe accessible
  * roles and port-produced ViewModels.
  */
@@ -25,12 +25,16 @@ async function renderShell(scenario?: WorkbenchViewModel) {
   return { user, home }
 }
 
-/** The rail's App tier (#76) — the global entries' home since they left the header. */
+/** The sidebar's App tier (#95 keeps only 首页 and 全局设置 here). */
 function appTier() {
   return within(screen.getByRole('navigation', { name: '主导航' })).getByRole(
     'group',
     { name: 'App 级' }
   )
+}
+
+function statusbarNav() {
+  return screen.getByRole('navigation', { name: '全局快捷入口' })
 }
 
 function switchBar() {
@@ -188,14 +192,20 @@ describe('Home — empty state (#76)', () => {
   })
 })
 
-describe('Left navigation — two tiers (#76)', () => {
-  it('places the App-level entries above the seven project surfaces', async () => {
+describe('Left navigation and statusbar global entries (#95)', () => {
+  it('keeps Home and Global Settings above the seven project surfaces', async () => {
     await renderShell()
-    for (const label of ['首页', '连接', 'Provider 健康', '全局设置']) {
+    for (const label of ['首页', '全局设置']) {
       expect(
         within(appTier()).getByRole('button', { name: label })
       ).toBeVisible()
     }
+    expect(
+      within(appTier()).queryByRole('button', { name: '连接' })
+    ).not.toBeInTheDocument()
+    expect(
+      within(appTier()).queryByRole('button', { name: 'Provider 健康' })
+    ).not.toBeInTheDocument()
     const projectTier = within(
       screen.getByRole('navigation', { name: '主导航' })
     ).getByRole('group', { name: '项目工作面' })
@@ -212,22 +222,23 @@ describe('Left navigation — two tiers (#76)', () => {
         within(projectTier).getByRole('button', { name: label })
       ).toBeVisible()
     }
-    // #92: the unified header no longer hosts the global entries — they
-    // live exclusively in the left navigation's App tier.
+    // Global quick entries live in the persistent statusbar, not the header.
     const header = document.querySelector('header.titlebar') as HTMLElement
     expect(
       within(header).queryByRole('button', { name: '连接' })
     ).not.toBeInTheDocument()
   })
 
-  it('navigates to the global surfaces from the App tier', async () => {
+  it('navigates to global quick surfaces from the statusbar', async () => {
     const { user } = await renderShell()
-    await user.click(within(appTier()).getByRole('button', { name: '连接' }))
+    await user.click(
+      within(statusbarNav()).getByRole('button', { name: '连接' })
+    )
     expect(
       await screen.findByRole('region', { name: '全局连接' })
     ).toBeVisible()
     expect(
-      within(appTier()).getByRole('button', { name: '连接' })
+      within(statusbarNav()).getByRole('button', { name: '连接' })
     ).toHaveAttribute('aria-current', 'page')
   })
 })

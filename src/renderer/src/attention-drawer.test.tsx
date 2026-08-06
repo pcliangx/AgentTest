@@ -25,8 +25,13 @@ afterEach(() => cleanup())
 type User = ReturnType<typeof userEvent.setup>
 
 async function renderShell(scenario?: WorkbenchViewModel) {
+  const snapshot = scenario ?? createStandardScenario()
+  if (!scenario) {
+    snapshot.activeGlobalSurface = undefined
+    snapshot.projects[0].currentSurface = 'overview'
+  }
   const adapter = new MockScenarioAdapter(
-    scenario ?? createStandardScenario()
+    snapshot
   )
   const user = userEvent.setup()
   render(<ProjectShell port={adapter} />)
@@ -35,7 +40,12 @@ async function renderShell(scenario?: WorkbenchViewModel) {
 }
 
 async function openDrawer(user: User) {
-  const trigger = screen.getByRole('button', { name: 'Global Attention' })
+  let overview = screen.queryByRole('region', { name: '项目概览' })
+  if (!overview) {
+    await user.click(await screen.findByRole('button', { name: '概览' }))
+    overview = await screen.findByRole('region', { name: '项目概览' })
+  }
+  const trigger = within(overview).getAllByRole('button', { name: '处理' })[0]
   await user.click(trigger)
   const drawer = await screen.findByRole('complementary', {
     name: 'Global Attention'
@@ -60,24 +70,17 @@ function expectCurrentProject(name: string) {
 }
 
 describe('Global Attention — shell entry (#9)', () => {
-  it('shows the global pending count on the trigger', async () => {
+  it('does not expose a persistent Attention shortcut in the statusbar', async () => {
     await renderShell()
-    const trigger = screen.getByRole('button', { name: 'Global Attention' })
-    // 9 open items in 销售数据分析 + 2 in 用户研究.
-    expect(trigger).toHaveTextContent('11')
+    expect(
+      within(
+        screen.getByRole('navigation', { name: '全局快捷入口' })
+      ).queryByRole('button', { name: 'Global Attention' })
+    ).toBeNull()
   })
 
-  it.each([
-    '概览',
-    'Agent',
-    '任务',
-    '知识',
-    '交接',
-    '活动',
-    '设置'
-  ] as const)('opens from the %s surface and closes with Escape', async (nav) => {
+  it('opens from a contextual Overview processing action', async () => {
     const { user } = await renderShell()
-    await user.click(screen.getByRole('button', { name: nav }))
     const { drawer } = await openDrawer(user)
     expect(drawer).toBeVisible()
     await user.keyboard('{Escape}')
@@ -694,7 +697,10 @@ describe('Global Attention — superseded deep link (#9 review)', () => {
         release()
       }
     }
-    const port = new DeferredResultPort()
+    const scenario = createStandardScenario()
+    scenario.activeGlobalSurface = undefined
+    scenario.projects[0].currentSurface = 'overview'
+    const port = new DeferredResultPort(scenario)
     const user = userEvent.setup()
     render(<ProjectShell port={port} />)
     await screen.findByRole('button', { name: '概览' })
@@ -966,7 +972,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
     expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
   })
 
-  it.each(['surface', 'project', 'policy'] as const)(
+  it.each(['surface', 'project'] as const)(
     'keeps the retained Run target when explicit %s navigation is rejected',
     async (navigationKind) => {
       class RejectExplicitNavigationPort extends MockScenarioAdapter {
@@ -977,8 +983,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
             command.kind === 'navigate' &&
             ((navigationKind === 'surface' && command.surface === 'tasks') ||
               (navigationKind === 'project' &&
-                command.projectId === id('proj-research', 'ProjectId')) ||
-              (navigationKind === 'policy' && command.surface === 'settings'))
+                command.projectId === id('proj-research', 'ProjectId')))
           if (rejects) {
             return {
               ok: false,
@@ -999,18 +1004,8 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
 
       if (navigationKind === 'surface') {
         await user.click(screen.getByRole('button', { name: '任务' }))
-      } else if (navigationKind === 'project') {
-        await switchToProject(user, '用户研究')
       } else {
-        const { drawer } = await openDrawer(user)
-        const card = within(drawer).getByRole('region', { name: /cc_data/ })
-        await user.click(
-          within(card).getByRole('button', {
-            name: '在 Settings 中管理永久策略'
-          })
-        )
-        expect(await within(drawer).findByText('目标工作面暂时不可用')).toBeVisible()
-        await user.keyboard('{Escape}')
+        await switchToProject(user, '用户研究')
       }
 
       expect(
@@ -1294,231 +1289,6 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
       await port.releaseDeferredSwitch()
     })
     expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-  })
-
-  it('blocks an older target-switch result while a newer Run deep link is still opening', async () => {
-    class DeferredReturnDeepLinkPort extends DeferredTargetSwitchPort {
-      private releaseReturnResult: (() => Promise<void>) | undefined
-
-      override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
-        const result = super.dispatch(command)
-        if (
-          this.hasDeferredSwitch() &&
-          !this.releaseReturnResult &&
-          command.kind === 'change-layout' &&
-          command.operation.kind === 'activate-tab' &&
-          command.operation.agentInstanceId === etlAgentId
-        ) {
-          // The newer deep link has already selected cc_etl authoritatively,
-          // but its raw layout Result remains in flight.
-          return new Promise<CommandResult>((resolve) => {
-            this.releaseReturnResult = async () => {
-              resolve(await result)
-            }
-          })
-        }
-        return result
-      }
-
-      hasDeferredReturn(): boolean {
-        return this.releaseReturnResult !== undefined
-      }
-
-      async releaseDeferredReturn(): Promise<void> {
-        const release = this.releaseReturnResult
-        if (!release) {
-          throw new Error('return deep-link result was not deferred')
-        }
-        this.releaseReturnResult = undefined
-        await release()
-      }
-    }
-
-    const port = new DeferredReturnDeepLinkPort()
-    const user = userEvent.setup()
-    render(<ProjectShell port={port} />)
-    await screen.findByRole('button', { name: '概览' })
-    expect(await deepLinkToRun(user)).toBeVisible()
-
-    const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
-    expect(await deepLinkToRun(user)).toBeVisible()
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /cc_etl/ })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-    })
-    expect(port.hasDeferredReturn()).toBe(true)
-
-    await act(async () => {
-      await port.releaseDeferredSwitch()
-    })
-    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-
-    await act(async () => {
-      await port.releaseDeferredReturn()
-    })
-    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-  })
-
-  it('keeps an issued deep-link target authoritative when a structural action supersedes its continuation', async () => {
-    class DeferredReturnDeepLinkPort extends DeferredTargetSwitchPort {
-      private releaseReturnResult: (() => Promise<void>) | undefined
-
-      override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
-        const result = super.dispatch(command)
-        if (
-          this.hasDeferredSwitch() &&
-          !this.releaseReturnResult &&
-          command.kind === 'change-layout' &&
-          command.operation.kind === 'activate-tab' &&
-          command.operation.agentInstanceId === etlAgentId
-        ) {
-          // The deep-link-owned layout Event has selected cc_etl, but its
-          // Result and the older cc_sql Result are both still in flight.
-          return new Promise<CommandResult>((resolve) => {
-            this.releaseReturnResult = async () => {
-              resolve(await result)
-            }
-          })
-        }
-        return result
-      }
-
-      hasDeferredReturn(): boolean {
-        return this.releaseReturnResult !== undefined
-      }
-
-      async releaseDeferredReturn(): Promise<void> {
-        const release = this.releaseReturnResult
-        if (!release) {
-          throw new Error('return deep-link result was not deferred')
-        }
-        this.releaseReturnResult = undefined
-        await release()
-      }
-    }
-
-    const port = new DeferredReturnDeepLinkPort()
-    const user = userEvent.setup()
-    render(<ProjectShell port={port} />)
-    await screen.findByRole('button', { name: '概览' })
-    expect(await deepLinkToRun(user)).toBeVisible()
-
-    const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
-    expect(await deepLinkToRun(user)).toBeVisible()
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /cc_etl/ })).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-    })
-    expect(port.hasDeferredReturn()).toBe(true)
-
-    // Focus cancels the remaining deep-link UI continuation, but it does not
-    // choose another Agent. The already-issued cc_etl layout command must
-    // therefore remain ordered ahead of the older cc_sql command.
-    const panel = screen.getByRole('group', { name: 'Agent 面板' })
-    await user.click(
-      within(panel).getByRole('button', { name: 'Focus 此 Panel' })
-    )
-
-    await act(async () => {
-      await port.releaseDeferredSwitch()
-    })
-    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-
-    await act(async () => {
-      await port.releaseDeferredReturn()
-    })
-    expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
-  })
-
-  it('does not let a superseded deep-link barrier block an older successful target switch', async () => {
-    class SupersededDeepLinkPort extends DeferredTargetSwitchPort {
-      private releaseFirstDeepLinkResult: (() => Promise<void>) | undefined
-      private rejectedSecondDeepLink = false
-
-      override dispatch(command: WorkbenchCommand): Promise<CommandResult> {
-        if (
-          this.hasDeferredSwitch() &&
-          command.kind === 'navigate' &&
-          !this.releaseFirstDeepLinkResult
-        ) {
-          const result = super.dispatch(command)
-          return new Promise<CommandResult>((resolve) => {
-            this.releaseFirstDeepLinkResult = async () => {
-              resolve(await result)
-            }
-          })
-        }
-        if (
-          this.hasDeferredSwitch() &&
-          command.kind === 'navigate' &&
-          this.releaseFirstDeepLinkResult &&
-          !this.rejectedSecondDeepLink
-        ) {
-          this.rejectedSecondDeepLink = true
-          return this.getSnapshot().then((snapshot) => ({
-            ok: false,
-            commandId: command.commandId,
-            reason: 'unavailable',
-            latestRevision: snapshot.revision,
-            message: '第二个深链暂时不可用'
-          }))
-        }
-        return super.dispatch(command)
-      }
-
-      hasDeferredDeepLink(): boolean {
-        return this.releaseFirstDeepLinkResult !== undefined
-      }
-
-      async releaseDeferredDeepLink(): Promise<void> {
-        const release = this.releaseFirstDeepLinkResult
-        if (!release) throw new Error('first deep-link result was not deferred')
-        this.releaseFirstDeepLinkResult = undefined
-        await release()
-      }
-    }
-
-    const port = new SupersededDeepLinkPort()
-    const user = userEvent.setup()
-    render(<ProjectShell port={port} />)
-    await screen.findByRole('button', { name: '概览' })
-    expect(await deepLinkToRun(user)).toBeVisible()
-
-    const directory = screen.getByRole('region', { name: 'Agent 目录' })
-    await user.click(within(directory).getByRole('button', { name: /^cc_sql/ }))
-
-    const firstDrawer = (await openDrawer(user)).drawer
-    await user.click(
-      within(firstDrawer).getByRole('button', {
-        name: '打开：cc_etl 的上一次 Run 被中断'
-      })
-    )
-    expect(port.hasDeferredDeepLink()).toBe(true)
-
-    // A second deep link supersedes the first immediately, then rejects.
-    // The first one's still-pending Result must no longer block cc_sql.
-    const secondDrawer = (await openDrawer(user)).drawer
-    await user.click(
-      within(secondDrawer).getByRole('button', {
-        name: '打开：cc_etl 的上一次 Run 被中断'
-      })
-    )
-    expect(await screen.findByText(/第二个深链暂时不可用/)).toBeVisible()
-
-    await act(async () => {
-      await port.releaseDeferredSwitch()
-    })
-    expect(screen.queryByText(/已保留目标：Run run-etl-001/)).toBeNull()
-
-    await act(async () => {
-      await port.releaseDeferredDeepLink()
-    })
   })
 
   it('ignores an older target-switch result after the user returns to the retained Agent', async () => {

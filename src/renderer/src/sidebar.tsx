@@ -11,13 +11,15 @@ import type {
  *
  * Sections (top→bottom):
  * 1. Brand mark (small)
- * 2. App-level nav (首页 / 连接 / Provider 健康 / 全局设置)
+ * 2. App-level nav (首页 / 全局设置)
  * 3. ── divider ──
  * 4. Project-level nav (概览 / Agent / 任务 / 知识 / 交接 / 活动 / 设置)
  * 5. ── divider ──
  * 6. children — the Agent Directory content (only rendered in project view
  *    by the shell)
- * 7. Attention button (bottom-pinned)
+ *
+ * Connections and Provider Health live in the persistent statusbar navigation
+ * (#95), while Attention is entered contextually from Overview.
  *
  * Light `bg-raised` surface; nav items are icon+text horizontal rows (32px)
  * instead of the old stacked icon-only rail. ARIA preserved: `navigation`
@@ -46,8 +48,6 @@ const NAV_ITEMS: Array<{ surface: ProjectSurface; glyph: string }> = [
 
 const APP_NAV_ITEMS: Array<{ surface: GlobalSurface; label: string; glyph: string }> = [
   { surface: 'home', label: '首页', glyph: '⌂' },
-  { surface: 'connections', label: '连接', glyph: '🔗' },
-  { surface: 'provider-health', label: 'Provider 健康', glyph: '📡' },
   { surface: 'global-settings', label: '全局设置', glyph: '⚙' }
 ]
 
@@ -65,9 +65,6 @@ export function Sidebar({
   project,
   onNavigateGlobal,
   onNavigateSurface,
-  showAttention,
-  attentionCount,
-  onOpenAttention,
   children
 }: {
   inGlobalView: boolean
@@ -75,9 +72,6 @@ export function Sidebar({
   project: ProjectViewModel | undefined
   onNavigateGlobal: (surface: GlobalSurface) => void
   onNavigateSurface: (surface: ProjectSurface) => void
-  showAttention: boolean
-  attentionCount: number
-  onOpenAttention: () => void
   /** Agent Directory content (ContextPane), rendered in project view. */
   children?: React.ReactNode
 }) {
@@ -167,10 +161,7 @@ export function Sidebar({
         </div>
       </nav>
 
-      {/* Agent Directory content — rendered by the shell in project view.
-          flex-1 makes the directory fill available space so the Attention
-          button sits at the bottom without a separate spacer that could
-          intercept pointer events. */}
+      {/* Agent Directory content — rendered by the shell in project view. */}
       {children && (
         <>
           <div
@@ -180,20 +171,6 @@ export function Sidebar({
           <div className="flex min-h-0 flex-1 flex-col">{children}</div>
         </>
       )}
-
-      {/* Attention button — pinned to bottom */}
-      <div className="shrink-0 px-2 pb-2 pt-1">
-        <button
-          aria-label="Global Attention"
-          className={`${sidebarItemClass(showAttention)} justify-center`}
-          onClick={onOpenAttention}
-        >
-          <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[10px] font-bold text-paper">
-            {attentionCount}
-          </span>
-          <span>关注</span>
-        </button>
-      </div>
     </aside>
   )
 }
