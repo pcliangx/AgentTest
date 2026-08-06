@@ -130,7 +130,7 @@ export function Sidebar({
         <div
           role="group"
           aria-label="项目工作面"
-          className="flex flex-col gap-0.5"
+          className={`flex flex-col gap-0.5 ${inGlobalView ? 'opacity-40' : ''}`}
         >
           {NAV_ITEMS.map(({ surface, glyph }) => {
             const isActive =
