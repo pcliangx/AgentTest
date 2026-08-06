@@ -323,6 +323,8 @@ export class MockScenarioAdapter implements WorkbenchPort {
     | null = null
   /** Revision at which the quit preview was generated; null when no preview (#12). */
   private quitPreviewRevision: number | null = null
+  /** Ordinal source for demo create-project identities (#76). */
+  private createdProjectCount = 0
 
   constructor(
     snapshot: WorkbenchViewModel = createStandardScenario(),
@@ -445,10 +447,51 @@ export class MockScenarioAdapter implements WorkbenchPort {
         project.currentSurface = command.surface
         this.snapshot.activeProjectId = command.projectId
         this.snapshot.activeGlobalSurface = undefined
+        // Recency truth for the home page's 最近项目 list (#76): opening a
+        // Project stamps it; the renderer never derives this.
+        project.lastOpenedAt = this.clock()
         return null
       }
       case 'navigate-global': {
         this.snapshot.activeGlobalSurface = command.surface
+        return null
+      }
+      case 'create-project': {
+        // #76 demo flow: name + root path text in, Project lands in the
+        // list and becomes the active one. The durable ProjectStore and
+        // the native directory picker are Phase 2.
+        const name = command.name.trim()
+        if (!name) {
+          return this.reject(command, 'invalid-target', '项目名不能为空')
+        }
+        const ordinal = ++this.createdProjectCount
+        const projectId = id(`proj-created-${ordinal}`, 'ProjectId')
+        const panelId = id(`panel-created-${ordinal}`, 'PanelId')
+        this.snapshot.projects.push({
+          projectId,
+          name,
+          lifecycle: 'active',
+          rootAvailability: 'available',
+          // The demo flow validates no Git repository — report it honestly.
+          repositoryReadiness: 'not-ready',
+          activity: 'idle',
+          activeRunCount: 0,
+          queuedRunCount: 0,
+          attentionCount: 0,
+          rootPath: command.rootPath.trim() || undefined,
+          lastOpenedAt: this.clock(),
+          resourceBindings: [],
+          currentSurface: 'overview',
+          layout: {
+            root: { kind: 'panel', panelId },
+            panels: {
+              [panelId]: { tabs: [] }
+            },
+            focusedPanelId: panelId
+          }
+        })
+        this.snapshot.activeProjectId = projectId
+        this.snapshot.activeGlobalSurface = undefined
         return null
       }
       case 'preview-knowledge-security-event': {

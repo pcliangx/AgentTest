@@ -466,8 +466,12 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     // ==================================================================
 
     await recordedStep(evidence, 'workflow: High-risk confirmation for connection deletion', async () => {
-      // Navigate to global Connections.
-      await header().getByRole('button', { name: '连接', exact: true }).click()
+      // Navigate to global Connections (#76: the entry lives in the rail's
+      // App tier).
+      await nav()
+        .getByRole('group', { name: 'App 级' })
+        .getByRole('button', { name: '连接', exact: true })
+        .click()
       await expect(page.getByRole('region', { name: '全局连接' })).toBeVisible()
 
       // Click delete on a connection — this triggers a confirmation modal.

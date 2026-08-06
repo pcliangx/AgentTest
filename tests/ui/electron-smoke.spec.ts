@@ -21,6 +21,7 @@ const SCENARIO = {
   ...UI_SMOKE_SCENARIO,
   rendererSource: 'production-file',
   coverage: [
+    'App home landing',
     'Project Shell',
     'Project navigation',
     'pre-renderer network guard',
@@ -54,13 +55,27 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
 
     firstSignature = await recordedStep(evidence, 'launch isolated deterministic shell', async () => {
       await expect(page).toHaveTitle('Agent Squad HQ')
-      await expect(page.getByText('Agent Squad HQ', { exact: true })).toBeVisible()
-      await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
-      // #75: the persistent switch bar marks the current project.
       await expect(
-        page
-          .getByRole('navigation', { name: '快捷切换' })
-          .getByRole('button', { name: '销售数据分析', exact: true })
+        page.locator('header.titlebar').getByText('Agent Squad HQ', { exact: true })
+      ).toBeVisible()
+      const navigation = page.getByRole('navigation', { name: '主导航' })
+      await expect(navigation).toBeVisible()
+      // #76: the app lands on the App-level 首页 — the rail's App tier marks
+      // it current while the switch bar marks nothing.
+      await expect(page.getByRole('region', { name: '首页' })).toBeVisible()
+      await expect(
+        navigation.getByRole('button', { name: '首页', exact: true })
+      ).toHaveAttribute('aria-current', 'page')
+      const switchBar = page.getByRole('navigation', { name: '快捷切换' })
+      await expect(switchBar).toBeVisible()
+      await expect(switchBar.locator('[aria-current="page"]')).toHaveCount(0)
+      // Enter the project from the switch bar — it then marks the current
+      // project (#75) and every later step runs inside the workspace.
+      await switchBar
+        .getByRole('button', { name: '销售数据分析', exact: true })
+        .click()
+      await expect(
+        switchBar.getByRole('button', { name: '销售数据分析', exact: true })
       ).toHaveAttribute('aria-current', 'page')
       await expect(page.getByRole('region', { name: '项目概览' })).toBeVisible()
       expect(await activeSession!.app.evaluate(({ app }) => app.getPath('userData'))).toBe(
@@ -260,6 +275,13 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
     )
     await recordedStep(evidence, 'relaunch from a fresh directory without state drift', async () => {
       const secondPage = await connectSmokeWindow(activeSession!, evidence)
+      // #76: relaunch lands on 首页 again — re-enter the project before
+      // comparing signatures with the first launch.
+      await expect(secondPage.getByRole('region', { name: '首页' })).toBeVisible()
+      await secondPage
+        .getByRole('navigation', { name: '快捷切换' })
+        .getByRole('button', { name: '销售数据分析', exact: true })
+        .click()
       await expect(secondPage.getByRole('region', { name: '项目概览' })).toBeVisible()
       expect(await initialSignature(secondPage)).toEqual(firstSignature)
       await expectNoRendererErrors(secondPage, activeSession!, evidence)

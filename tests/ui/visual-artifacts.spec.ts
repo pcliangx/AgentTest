@@ -47,7 +47,8 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
     await mkdir(VISUAL_DIR, { recursive: true })
 
     const nav = () => page.getByRole('navigation', { name: '主导航' })
-    const header = () => page.locator('header')
+    // #76: the App-level entries live in the rail's top tier.
+    const appTier = () => nav().getByRole('group', { name: 'App 级' })
 
     const capture = async (name: string): Promise<void> => {
       const path = join(VISUAL_DIR, `${name}.png`)
@@ -68,16 +69,24 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       await capture(name)
     }
 
+    // #76: the app lands on the App-level 首页 — capture it before any
+    // navigation.
+    await recordedStep(evidence, 'capture 01-home', async () => {
+      await expect(page.getByRole('region', { name: '首页' })).toBeVisible()
+      await page.waitForTimeout(200)
+      await capture('01-home')
+    })
+
     for (const [name, navLabel, regionName] of [
-      ['01-overview', '概览', '项目概览'],
+      ['02-overview', '概览', '项目概览'],
       // The Agent Directory lives in the always-on context pane; probe the
       // Agents surface's own region instead.
-      ['02-agents', 'Agent', 'Agent 工作区'],
-      ['03-tasks', '任务', '任务'],
-      ['04-knowledge', '知识', 'Knowledge'],
-      ['05-handoffs', '交接', '交接'],
-      ['06-activity', '活动', '活动'],
-      ['07-settings', '设置', '项目设置']
+      ['03-agents', 'Agent', 'Agent 工作区'],
+      ['04-tasks', '任务', '任务'],
+      ['05-knowledge', '知识', 'Knowledge'],
+      ['06-handoffs', '交接', '交接'],
+      ['07-activity', '活动', '活动'],
+      ['08-settings', '设置', '项目设置']
     ] as const) {
       await recordedStep(evidence, `capture ${name}`, () =>
         captureSurface(
@@ -93,17 +102,17 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       )
     }
 
-    for (const [name, headerLabel, regionName] of [
-      ['08-connections', '连接', '全局连接'],
-      ['09-provider-health', 'Provider 健康', 'Provider 健康'],
-      ['10-global-settings', '全局设置', '全局设置']
+    for (const [name, appLabel, regionName] of [
+      ['09-connections', '连接', '全局连接'],
+      ['10-provider-health', 'Provider 健康', 'Provider 健康'],
+      ['11-global-settings', '全局设置', '全局设置']
     ] as const) {
       await recordedStep(evidence, `capture ${name}`, () =>
         captureSurface(
           name,
           () =>
-            header()
-              .getByRole('button', { name: headerLabel, exact: true })
+            appTier()
+              .getByRole('button', { name: appLabel, exact: true })
               .click(),
           async () => {
             await expect(
@@ -114,20 +123,20 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       )
     }
 
-    await recordedStep(evidence, 'capture 11-attention-drawer', async () => {
+    await recordedStep(evidence, 'capture 12-attention-drawer', async () => {
       await page.getByRole('button', { name: 'Global Attention' }).click()
       await expect(
         page.getByRole('complementary', { name: 'Global Attention' })
       ).toBeVisible()
       await page.waitForTimeout(200)
-      await capture('11-attention-drawer')
+      await capture('12-attention-drawer')
       await page.keyboard.press('Escape')
       await expect(
         page.getByRole('complementary', { name: 'Global Attention' })
       ).toBeHidden()
     })
 
-    await recordedStep(evidence, 'capture 12-dispatch-picker', async () => {
+    await recordedStep(evidence, 'capture 13-dispatch-picker', async () => {
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       const overview = page.getByRole('region', { name: '项目概览' })
       await expect(overview).toBeVisible()
@@ -145,15 +154,15 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
         dialog.getByRole('region', { name: '派发预览' })
       ).toBeVisible()
       await page.waitForTimeout(200)
-      await capture('12-dispatch-picker')
+      await capture('13-dispatch-picker')
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
     })
 
-    await recordedStep(evidence, 'capture 13-project-switch-bar', async () => {
-      // #75: the persistent quick-switch bar — global entries + one button
-      // per Project — is part of every capture above; these artifacts frame
-      // the bar itself, on a Project surface and on a global work surface.
+    await recordedStep(evidence, 'capture 14-project-switch-bar', async () => {
+      // #75: the persistent quick-switch bar — one button per Project — is
+      // part of every capture above; these artifacts frame the bar itself,
+      // on a Project surface and on a global work surface.
       const bar = page.getByRole('navigation', { name: '快捷切换' })
       await expect(bar).toBeVisible()
       await expect(
@@ -161,40 +170,43 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       ).toHaveAttribute('aria-current', 'page')
       const projectBox = await bar.boundingBox()
       await bar.screenshot({
-        path: join(VISUAL_DIR, '13-project-switch-bar.png')
+        path: join(VISUAL_DIR, '14-project-switch-bar.png')
       })
-      await testInfo.attach('13-project-switch-bar.png', {
-        path: join(VISUAL_DIR, '13-project-switch-bar.png'),
+      await testInfo.attach('14-project-switch-bar.png', {
+        path: join(VISUAL_DIR, '14-project-switch-bar.png'),
         contentType: 'image/png'
       })
       evidence.steps.push(
-        'CAPTURE test-results/visual/13-project-switch-bar.png'
+        'CAPTURE test-results/visual/14-project-switch-bar.png'
       )
 
       // The bar must not jump between project and global views (#75 AC1).
-      await header()
+      await appTier()
         .getByRole('button', { name: '连接', exact: true })
         .click()
       await expect(
         page.getByRole('region', { name: '全局连接' })
       ).toBeVisible()
       await expect(bar).toBeVisible()
+      // #76: the bar is Projects-only — it marks nothing while a global work
+      // surface is active; the current marker lives on the App-tier button.
+      await expect(bar.locator('[aria-current="page"]')).toHaveCount(0)
       await expect(
-        bar.getByRole('button', { name: '连接', exact: true })
+        appTier().getByRole('button', { name: '连接', exact: true })
       ).toHaveAttribute('aria-current', 'page')
       const globalBox = await bar.boundingBox()
       expect(globalBox?.x).toBe(projectBox?.x)
       expect(globalBox?.y).toBe(projectBox?.y)
       expect(globalBox?.height).toBe(projectBox?.height)
       await bar.screenshot({
-        path: join(VISUAL_DIR, '14-project-switch-bar-global.png')
+        path: join(VISUAL_DIR, '15-project-switch-bar-global.png')
       })
-      await testInfo.attach('14-project-switch-bar-global.png', {
-        path: join(VISUAL_DIR, '14-project-switch-bar-global.png'),
+      await testInfo.attach('15-project-switch-bar-global.png', {
+        path: join(VISUAL_DIR, '15-project-switch-bar-global.png'),
         contentType: 'image/png'
       })
       evidence.steps.push(
-        'CAPTURE test-results/visual/14-project-switch-bar-global.png'
+        'CAPTURE test-results/visual/15-project-switch-bar-global.png'
       )
     })
 

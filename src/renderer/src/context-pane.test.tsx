@@ -19,7 +19,12 @@ afterEach(() => cleanup())
 async function renderShell() {
   const user = userEvent.setup()
   render(<ProjectShell port={new MockScenarioAdapter()} />)
-  // The pane is visible from the first Project surface render.
+  // #76: the app lands on 首页 — the pane appears once a Project is open.
+  await user.click(
+    within(
+      await screen.findByRole('navigation', { name: '快捷切换' })
+    ).getByRole('button', { name: '销售数据分析' })
+  )
   const directory = await screen.findByRole('region', { name: 'Agent 目录' })
   return { user, directory }
 }

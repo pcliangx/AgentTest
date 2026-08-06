@@ -28,18 +28,15 @@ function renderBar(
   overrides: Partial<Parameters<typeof ProjectSwitchBar>[0]> = {}
 ) {
   const onSwitchProject = vi.fn()
-  const onNavigateGlobal = vi.fn()
   render(
     <ProjectSwitchBar
       projects={PROJECTS}
       activeProjectId={id('proj-a', 'ProjectId')}
-      activeGlobalSurface={undefined}
       onSwitchProject={onSwitchProject}
-      onNavigateGlobal={onNavigateGlobal}
       {...overrides}
     />
   )
-  return { onSwitchProject, onNavigateGlobal }
+  return { onSwitchProject }
 }
 
 /**
@@ -79,18 +76,14 @@ describe('computeVisibleProjectCount', () => {
 })
 
 describe('ProjectSwitchBar', () => {
-  it('renders the global entries and one button per project', () => {
+  it('renders one button per project', () => {
     renderBar()
     const bar = screen.getByRole('navigation', { name: '快捷切换' })
+    // #76: the global entries moved into the left navigation's App tier —
+    // this bar is Projects only.
     expect(
-      within(bar).getByRole('button', { name: '连接' })
-    ).toBeVisible()
-    expect(
-      within(bar).getByRole('button', { name: 'Provider 健康' })
-    ).toBeVisible()
-    expect(
-      within(bar).getByRole('button', { name: '全局设置' })
-    ).toBeVisible()
+      within(bar).queryByRole('button', { name: '连接' })
+    ).not.toBeInTheDocument()
     for (const project of PROJECTS) {
       expect(
         within(bar).getByRole('button', { name: project.name })
@@ -113,16 +106,9 @@ describe('ProjectSwitchBar', () => {
     ).not.toHaveAttribute('aria-current')
   })
 
-  it('marks the active global surface instead when in a global view', () => {
-    renderBar({
-      activeProjectId: undefined,
-      activeGlobalSurface: 'connections'
-    })
+  it('marks nothing while a global work surface is active', () => {
+    renderBar({ activeProjectId: undefined })
     const bar = screen.getByRole('navigation', { name: '快捷切换' })
-    expect(within(bar).getByRole('button', { name: '连接' })).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
     for (const project of PROJECTS) {
       expect(
         within(bar).getByRole('button', { name: project.name })
@@ -130,14 +116,12 @@ describe('ProjectSwitchBar', () => {
     }
   })
 
-  it('switches project and navigates global on click', async () => {
+  it('switches project on click', async () => {
     const user = userEvent.setup()
-    const { onSwitchProject, onNavigateGlobal } = renderBar()
+    const { onSwitchProject } = renderBar()
     const bar = screen.getByRole('navigation', { name: '快捷切换' })
     await user.click(within(bar).getByRole('button', { name: '用户研究' }))
     expect(onSwitchProject).toHaveBeenCalledWith(id('proj-b', 'ProjectId'))
-    await user.click(within(bar).getByRole('button', { name: '全局设置' }))
-    expect(onNavigateGlobal).toHaveBeenCalledWith('global-settings')
   })
 
   it('truncates long project names with a title fallback', () => {

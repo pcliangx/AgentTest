@@ -1079,6 +1079,8 @@ describe('Knowledge surface — browser and identity boundaries (#11)', () => {
     const scenario = createStandardScenario()
     routeAttentionToSecondKnowledgeResource(scenario)
     scenario.projects[0].currentSurface = 'knowledge'
+    // Land on the project (not the #76 home page) as this test expects.
+    scenario.activeGlobalSurface = undefined
     const user = userEvent.setup()
     render(
       <ProjectShell port={new ThrowingKnowledgeNavigationAdapter(scenario)} />
