@@ -4,6 +4,9 @@ import type {
   AgentWorktreeMode
 } from './workbench/contract'
 
+// #97: display-state mapping lives in agent-state-selectors; this module
+// keeps the label/provider/terminal metadata that predates that split.
+
 /**
  * Shared display metadata — labels only, never business branching.
  * Used by both the Agents surface (directory, dialogs) and the workspace

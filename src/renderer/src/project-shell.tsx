@@ -33,6 +33,11 @@ import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
 import { ACTIVITY_KIND_CHIP, activityKindLabel } from './activity-display'
 import { CONNECTION_CHIP, CONNECTION_STATUS_LABEL } from './connection-display'
 import { providerLabel, RUNTIME_STATE_LABEL, isActiveRunState } from './agent-display'
+import {
+  agentDisplayState,
+  AGENT_DISPLAY_STATE_LABEL,
+  deriveProjectAgentStats
+} from './agent-state-selectors'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
@@ -902,7 +907,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <div className="ml-auto flex shrink-0 items-center gap-2.5 text-[11px] text-muted">
           <span className="hidden items-center gap-1.5 sm:flex">
             <span aria-hidden="true" className="live-dot" />
-            {snapshot.global.concurrency.activeGlobal} Run
+            {snapshot.global.concurrency.activeGlobal} 运行中
           </span>
           {project && (
             <button
@@ -1326,7 +1331,9 @@ function OverviewSurface({
   onDispatch: () => void
   onOpenAttention: () => void
 }) {
-  // Agents with active work — running, starting, finishing, queued.
+  // #97: all project display counts come from the single deriveProjectAgentStats
+  // selector — no ad-hoc filters or contract-owned counts for display.
+  const stats = deriveProjectAgentStats(agents)
   const activeRunAgents = agents.filter((a) => isActiveRunState(a.runtimeState))
   const queuedAgents = agents.filter((a) => a.runtimeState === 'queued')
 
@@ -1340,29 +1347,31 @@ function OverviewSurface({
         </button>
       </div>
 
-      {/* Compact stat strip — at-a-glance numbers */}
+      {/* #97: Compact stat strip — all counts from deriveProjectAgentStats,
+          not contract-owned counts, so Overview never disagrees with the
+          Agent Directory or Dashboard. */}
       <div className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-raised px-3 py-2 text-[11px]">
         <span className="flex items-baseline gap-1">
-          <strong className="text-base font-bold text-ink">{agentCount}</strong>
+          <strong className="text-base font-bold text-ink">{stats.total}</strong>
           <span className="text-muted">Agent</span>
         </span>
         <span className="flex items-baseline gap-1">
           <strong className="text-base font-bold text-ink">
-            {project.activeRunCount}
+            {stats.running}
           </strong>
-          <span className="text-muted">活动运行</span>
+          <span className="text-muted">运行中</span>
         </span>
         <span className="flex items-baseline gap-1">
           <strong className="text-base font-bold text-ink">
-            {project.queuedRunCount}
+            {stats.queued}
           </strong>
           <span className="text-muted">排队</span>
         </span>
         <span className="flex items-baseline gap-1">
           <strong className="text-base font-bold text-ink">
-            {project.attentionCount}
+            {stats.blocking}
           </strong>
-          <span className="text-muted">关注</span>
+          <span className="text-muted">阻塞</span>
         </span>
       </div>
 
@@ -1514,6 +1523,7 @@ function OverviewSurface({
 
 /** Dashboard active-run row: provider icon + name + state + task summary. */
 function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
+  const ds = agentDisplayState(agent.runtimeState)
   const isActive = isActiveRunState(agent.runtimeState)
   return (
     <li className="flex items-center gap-2.5 px-3 py-2">
@@ -1524,11 +1534,11 @@ function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
             {agent.name}
           </span>
           <StatusChip tone={isActive ? 'brand' : 'neutral'}>
-            {RUNTIME_STATE_LABEL[agent.runtimeState]}
+            {AGENT_DISPLAY_STATE_LABEL[ds]}
           </StatusChip>
         </div>
         <span className="mt-0.5 block truncate text-[10px] text-muted">
-          {agent.currentTaskSummary ?? providerLabel(agent.providerId) + ' · ' + RUNTIME_STATE_LABEL[agent.runtimeState]}
+          {agent.currentTaskSummary ?? providerLabel(agent.providerId)}
         </span>
       </div>
     </li>
@@ -1731,9 +1741,9 @@ function GlobalSettingsSurface({
         <div className="flex items-center gap-2 border-t border-line bg-raised px-3 py-2 text-xs text-muted">
           当前：
           <StatusChip tone="brand" icon="●">
-            全局活跃 {concurrency.activeGlobal}
+            全局运行中 {concurrency.activeGlobal}
           </StatusChip>
-          <StatusChip icon="◌">排队 {concurrency.queuedGlobal}</StatusChip>
+          <StatusChip icon="◌">全局排队 {concurrency.queuedGlobal}</StatusChip>
         </div>
       </div>
       <p className="notice-bar max-w-[560px]">

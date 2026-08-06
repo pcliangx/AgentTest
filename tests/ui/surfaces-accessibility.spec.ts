@@ -158,11 +158,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     await recordedStep(evidence, 'Overview surface with stat cards and activity', async () => {
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       await expect(page.getByRole('region', { name: '项目概览' })).toBeVisible()
-      // #92: Dashboard stat strip labels are visible with numeric values.
+      // #97: Dashboard stat strip uses unified display-state labels.
       await expect(main().getByText('Agent', { exact: true })).toBeVisible()
-      await expect(main().getByText('活动运行', { exact: true })).toBeVisible()
+      await expect(main().getByText('运行中', { exact: true })).toBeVisible()
       await expect(main().getByText('排队', { exact: true })).toBeVisible()
-      await expect(main().getByText('关注', { exact: true })).toBeVisible()
+      await expect(main().getByText('阻塞', { exact: true })).toBeVisible()
       // Recent activity heading.
       await expect(main().getByText('最近活动')).toBeVisible()
     })
