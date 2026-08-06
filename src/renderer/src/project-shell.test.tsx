@@ -86,7 +86,7 @@ describe('ProjectShell — snapshot rendering', () => {
 })
 
 describe('ProjectShell — shell chrome (#65)', () => {
-  it('shows Agent Squad HQ as its own titlebar text node plus the project name', async () => {
+  it('shows Agent Squad HQ as its own titlebar text node', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
@@ -95,6 +95,8 @@ describe('ProjectShell — shell chrome (#65)', () => {
     // screenshot and a11y queries rely on exactly one exact match there
     // (#65 titlebar; #76 adds another "Agent Squad HQ" heading on 首页,
     // so scope to the titlebar header).
+    // #98: the / {project.name} breadcrumb was removed — the switch bar
+    // carries the project name instead.
     const titlebar = document.querySelector('header.titlebar')
     expect(titlebar).not.toBeNull()
     expect(
@@ -102,17 +104,14 @@ describe('ProjectShell — shell chrome (#65)', () => {
         exact: true
       })
     ).toBeVisible()
-    expect(
-      within(titlebar as HTMLElement).getByText(
-        (content, element) =>
-          element?.tagName === 'SPAN' && content.startsWith('/ 销售数据分析')
-      )
-    ).toBeVisible()
   })
 
   it('shows root path, branch and layout auto-save in the statusbar', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
+    // #98: project-scoped facts only show in project views — enter one.
+    await enterProject(user)
     const statusbar = document.querySelector('footer')
     expect(statusbar).not.toBeNull()
     expect(statusbar).toHaveTextContent('~/Projects/sales-analysis')
@@ -121,10 +120,16 @@ describe('ProjectShell — shell chrome (#65)', () => {
   })
 
   it('shows Project/Global run capacity from the contract in the statusbar', async () => {
+    const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await waitForLoad()
+    await enterProject(user)
     const statusbar = document.querySelector('footer')
-    expect(statusbar).toHaveTextContent('Project 2 / 3 · Global 2 / 6')
+    // #98: capacity labels scope-annotated ("当前" project vs "全部" global).
+    expect(statusbar).toHaveTextContent('当前 Project')
+    expect(statusbar).toHaveTextContent('2 / 3')
+    expect(statusbar).toHaveTextContent('全部')
+    expect(statusbar).toHaveTextContent('2 / 6')
   })
 })
 

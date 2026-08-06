@@ -893,9 +893,9 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <strong className="ml-[14px] shrink-0 font-semibold text-ink text-[12px]">
           Agent Squad HQ
         </strong>
-        {project && (
-          <span className="shrink-0 text-[11px] text-muted">/ {project.name}</span>
-        )}
+        {/* #98: the project name breadcrumb was redundant with the switch
+            bar — removed to eliminate scope ambiguity in global pages and
+            keep header geometry stable across view switches (#75 AC1). */}
         {/* #92: Project switch bar is always present — in global views no
             project is marked active, matching the pre-merge behaviour. */}
         <ProjectSwitchBar
@@ -1220,17 +1220,27 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             )
           })}
         </nav>
-        <span
-          className="min-w-0 max-w-[28%] truncate"
-          title={project?.rootPath ?? '—'}
-        >
-          {project?.rootPath ?? '—'}
-        </span>
-        <span className="shrink-0">{project?.currentBranch ?? '—'}</span>
+        {/* #98: project-scoped facts only appear in project views. Global
+            views show a scope label instead so root/branch can't be mistaken
+            as belonging to the current global page. */}
+        {inGlobalView ? (
+          <span className="shrink-0 font-medium text-soft">全局视图</span>
+        ) : (
+          <>
+            <span
+              className="min-w-0 max-w-[28%] truncate"
+              title={project?.rootPath ?? '—'}
+            >
+              {project?.rootPath ?? '—'}
+            </span>
+            <span className="shrink-0">{project?.currentBranch ?? '—'}</span>
+          </>
+        )}
         <span className="shrink-0">布局自动保存</span>
         <span className="ml-auto shrink-0">
-          Project {project?.activeRunCount ?? 0} /{' '}
-          {snapshot.global.concurrency.projectLimit} · Global{' '}
+          {inGlobalView ? '全部' : '当前'} Project{' '}
+          {project?.activeRunCount ?? 0} /{' '}
+          {snapshot.global.concurrency.projectLimit} · 全部{' '}
           {snapshot.global.concurrency.activeGlobal} /{' '}
           {snapshot.global.concurrency.globalLimit}
         </span>

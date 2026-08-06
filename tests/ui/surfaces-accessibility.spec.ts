@@ -122,6 +122,10 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
       expect(new Set(buttonBoxes.map((box) => box!.width)).size).toBe(1)
       expect(new Set(buttonBoxes.map((box) => box!.height)).size).toBe(1)
       const footer = page.locator('footer')
+      // #98: project-scoped statusbar facts only show in project views —
+      // enter a project first, then check root path / branch / capacity.
+      await page.getByRole('navigation', { name: '快捷切换' })
+        .getByRole('button', { name: '销售数据分析', exact: true }).click()
       await expect(
         footer.getByText('~/Projects/sales-analysis', { exact: true })
       ).toBeVisible()
@@ -129,9 +133,11 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
       await expect(
         footer.getByText('布局自动保存', { exact: true })
       ).toBeVisible()
-      await expect(
-        footer.getByText('Project 2 / 3 · Global 2 / 6', { exact: true })
-      ).toBeVisible()
+      // #98: capacity labels are scope-annotated.
+      await expect(footer).toContainText('当前 Project')
+      await expect(footer).toContainText('2 / 3')
+      await expect(footer).toContainText('全部')
+      await expect(footer).toContainText('2 / 6')
       const quickBox = await statusbarNav().boundingBox()
       const rootBox = await footer
         .getByText('~/Projects/sales-analysis', { exact: true })
