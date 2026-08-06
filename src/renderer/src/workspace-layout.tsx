@@ -22,7 +22,6 @@ import { id } from './workbench/contract'
 import { activityKindLabel } from './activity-display'
 import { clampRatio } from './workbench/layout-reducer'
 import {
-  providerCode,
   providerLabel,
   RUNTIME_STATE_LABEL,
   TERMINAL_STATE_LABEL,
