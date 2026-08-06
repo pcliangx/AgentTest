@@ -54,7 +54,7 @@ export function ProviderIcon({
     return (
       <span
         aria-hidden="true"
-        className={`grid place-items-center rounded-lg bg-brand-soft font-mono text-[9px] font-bold text-brand ${className}`}
+        className={`grid place-items-center rounded-lg bg-brand-soft font-mono text-[10px] font-bold text-brand ${className}`}
         style={{ width: size, height: size }}
       >
         {providerCode(providerId)}

@@ -973,7 +973,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
     <div
       role="group"
       aria-label="Agent 面板"
-      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[11px] border bg-paper ${
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-paper ${
         isLayoutFocused
           ? 'border-brand shadow-panel-focus'
           : 'border-line shadow-panel'
@@ -984,7 +984,7 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-line bg-raised py-1 pl-0 pr-1.5">
         <span
           aria-hidden="true"
-          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[9px] font-bold text-muted"
+          className="grid min-w-[34px] place-items-center border-r border-line font-mono text-[10px] font-bold text-muted"
         >
           P{panelIndex}
         </span>
@@ -1124,9 +1124,9 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
                 data-tab-id={tabId}
                 tabIndex={selected ? 0 : -1}
                 draggable
-                className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm ${
+                className={`flex min-w-[120px] max-w-[190px] cursor-pointer items-center gap-1.5 border-b-2 border-r border-r-line px-2 py-1.5 text-sm transition-colors ${
                   selected
-                    ? 'border-b-brand bg-paper text-ink'
+                    ? 'border-b-brand bg-gradient-to-b from-paper to-brand-soft/40 text-ink'
                     : 'border-b-transparent text-muted hover:bg-wash'
                 }`}
                 onClick={() =>
@@ -1191,14 +1191,17 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
       </div>
 
       {activeAgent ? (
-        <AgentView
-          key={activeAgent.agentInstanceId}
-          project={project}
-          agent={activeAgent}
-          snapshot={snapshot}
-          planDispatch={ctx.planDispatch}
-          sendCommand={ctx.sendCommand}
-        />
+        /* #88: keyed fade-in when switching tabs — reduced-motion is
+           handled globally by the base layer transition kill-switch. */
+        <div key={activeAgent.agentInstanceId} className="min-h-0 min-w-0 flex-1 animate-[fade-in_140ms_ease-out]">
+          <AgentView
+            project={project}
+            agent={activeAgent}
+            snapshot={snapshot}
+            planDispatch={ctx.planDispatch}
+            sendCommand={ctx.sendCommand}
+          />
+        </div>
       ) : (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-sm text-muted">未选择 Agent</p>
@@ -1283,7 +1286,7 @@ function ClosePanelDialog({
       aria-label="关闭 Panel"
       className="absolute inset-0 z-10 flex items-center justify-center bg-backdrop"
     >
-      <div className="w-80 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+      <div className="w-80 space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay">
         <h3 className="text-sm font-medium text-ink">关闭 Panel</h3>
         <p className="text-xs text-muted">
           该 Panel 仍含有 Agent 标签，关闭前请选择迁移目标；标签只改变视图位置，不影响运行状态。
@@ -1360,10 +1363,11 @@ function AgentView({
       aria-label="Agent 视图"
       className="flex min-h-0 flex-1 flex-col"
     >
-      {/* Head card (#67): mono avatar + name title, Provider/worktree
-          sublabel, and the run state double-coded by dot + text. */}
-      <header className="flex min-h-[48px] shrink-0 items-center gap-2 border-b border-line px-3">
-        <ProviderIcon providerId={agent.providerId} size={31} className="shrink-0" />
+      {/* Head card (#67, #88): provider icon + name title, Provider/worktree
+          sublabel, and the run state double-coded by dot + text. The state
+          pill gets a brand accent when the agent is active. */}
+      <header className="flex min-h-[52px] shrink-0 items-center gap-3 border-b border-line bg-gradient-to-r from-wash via-paper to-paper px-3.5">
+        <ProviderIcon providerId={agent.providerId} size={32} className="shrink-0" />
         <div className="min-w-0">
           <h3 className="truncate font-mono text-[13px] font-bold text-ink">
             {agent.name}
@@ -1373,7 +1377,13 @@ function AgentView({
             {WORKTREE_MODE_LABEL[agent.worktreeMode]}
           </p>
         </div>
-        <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full bg-wash px-2 py-1 text-[10px] text-muted">
+        <span
+          className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
+            agent.runtimeState === 'ready'
+              ? 'bg-teal-soft text-teal'
+              : 'bg-wash text-muted'
+          }`}
+        >
           <StatusDot state={statusDotState(agent.runtimeState)} />
           {RUNTIME_STATE_LABEL[agent.runtimeState]}
         </span>
@@ -1483,6 +1493,129 @@ function AgentView({
 }
 
 // ---------------------------------------------------------------------------
+// RichText — lightweight mock markdown rendering (#88)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal markdown subset renderer for the mock conversation content: code
+ * fences (```...```), inline code (`...`), **bold**, `- ` list items and
+ * `# `/`## ` headings. Kept dependency-free; a full markdown pipeline lands
+ * with the real streaming transcripts.
+ */
+function RichText({ text, onDark = false }: { text: string; onDark?: boolean }) {
+  const blocks = text.split(/(```[\s\S]*?```)/g)
+  return (
+    <div className="space-y-1.5 text-[12px] leading-relaxed">
+      {blocks.map((block, i) => {
+        if (block.startsWith('```')) {
+          const code = block.replace(/^```.*\n/, '').replace(/```$/, '').trimEnd()
+          return (
+            <pre
+              key={i}
+              className="overflow-x-auto rounded-lg border border-line bg-wash px-3 py-2 font-mono text-[11px] leading-relaxed text-ink"
+            >
+              {code}
+            </pre>
+          )
+        }
+        const lines = block.split('\n')
+        return (
+          <div key={i} className="space-y-1">
+            {lines.map((line, j) => {
+              const trimmed = line.trim()
+              if (!trimmed) return null
+              if (trimmed.startsWith('- ')) {
+                return (
+                  <div key={j} className="flex gap-2">
+                    <span className="shrink-0 text-brand" aria-hidden="true">
+                      •
+                    </span>
+                    <span className={onDark ? 'text-paper/90' : 'text-ink'}>
+                      {renderInline(trimmed.slice(2), onDark)}
+                    </span>
+                  </div>
+                )
+              }
+              if (/^#{1,3}\s/.test(trimmed)) {
+                return (
+                  <p
+                    key={j}
+                    className={`font-semibold ${onDark ? 'text-paper' : 'text-ink'}`}
+                  >
+                    {renderInline(trimmed.replace(/^#{1,3}\s/, ''), onDark)}
+                  </p>
+                )
+              }
+              return (
+                <p key={j} className={onDark ? 'text-paper/90' : 'text-ink'}>
+                  {renderInline(trimmed, onDark)}
+                </p>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Inline **bold** and `code` within a single line. */
+function renderInline(text: string, onDark: boolean): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={i} className={onDark ? 'font-semibold text-paper' : 'font-semibold text-ink'}>
+          {part.slice(2, -2)}
+        </strong>
+      )
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={i}
+          className={`rounded bg-wash px-1 py-0.5 font-mono text-[11px] ${
+            onDark ? 'bg-paper/20 text-paper' : 'text-brand-ink'
+          }`}
+        >
+          {part.slice(1, -1)}
+        </code>
+      )
+    }
+    return <span key={i}>{part}</span>
+  })
+}
+
+/** Tool call rendered as a status card (#88). */
+function ToolCallCard({ text, pending }: { text: string; pending?: boolean }) {
+  // Categorise the mock tool line by its leading verb for the icon glyph.
+  const icon = /^(Bash|Terminal|npm|npx|pip)/.test(text)
+    ? '⚙'
+    : /^(Read|Write|Edit|Open|Create)/.test(text)
+      ? '✎'
+      : /^(Search|Grep|Find|Query)/.test(text)
+        ? '⌕'
+        : '⚡'
+  return (
+    <div className="mb-3 flex max-w-[72ch] items-center gap-2.5 rounded-xl border border-line bg-wash px-3 py-2">
+      <span aria-hidden="true" className="shrink-0 text-[13px]">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink">
+        {text}
+      </span>
+      <StatusDot
+        state={pending ? 'running' : 'ready'}
+        label={pending ? '工具运行中' : '工具已完成'}
+      />
+      <span className="shrink-0 text-[10px] text-muted">
+        {pending ? '运行中' : '已完成'}
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Chat sub-view — state text driven only by port-judged facts (#20)
 // ---------------------------------------------------------------------------
 
@@ -1499,9 +1632,9 @@ function ChatState({
   planDispatch: PlanDispatch
   sendCommand: SendCommand
 }) {
-  // 9px caps eyebrow above each conversation block (frozen baseline §main).
+  // #88: eyebrow label above each conversation block.
   const speakerLabelClass =
-    'mb-1 text-[9px] font-bold uppercase tracking-[0.08em] text-muted'
+    'mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-muted'
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const submittingRef = useRef(false)
@@ -1619,33 +1752,35 @@ function ChatState({
             state-driven status copy below is unchanged — it answers what
             sending NOW would do. */}
         {agent.currentTaskSummary && (
-          <article className="mb-2.5 max-w-[68ch]">
+          <article className="mb-3 max-w-[72ch] rounded-xl border border-brand-border bg-brand-soft/50 px-4 py-3">
             <div className={speakerLabelClass}>当前任务</div>
-            <p className="text-xs leading-relaxed text-ink">
-              {agent.currentTaskSummary}
-            </p>
+            <RichText text={agent.currentTaskSummary} />
           </article>
         )}
         {chatEntries.map((entry) =>
           entry.kind === 'tool' ? (
-            <div key={entry.entryId} className="mb-2.5">
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-wash px-2 py-1.5 font-mono text-[10px] text-muted">
-                <StatusDot
-                  state={entry.pending ? 'running' : 'ready'}
-                  label={entry.pending ? '工具运行中' : '工具已完成'}
-                />
-                tool · {entry.text}
-              </span>
-            </div>
+            <ToolCallCard
+              key={entry.entryId}
+              text={entry.text}
+              pending={entry.pending}
+            />
           ) : (
             <article
               key={entry.entryId}
-              className="mb-2.5 max-w-[68ch] border-t border-line/60 pt-2.5"
+              className={`mb-3 max-w-[72ch] ${
+                entry.kind === 'user'
+                  ? 'ml-auto rounded-2xl rounded-br-md bg-brand px-4 py-2.5 text-paper shadow-sm'
+                  : 'rounded-2xl rounded-bl-md bg-paper px-4 py-2.5 shadow-card'
+              }`}
             >
-              <div className={speakerLabelClass}>
+              <div
+                className={`mb-1 text-[10px] font-bold uppercase tracking-[0.08em] ${
+                  entry.kind === 'user' ? 'text-paper/75' : 'text-muted'
+                }`}
+              >
                 {entry.kind === 'user' ? '用户' : agent.name}
               </div>
-              <p className="text-xs leading-relaxed text-ink">{entry.text}</p>
+              <RichText text={entry.text} onDark={entry.kind === 'user'} />
             </article>
           )
         )}

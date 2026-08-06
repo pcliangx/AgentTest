@@ -248,7 +248,7 @@ const APP_NAV_ITEMS: Array<{
  * surface items and the Attention entry can never drift apart.
  */
 const navRailItemClass = (isActive: boolean): string =>
-  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-[10px] px-0.5 py-[5px] text-[9px] transition-colors ${
+  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-lg px-0.5 py-[5px] text-[10px] transition-colors ${
     isActive
       ? 'bg-nav-active text-nav'
       : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
@@ -256,7 +256,7 @@ const navRailItemClass = (isActive: boolean): string =>
 
 /** App-tier rows of the #76 two-tier rail: text-first, no glyph column. */
 const appNavItemClass = (isActive: boolean): string =>
-  `grid min-h-[30px] w-full shrink-0 place-items-center rounded-[10px] px-0.5 text-center text-[10px] leading-tight transition-colors ${
+  `grid min-h-[30px] w-full shrink-0 place-items-center rounded-lg px-0.5 text-center text-[10px] leading-tight transition-colors ${
     isActive
       ? 'bg-nav-active font-semibold text-nav'
       : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
@@ -520,9 +520,27 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
   }
 
   if (!snapshot) {
+    // #88: skeleton shell while the first snapshot loads — keeps the layout
+    // stable and reads as "loading" without relying on a spinner alone.
+    // The visible text stays even when reduced-motion kills the pulse.
     return (
-      <div className="flex h-full items-center justify-center bg-wash text-muted">
-        加载中…
+      <div className="flex h-full flex-col bg-wash" aria-busy="true" aria-label="加载中">
+        <div className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal" />
+        <div className="flex shrink-0 items-center gap-3 border-b border-line bg-raised px-4 py-2.5">
+          <strong className="text-[11px] font-semibold text-ink">Agent Squad HQ</strong>
+          <div className="ml-auto h-3 w-24 animate-pulse rounded bg-line" />
+        </div>
+        <div className="flex min-h-0 flex-1 gap-4 p-4">
+          <div className="w-[220px] shrink-0 space-y-3">
+            <div className="h-4 w-24 animate-pulse rounded bg-line" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-line" />
+            <div className="h-10 w-full animate-pulse rounded-lg bg-line" />
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="h-32 w-full animate-pulse rounded-xl bg-line" />
+            <div className="h-24 w-3/4 animate-pulse rounded-xl bg-line" />
+          </div>
+        </div>
       </div>
     )
   }
@@ -884,9 +902,14 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 
   return (
     <div className="flex h-full flex-col bg-paper text-ink">
-      {/* Custom 38px titlebar (#65): drag region, window title, global run
-          status and the ⌘K placeholder (visual only until the command
-          palette ships). `Agent Squad HQ` stays its own text node. */}
+      {/* Custom 38px titlebar (#65, #88): drag region, window title, global
+          run status and the ⌘K placeholder (visual only until the command
+          palette ships). `Agent Squad HQ` stays its own text node. The top
+          edge carries a 2px brand accent line. */}
+      <div
+        aria-hidden="true"
+        className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal"
+      />
       <header className="titlebar flex h-[38px] shrink-0 items-center border-b border-line bg-raised">
         {RESERVE_TRAFFIC_LIGHT_AREA && (
           <div aria-hidden="true" className="h-full w-[72px] shrink-0" />
@@ -987,7 +1010,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         >
           <div
             aria-hidden="true"
-            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[11px] bg-brand text-[11px] font-extrabold tracking-[0.06em] text-paper"
+            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-xl bg-brand text-[11px] font-extrabold tracking-[0.06em] text-paper"
           >
             HQ
           </div>
@@ -1030,7 +1053,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             className={navRailItemClass(showAttention)}
             onClick={() => setShowAttention(true)}
           >
-            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[9px] font-bold text-paper">
+            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[10px] font-bold text-paper">
               {snapshot.global.attentionCount}
             </span>
             <span>关注</span>
@@ -1044,6 +1067,12 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               projects={snapshot.projects}
               sendCommand={sendCommand}
               onOpenProject={openProject}
+              onOpenSettings={(targetId) =>
+                void sendExplicitNavigation(
+                  () => navigate(targetId, 'settings'),
+                  () => setPermissionsNavNonce(0)
+                )
+              }
             />
           )}
           {snapshot.activeGlobalSurface === 'connections' && (
@@ -1233,7 +1262,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
       {/* Shell footer of the frozen baseline (#65): root, branch, layout
           auto-save note and the Project/Global run capacity line. Capacity
           and counts come from the contract ViewModel — never hard-coded. */}
-      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[9px] text-muted">
+      <footer className="flex h-[27px] shrink-0 items-center gap-3 border-t border-line bg-raised px-2.5 text-[10px] text-muted">
         <span className="max-w-[38%] truncate">{project?.rootPath ?? '—'}</span>
         <span>{project?.currentBranch ?? '—'}</span>
         <span>布局自动保存</span>
@@ -1337,7 +1366,7 @@ function OverviewSurface({
           primary action, big-number stat cards, a double-encoded status
           card and the recent-activity card. */}
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-medium text-ink">{project.name}</h2>
+        <h2 className="text-base font-semibold text-ink">{project.name}</h2>
         <button className="btn btn-primary" onClick={onDispatch}>
           派发给 Agent
         </button>
@@ -1445,7 +1474,7 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
 function ActivitySurface({ activity }: { activity: ActivityEntry[] }) {
   return (
     <section role="region" aria-label="活动" className="space-y-3">
-      <h2 className="text-lg font-medium text-ink">活动</h2>
+      <h2 className="text-base font-semibold text-ink">活动</h2>
       {activity.length === 0 ? (
         <p className="text-sm text-muted">暂无活动记录</p>
       ) : (
@@ -1492,7 +1521,7 @@ function ConnectionsSurface({
 }) {
   return (
     <section role="region" aria-label="全局连接" tabIndex={-1} className="space-y-3">
-      <h2 className="text-lg font-medium text-ink">连接</h2>
+      <h2 className="text-base font-semibold text-ink">连接</h2>
       {connections.length === 0 ? (
         <p className="text-sm text-muted">暂无连接</p>
       ) : (
@@ -1500,7 +1529,7 @@ function ConnectionsSurface({
           {connections.map((conn) => (
             <li
               key={conn.connectionId}
-              className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"
+              className="card-hover flex items-center justify-between rounded-xl border border-line bg-paper px-4 py-3 shadow-card"
             >
               <div className="flex items-center gap-3">
                 <span className="text-sm text-ink">{conn.label}</span>
@@ -1534,14 +1563,14 @@ function ProviderHealthSurface({
 }) {
   return (
     <section role="region" aria-label="Provider 健康" className="space-y-3">
-      <h2 className="text-lg font-medium text-ink">Provider 健康</h2>
+      <h2 className="text-base font-semibold text-ink">Provider 健康</h2>
       <ul className="space-y-2">
         {/* #80: Provider Health shows only enabled providers — detected but
             not-yet-connected CLIs are managed in Settings → 模型与提供商. */}
         {providers.filter((p) => p.enabled !== false).map((p) => (
           <li
             key={p.providerId}
-            className="flex items-center justify-between rounded-lg border border-line bg-paper px-3 py-2"
+            className="card-hover flex items-center justify-between rounded-xl border border-line bg-paper px-4 py-3 shadow-card"
           >
             <div>
               <span className="text-sm text-ink">{p.displayName}</span>
@@ -1581,7 +1610,7 @@ function GlobalSettingsSurface({
 }) {
   return (
     <section role="region" aria-label="全局设置" className="space-y-3">
-      <h2 className="text-lg font-medium text-ink">全局设置</h2>
+      <h2 className="text-base font-semibold text-ink">全局设置</h2>
       {/* #69: the placeholder copy is gone — the surface renders the
           adapter-owned capacity facts as the same card language as every
           other surface. Editing arrives with a real global contract. */}
@@ -1699,7 +1728,7 @@ function HandoffsSurface({
             <li
               key={h.handoffId}
               ref={isFocused ? focusRef : undefined}
-              className={`rounded-[11px] border p-4 ${
+              className={`rounded-xl border p-4 shadow-card ${
                 isFocused
                   ? 'border-brand bg-brand-soft ring-2 ring-brand'
                   : 'border-line bg-paper'
@@ -1893,7 +1922,7 @@ function CloseWindowNotice({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="关闭窗口"
-        className="w-full max-w-sm space-y-3 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
+        className="w-full max-w-sm space-y-3 rounded-xl border border-line bg-paper p-5 shadow-overlay"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-base font-medium text-ink">关闭窗口</h3>
@@ -1950,7 +1979,7 @@ function QuitPreviewDialog({
         role="dialog"
         aria-modal="true"
         aria-label="退出 Agent Squad HQ"
-        className="w-full max-w-lg space-y-4 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
+        className="w-full max-w-lg space-y-4 rounded-xl border border-line bg-paper p-5 shadow-overlay"
       >
         <h3 className="text-base font-medium text-ink">
           退出 Agent Squad HQ
@@ -2110,7 +2139,7 @@ function ConfirmationModal({
         role="dialog"
         aria-modal="true"
         aria-label={confirmation!.action}
-        className="w-full max-w-md space-y-3 rounded-[11px] border border-line bg-paper p-5 shadow-overlay"
+        className="w-full max-w-md space-y-3 rounded-xl border border-line bg-paper p-5 shadow-overlay"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-base font-medium text-ink">

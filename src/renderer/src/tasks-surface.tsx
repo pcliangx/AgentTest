@@ -281,7 +281,7 @@ export function TasksSurface({
   }
 
   const cardClass = (highlighted: boolean): string =>
-    `space-y-2 rounded-lg border px-3 py-2 ${
+    `space-y-2 rounded-xl border px-4 py-3 shadow-card ${
       highlighted
         ? 'border-brand bg-brand-soft ring-1 ring-brand'
         : 'border-line bg-paper'
@@ -496,7 +496,7 @@ export function TasksSurface({
 
   return (
     <section role="region" aria-label="任务" className="space-y-4">
-      <h2 className="text-lg font-medium text-ink">任务</h2>
+      <h2 className="text-base font-semibold text-ink">任务</h2>
       {notice && (
         <p role="alert" className="rounded-lg bg-danger-soft px-3 py-1.5 text-xs text-danger">
           {notice}

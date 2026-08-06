@@ -204,7 +204,7 @@ export function ContextPane({
           ref={(element) =>
             registerAgentButton(agent.agentInstanceId, element)
           }
-          className={`grid min-h-[48px] min-w-0 flex-1 grid-cols-[31px_minmax(0,1fr)_auto] items-center gap-2 rounded-[9px] border px-[7px] py-1.5 text-left transition-colors ${
+          className={`grid min-h-[48px] min-w-0 flex-1 grid-cols-[31px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border px-[7px] py-1.5 text-left transition-colors ${
             isSelected
               ? 'border-brand-border bg-paper shadow-lift'
               : 'border-transparent hover:bg-paper'
@@ -296,7 +296,7 @@ export function ContextPane({
           text and the root path summary. Switching moved to the persistent
           top switch bar in #75 — this card is context display only. */}
       <div className="px-2.5 pt-2.5">
-        <div className="flex items-center gap-2 rounded-[10px] border border-line bg-paper px-2 py-1.5">
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-paper px-2 py-1.5">
           <span
             aria-hidden="true"
             className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-[11px] font-bold text-brand"
@@ -575,7 +575,7 @@ function NewAgentDialog({
         }
       }}
     >
-      <div className="w-80 space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay">
+      <div className="w-80 space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay">
         <h3 className="text-sm font-medium text-ink">新建 Agent</h3>
 
         <label className="block text-xs text-muted">

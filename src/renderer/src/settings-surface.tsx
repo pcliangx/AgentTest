@@ -685,7 +685,7 @@ export function SettingsSurface({
           <div>
             <p className="section-label px-1.5 pb-1.5">Agent Instances</p>
             {projectAgents.length === 0 ? (
-              <p className="px-1.5 text-[9px] text-muted">
+              <p className="px-1.5 text-[10px] text-muted">
                 当前 Project 尚无 Agent 实例
               </p>
             ) : (
@@ -718,7 +718,7 @@ export function SettingsSurface({
                       </strong>
                       {/* The state sublabel names the state, so the dot
                           stays decorative (#65 double-coding). */}
-                      <small className="block truncate text-[8px] text-muted">
+                      <small className="block truncate text-[10px] text-muted">
                         {providerLabel(agent.providerId)} ·{' '}
                         {RUNTIME_STATE_LABEL[agent.runtimeState]}
                       </small>
@@ -738,7 +738,7 @@ export function SettingsSurface({
             ) : (
               <span
                 aria-hidden="true"
-                className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] bg-brand-soft font-mono text-sm font-bold text-brand"
+                className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-sm font-bold text-brand"
               >
                 {detailHead.icon}
               </span>
@@ -747,7 +747,7 @@ export function SettingsSurface({
               <h2 className="truncate text-[17px] font-semibold text-ink">
                 {detailHead.title}
               </h2>
-              <p className="mt-0.5 truncate text-[9px] text-muted">
+              <p className="mt-0.5 truncate text-[10px] text-muted">
                 {detailHead.note}
               </p>
             </span>
@@ -755,6 +755,9 @@ export function SettingsSurface({
           </header>
 
           <div className="mx-auto max-w-[880px] px-5 pb-16">
+            {/* #88: editing sections render as one card with divided form
+                blocks — the frozen setting-card look. */}
+            <div className="card px-5">
             {section === 'general' && (
               <FormBlock>
                 {renderFieldRows(projectOwner, PROJECT_SECTION_FIELDS.general)}
@@ -865,7 +868,7 @@ export function SettingsSurface({
                   切换或移除主连接前会要求确认失效绑定与权限差异；v0.2
                   最多一个主连接。
                 </p>
-                <p className="mt-3 text-[9px] text-muted">
+                <p className="mt-3 text-[10px] text-muted">
                   人工浏览器身份与 Connector 执行身份相互隔离；连接凭据不会进入
                   Project 配置或导出内容。
                 </p>
@@ -908,7 +911,7 @@ export function SettingsSurface({
                             {formatValue(fieldPath, entry.applied)}
                             {entry.status === 'blocked' &&
                               entry.blockedReason && (
-                                <span className="mt-0.5 block text-[9px] text-muted">
+                                <span className="mt-0.5 block text-[10px] text-muted">
                                   {entry.blockedReason}
                                 </span>
                               )}
@@ -950,12 +953,15 @@ export function SettingsSurface({
                 </div>
               </FormBlock>
             )}
+            </div>
 
             {section === 'providers' && (
-              <ProvidersSection
-                providers={snapshot.global.providers}
-                sendCommand={sendCommand}
-              />
+              <div className="card px-5">
+                <ProvidersSection
+                  providers={snapshot.global.providers}
+                  sendCommand={sendCommand}
+                />
+              </div>
             )}
 
             {section === 'matrix' && (
@@ -992,14 +998,14 @@ export function SettingsSurface({
             <h3 className="text-sm font-medium text-ink">
               待应用修改 · {totalChanges}
             </h3>
-            <p className="mt-0.5 text-[9px] text-muted">
+            <p className="mt-0.5 text-[10px] text-muted">
               应用后仅影响下一次 Run
             </p>
           </div>
           {draftsWithChanges.length === 0 ? (
             <div className="p-3">
               <p className="text-xs text-muted">暂无待应用变更</p>
-              <p className="mt-1.5 text-[9px] text-muted">
+              <p className="mt-1.5 text-[10px] text-muted">
                 更改字段后会在这里生成摘要；「放弃全部变更」会恢复 applied
                 值。工作区布局不进入此列表。
               </p>
@@ -1035,7 +1041,7 @@ export function SettingsSurface({
                       {draft.changes.map((change) => (
                         <li
                           key={change.fieldPath}
-                          className="text-[9px] text-muted"
+                          className="text-[10px] text-muted"
                         >
                           {fieldDescriptor(change.fieldPath)?.label ??
                             change.fieldPath}
@@ -1072,7 +1078,7 @@ export function SettingsSurface({
           <div
             role="dialog"
             aria-label="应用配置变更"
-            className="w-full max-w-lg space-y-3 rounded-[11px] border border-line bg-paper p-4 shadow-overlay"
+            className="w-full max-w-lg space-y-3 rounded-xl border border-line bg-paper p-4 shadow-overlay"
           >
             <h3 className="text-sm font-medium text-ink">
               应用配置变更
@@ -1153,7 +1159,7 @@ function NavItem({
     >
       <span
         aria-hidden="true"
-        className="grid h-[27px] w-[27px] place-items-center rounded-[7px] bg-wash text-[11px] font-bold text-ink"
+        className="grid h-[27px] w-[27px] place-items-center rounded-md bg-wash text-[11px] font-bold text-ink"
       >
         {icon}
       </span>
@@ -1161,7 +1167,7 @@ function NavItem({
         <strong className="block truncate text-[10px] font-semibold text-ink">
           {label}
         </strong>
-        <small className="block truncate text-[8px] text-muted">
+        <small className="block truncate text-[10px] text-muted">
           {description}
         </small>
       </span>
@@ -1172,7 +1178,7 @@ function NavItem({
 /** Muted scope pill of the frozen detail head. */
 function DetailBadge({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-full bg-wash px-2 py-1 text-[9px] text-muted">
+    <span className="rounded-full bg-wash px-2 py-1 text-[10px] text-muted">
       {children}
     </span>
   )
@@ -1200,7 +1206,7 @@ function FormBlock({
           {badge}
         </div>
       )}
-      {note && <p className="mb-2 text-[9px] text-muted">{note}</p>}
+      {note && <p className="mb-2 text-[10px] leading-relaxed text-muted">{note}</p>}
       {children}
     </div>
   )
@@ -1222,7 +1228,7 @@ function ReadonlyFieldRow({
     <li className="grid grid-cols-[minmax(150px,0.42fr)_minmax(0,0.58fr)] items-start gap-x-5 gap-y-1 py-2">
       <div className="min-w-0">
         <strong className="text-[10px] font-semibold text-ink">{label}</strong>
-        <p className="mt-1 max-w-[48ch] text-[9px] text-muted">
+        <p className="mt-1 max-w-[48ch] text-[10px] text-muted">
           {description}
         </p>
       </div>
@@ -1232,7 +1238,7 @@ function ReadonlyFieldRow({
             {value}
           </strong>
           {note && (
-            <small className="shrink-0 text-[8px] text-muted">{note}</small>
+            <small className="shrink-0 text-[10px] text-muted">{note}</small>
           )}
         </div>
       </div>
@@ -1308,7 +1314,7 @@ function ConfigFieldRow({
             {TIMING_LABEL[descriptor.timing]}
           </span>
         </div>
-        <p className="mt-1 max-w-[48ch] text-[9px] text-muted">
+        <p className="mt-1 max-w-[48ch] text-[10px] text-muted">
           {FIELD_DESCRIPTION[fieldPath] ?? ''}
         </p>
       </div>
@@ -1351,7 +1357,7 @@ function ConfigFieldRow({
             }}
           />
         )}
-        <p className="mt-1 text-[9px] text-muted">
+        <p className="mt-1 text-[10px] text-muted">
           当前：{formatValue(appliedValue)}（v{appliedVersion}）
           {draftChange && (
             <span className="ml-1.5 text-amber">
@@ -1359,7 +1365,7 @@ function ConfigFieldRow({
             </span>
           )}
         </p>
-        {error && <p className="mt-0.5 text-[9px] text-danger">{error}</p>}
+        {error && <p className="mt-0.5 text-[10px] text-danger">{error}</p>}
       </div>
     </li>
   )
@@ -1435,7 +1441,7 @@ function PolicyMatrix({
                   <span className="block text-[10px] font-semibold text-ink">
                     有效配置
                   </span>
-                  <span className="mt-0.5 block text-[8px] font-normal text-muted">
+                  <span className="mt-0.5 block text-[10px] font-normal text-muted">
                     不是愿望策略
                   </span>
                 </th>
@@ -1452,7 +1458,7 @@ function PolicyMatrix({
                       <span className="block text-[10px] font-semibold text-ink">
                         {agent.name}
                       </span>
-                      <span className="mt-0.5 block text-[8px] font-normal text-muted">
+                      <span className="mt-0.5 block text-[10px] font-normal text-muted">
                         {providerLabel(agent.providerId)} ·{' '}
                         {RUNTIME_STATE_LABEL[agent.runtimeState]}
                       </span>
@@ -1486,7 +1492,7 @@ function PolicyMatrix({
                       <span className="block text-[10px] font-semibold text-ink">
                         {descriptor?.label ?? fieldPath}
                       </span>
-                      <span className="mt-0.5 block text-[8px] font-normal text-muted">
+                      <span className="mt-0.5 block text-[10px] font-normal text-muted">
                         {descriptor ? TIMING_LABEL[descriptor.timing] : ''}
                       </span>
                     </th>
@@ -1507,7 +1513,7 @@ function PolicyMatrix({
                               : formatValue(fieldPath, value)}
                           </span>
                           <span
-                            className={`mt-0.5 block text-[8px] ${
+                            className={`mt-0.5 block text-[10px] ${
                               blocked ? 'text-amber' : 'text-muted'
                             }`}
                           >
@@ -1664,7 +1670,7 @@ function ReadinessSummary({
                   <span className="text-[10px] font-semibold text-ink">
                     {agent.name}
                   </span>
-                  <span className="text-[9px] text-muted">
+                  <span className="text-[10px] text-muted">
                     {providerLabel(agent.providerId)}
                   </span>
                   <span
@@ -1680,7 +1686,7 @@ function ReadinessSummary({
                     {readiness.blockers.map((blocker, index) => (
                       <li
                         key={index}
-                        className="flex items-center gap-2 text-[9px] text-muted"
+                        className="flex items-center gap-2 text-[10px] text-muted"
                       >
                         <span>{blocker.message}</span>
                         {blocker.target && (
@@ -1740,7 +1746,7 @@ function ReviewCard({
   return (
     <div className="card p-3">
       <h3 className="text-xs font-semibold text-ink">{title}</h3>
-      <p className="mb-2 mt-0.5 text-[9px] text-muted">{note}</p>
+      <p className="mb-2 mt-0.5 text-[10px] text-muted">{note}</p>
       {children}
     </div>
   )
@@ -1763,7 +1769,7 @@ function ReviewLine({
           {label}
         </strong>
         {sublabel && (
-          <small className="block text-[8px] text-muted">{sublabel}</small>
+          <small className="block text-[10px] text-muted">{sublabel}</small>
         )}
       </span>
       <span className="shrink-0 text-right">{children}</span>

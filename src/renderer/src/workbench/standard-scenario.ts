@@ -858,7 +858,7 @@ export function createStandardScenario(
         projectId,
         agentInstanceId: ccData,
         kind: 'assistant',
-        text: '正在执行。当前 Run 使用创建时记录的权限与配置快照。'
+        text: '正在执行。当前 Run 使用创建时记录的权限与配置快照。\n\n- 读取 `sales_q2.csv`（24,381 行）\n- 按 `order_id` 去重，移除 **312** 条重复订单\n- 校验缺失的 `region` 字段并标记\n\n```python\ndf = df.drop_duplicates(subset=["order_id"])\ndf["region"] = df["region"].fillna("unknown")\n```'
       },
       {
         entryId: id('chat-003', 'ChatEntryId'),
@@ -866,7 +866,7 @@ export function createStandardScenario(
         agentInstanceId: ccData,
         kind: 'tool',
         pending: true,
-        text: '分析 worktree 中的输入文件'
+        text: 'Bash: python scripts/clean_sales.py --input sales_q2.csv'
       },
       {
         entryId: id('chat-004', 'ChatEntryId'),

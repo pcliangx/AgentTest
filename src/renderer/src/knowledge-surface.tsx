@@ -321,7 +321,7 @@ export function KnowledgeSurface({
   return (
     <section role="region" aria-label="Knowledge" className="space-y-4">
       <header>
-        <h2 className="text-lg font-medium text-ink">Knowledge</h2>
+        <h2 className="text-base font-semibold text-ink">Knowledge</h2>
         <p className="text-xs text-muted">
           受控浏览器 chrome 与身份边界预览
         </p>
@@ -337,9 +337,9 @@ export function KnowledgeSurface({
       ) : container ? (
         <article
           aria-label={`当前知识资源：${container.label ?? '未命名资源'}`}
-          className="overflow-hidden rounded-[11px] border border-line bg-paper"
+          className="overflow-hidden rounded-xl border border-line bg-paper shadow-card"
         >
-          <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-4 py-2.5">
             <div>
               <h3 className="text-sm font-medium text-ink">
                 {container.label ?? 'Knowledge 连接状态'}

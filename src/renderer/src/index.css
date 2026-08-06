@@ -61,6 +61,10 @@
   --shadow-panel: 0 4px 16px rgb(23 32 51 / 7%);
   --shadow-panel-focus:
     0 0 0 1px var(--color-brand), 0 8px 24px rgb(61 104 245 / 12%);
+  /* #88 depth system: card resting shadow + interactive hover lift. */
+  --shadow-card: 0 1px 3px rgb(23 32 51 / 5%), 0 4px 14px rgb(23 32 51 / 4%);
+  --shadow-card-hover:
+    0 2px 6px rgb(23 32 51 / 7%), 0 10px 26px rgb(23 32 51 / 8%);
 }
 
 @layer base {
@@ -72,9 +76,10 @@
   }
 
   body {
-    font: 13px/1.45 var(--font-sans);
+    font: 13px/1.5 var(--font-sans);
     color: var(--color-ink);
     background: var(--color-wash);
+    -webkit-font-smoothing: antialiased;
   }
 
   /* Focus must stay visible on every interactive element (UX-v0.2 §15). */
@@ -104,7 +109,9 @@
 @layer components {
   /* --- Buttons -----------------------------------------------------------
      Shared button language of the frozen baseline. Use these classes
-     instead of re-deriving button styles per surface (#66–#69 reuse). */
+     instead of re-deriving button styles per surface (#66–#69 reuse).
+     #88: slightly larger labels, unified motion (color + border + a subtle
+     lift), active-press feedback. */
   .btn {
     display: inline-flex;
     min-height: 34px;
@@ -112,19 +119,26 @@
     justify-content: center;
     gap: 6px;
     border: 1px solid var(--color-line);
-    border-radius: 9px;
+    border-radius: 10px;
     background: var(--color-paper);
-    padding: 0 10px;
+    padding: 0 12px;
     color: var(--color-ink);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 650;
     transition:
       background-color 120ms ease,
-      border-color 120ms ease;
+      border-color 120ms ease,
+      box-shadow 120ms ease,
+      transform 120ms ease;
   }
   .btn:hover:not(:disabled) {
     border-color: var(--color-line-strong);
     background: var(--color-wash);
+    box-shadow: var(--shadow-lift);
+  }
+  .btn:active:not(:disabled) {
+    box-shadow: none;
+    transform: translateY(1px);
   }
   .btn:disabled {
     opacity: 0.45;
@@ -180,20 +194,22 @@
     justify-content: center;
     gap: 5px;
     border: 1px solid var(--color-line);
-    border-radius: 8px;
+    border-radius: 9px;
     background: var(--color-paper);
-    padding: 0 8px;
+    padding: 0 9px;
     color: var(--color-ink);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 650;
     white-space: nowrap;
     transition:
       background-color 120ms ease,
-      border-color 120ms ease;
+      border-color 120ms ease,
+      box-shadow 120ms ease;
   }
   .mini-button:hover:not(:disabled) {
     border-color: var(--color-line-strong);
     background: var(--color-wash);
+    box-shadow: var(--shadow-lift);
   }
   .mini-button:disabled {
     opacity: 0.45;
@@ -220,15 +236,15 @@
   /* --- Chips, cards, labels --------------------------------------------- */
   .chip {
     display: inline-flex;
-    min-height: 23px;
+    min-height: 24px;
     align-items: center;
     gap: 5px;
     border: 1px solid var(--color-line);
     border-radius: 999px;
     background: var(--color-paper);
-    padding: 0 7px;
+    padding: 0 8px;
     color: var(--color-muted);
-    font-size: 9px;
+    font-size: 10px;
   }
   .chip-brand {
     border-color: var(--color-brand-border);
@@ -261,11 +277,12 @@
      scope/limitation notes, danger for Provider Doctor failures. */
   .notice-bar {
     border: 1px solid var(--color-amber-border);
-    border-radius: 9px;
+    border-radius: 10px;
     background: var(--color-amber-soft);
-    padding: 9px 10px;
+    padding: 10px 12px;
     color: var(--color-amber);
-    font-size: 9px;
+    font-size: 11px;
+    line-height: 1.5;
   }
   .notice-bar-danger {
     border-color: var(--color-danger);
@@ -273,16 +290,29 @@
     color: var(--color-danger);
   }
 
+  /* #88: cards carry a resting shadow; interactive cards add the hover
+     lift via .card-hover. */
   .card {
     overflow: hidden;
     border: 1px solid var(--color-line);
-    border-radius: 11px;
+    border-radius: 12px;
     background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+  }
+  .card-hover {
+    transition:
+      box-shadow 120ms ease,
+      transform 120ms ease,
+      border-color 120ms ease;
+  }
+  .card-hover:hover {
+    border-color: var(--color-line-strong);
+    box-shadow: var(--shadow-card-hover);
   }
 
   .section-label {
     color: var(--color-muted);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -294,13 +324,14 @@
     height: 29px;
     place-items: center;
     border: 0;
-    border-radius: 7px;
+    border-radius: 8px;
     background: transparent;
     color: var(--color-muted);
     font-size: 12px;
     transition:
       background-color 120ms ease,
-      color 120ms ease;
+      color 120ms ease,
+      box-shadow 120ms ease;
   }
   .icon-btn:hover:not(:disabled) {
     background: var(--color-paper);
@@ -383,6 +414,18 @@
   @keyframes state-dot-spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  /* #88: tab/view switch fade-in. */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 
