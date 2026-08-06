@@ -45,7 +45,7 @@ async function openDrawer(user: User) {
     await user.click(await screen.findByRole('button', { name: '概览' }))
     overview = await screen.findByRole('region', { name: '项目概览' })
   }
-  const trigger = within(overview).getAllByRole('button', { name: '处理' })[0]
+  const trigger = within(overview).getAllByRole('button', { name: '打开' })[0]
   await user.click(trigger)
   const drawer = await screen.findByRole('complementary', {
     name: 'Global Attention'
@@ -1606,44 +1606,13 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
  * avatar and the #65 status dot, plus the header capacity line that mirrors
  * the statusbar facts.
  */
-describe('Global Attention — radar groups (#68)', () => {
-  it('shows the radar capacity line from the same facts as the statusbar', async () => {
+describe('Global Attention — scope and capacity (#99)', () => {
+  it('shows the scope-annotated capacity line', async () => {
     const { user } = await renderShell()
     const { drawer } = await openDrawer(user)
-    expect(
-      within(drawer).getByText('全局 2 / 6 · Project 2 / 3')
-    ).toBeInTheDocument()
-  })
-
-  it('groups queued agents as radar rows that deep-link to the owning agent', async () => {
-    const { user } = await renderShell()
-    const { drawer } = await openDrawer(user)
-    const group = within(drawer).getByRole('region', { name: '运行中与排队' })
-    const row = within(group).getByRole('button', { name: /cx_forecast/ })
-    // The #65 status dot carries its family label next to the row text.
-    expect(within(row).getByRole('img', { name: '排队中' })).toBeVisible()
-    await user.click(row)
-    // Same deep link as an attention 打开: drawer closes, Agent opens.
-    expect(
-      screen.queryByRole('complementary', { name: 'Global Attention' })
-    ).toBeNull()
-    expect(
-      await screen.findByRole('region', { name: 'Agent 目录' })
-    ).toBeVisible()
-    expect(screen.getByRole('tab', { name: /cx_forecast/ })).toBeVisible()
-  })
-
-  it('replays the latest run-completed entries under 最近完成', async () => {
-    const { user } = await renderShell()
-    const { drawer } = await openDrawer(user)
-    const group = within(drawer).getByRole('region', { name: '最近完成' })
-    const rows = within(group).getAllByRole('button')
-    expect(rows).toHaveLength(2)
-    // Newest first: cc_report (now-120s) before cc_sql (now-300s).
-    expect(rows[0]).toHaveTextContent('cc_report 完成了用户访谈摘要')
-    expect(rows[1]).toHaveTextContent(
-      'cc_sql 完成了 SQL schema 更新，已通知 @@cc_etl 同步'
-    )
+    // #99: capacity line annotates scope (全部项目 / 当前 Project).
+    expect(drawer).toHaveTextContent('全部项目')
+    expect(drawer).toHaveTextContent('全局运行')
   })
 
   it('lists permission cards before other attention items inside 需要处理', async () => {

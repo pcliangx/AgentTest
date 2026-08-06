@@ -318,18 +318,17 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     await recordedStep(evidence, 'Attention drawer with permission requests and items', async () => {
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       const overview = page.getByRole('region', { name: '项目概览' })
-      const attentionBtn = overview.getByRole('button', { name: '处理' }).first()
+      const attentionBtn = overview.getByRole('button', { name: '打开' }).first()
       await attentionBtn.click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()
-      // #68 radar grouping: permission cards and attention items live under
-      // 需要处理, followed by the Running & Queued and 最近完成 agent rows;
-      // the header capacity line mirrors the statusbar facts.
-      await expect(drawer.getByText('全局 2 / 6 · Project 2 / 3')).toBeVisible()
+      // #99: Attention is a blocking-only inbox — 需要处理 with permission
+      // cards and attention items. Running/queued and recently-completed
+      // sections were removed (#99 scope-annotated capacity line).
+      await expect(drawer).toContainText('全部项目')
+      await expect(drawer).toContainText('全局运行')
       await expect(page.getByRole('region', { name: '需要处理' }).first()).toBeVisible()
       await expect(page.getByRole('region', { name: /权限请求：/ }).first()).toBeVisible()
-      await expect(page.getByRole('region', { name: '运行中与排队' })).toBeVisible()
-      await expect(page.getByRole('region', { name: '最近完成' })).toBeVisible()
 
       await page.keyboard.press('Escape')
       await expect(drawer).toBeHidden()
