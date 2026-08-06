@@ -332,7 +332,7 @@ describe('Workspace layout — Focus', () => {
     expect(
       screen.queryByRole('button', { name: '退出 Focus' })
     ).not.toBeInTheDocument()
-    expect(screen.getByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(screen.getByText(/尚未打开 Agent/)).toBeVisible()
     expect(
       within(directory).getByRole('button', { name: /^cc_data/ })
     ).toHaveFocus()
@@ -355,7 +355,7 @@ describe('Workspace layout — Focus', () => {
     )
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
 
-    expect(screen.getByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(screen.getByText(/尚未打开 Agent/)).toBeVisible()
     expect(search).toHaveFocus()
     expect(document.activeElement).not.toBe(document.body)
   })

@@ -576,7 +576,7 @@ describe('Workspace layout — pruning and panel close', () => {
     expect(
       screen.queryAllByRole('group', { name: 'Agent 面板' })
     ).toHaveLength(0)
-    expect(await screen.findByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(await screen.findByText(/尚未打开 Agent/)).toBeVisible()
   })
 
   it('closes an empty panel directly', async () => {

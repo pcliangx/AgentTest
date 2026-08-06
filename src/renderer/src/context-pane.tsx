@@ -30,19 +30,14 @@ const isAttentionAgent = (agent: AgentInstanceViewModel): boolean =>
   statusDotState(agent.runtimeState) === 'attention'
 
 /**
- * The fixed 244px context directory pane of the frozen A command-center
- * shell (#66, UX-v0.2 §4.2): it sits between the icon nav rail and the
- * workspace and is visible on every Project surface. Since #75 project
- * switching lives in the persistent top switch bar — this pane is a pure
- * context display: the Project identity card (name + root path) plus the
- * Agent Directory (the only directory the frozen baseline defines);
- * per-surface directories (任务清单、知识空间…) land with their own
- * surface issues.
+ * The Agent Directory — the single directory of the frozen A command-center
+ * shell (#66, UX-v0.2 §4.2). Since #92 the directory is embedded inside the
+ * unified ~220px Sidebar (no longer a standalone 244px pane); project
+ * identity lives in the sidebar brand mark and the header switch bar.
  *
- * The pane is the SINGLE Agent Directory — the Agents surface no longer
- * keeps an internal column, so filter logic exists exactly once. All facts
- * come from the WorkbenchPort snapshot; every mutation is a typed command
- * sent through the port.
+ * The directory renders search, filters, grouped agent rows and a run-summary
+ * footer. All facts come from the WorkbenchPort snapshot; every mutation is
+ * a typed command sent through the port.
  */
 
 export function ContextPane({
@@ -290,31 +285,10 @@ export function ContextPane({
     <aside
       role="region"
       aria-label="Agent 目录"
-      className="flex w-[244px] shrink-0 flex-col border-r border-line bg-raised"
+      className="flex min-h-0 flex-1 flex-col"
     >
-      {/* Project identity card: 36px brand mark, the project name as static
-          text and the root path summary. Switching moved to the persistent
-          top switch bar in #75 — this card is context display only. */}
-      <div className="px-2.5 pt-2.5">
-        <div className="flex items-center gap-2 rounded-lg border border-line bg-paper px-2 py-1.5">
-          <span
-            aria-hidden="true"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-soft font-mono text-[11px] font-bold text-brand"
-          >
-            {project.name.slice(0, 1)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <span className="block truncate px-1 text-[12px] font-semibold text-ink">
-              {project.name}
-            </span>
-            <span className="block truncate px-1 text-[10px] text-muted">
-              {project.rootPath ?? '—'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Directory head of the frozen baseline (#66): AGENT DIRECTORY + the
+      {/* #92: the project identity card moved to the unified sidebar brand
+          mark + header. The directory head stays: AGENT DIRECTORY + the
           new-agent action. Dispatch stays in the shell header. */}
       <div className="flex items-center justify-between px-3 pb-1 pt-2">
         <h2 className="section-label">Agent Directory</h2>
@@ -381,7 +355,37 @@ export function ContextPane({
         aria-label="Agent 列表"
         className="min-h-0 flex-1 space-y-0.5 overflow-auto px-2 pb-2"
       >
-        {visibleAgents.length === 0 ? (
+        {agents.length === 0 ? (
+          // #92 spec 5: empty Agent list — guided entry with clickable
+          // Provider cards. Only shows when the project has zero instances.
+          <li className="flex flex-col items-center gap-3 px-2 py-6 text-center">
+            <div
+              aria-hidden="true"
+              className="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-[20px]"
+            >
+              ⌘
+            </div>
+            <span className="text-xs text-muted">
+              还没有 Agent——选择 Provider 创建第一个
+            </span>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {snapshot.global.providers
+                .filter((p) => p.enabled !== false && p.status === 'ready')
+                .map((p) => (
+                  <button
+                    key={p.providerId}
+                    className="flex items-center gap-1.5 rounded-lg border border-line bg-paper px-2 py-1 text-[10px] text-ink transition-colors hover:bg-wash"
+                    onClick={() => {
+                      setShowNewAgent(true)
+                    }}
+                  >
+                    <ProviderIcon providerId={p.providerId} size={20} />
+                    {p.displayName}
+                  </button>
+                ))}
+            </div>
+          </li>
+        ) : visibleAgents.length === 0 ? (
           <li className="px-1 py-2 text-xs text-muted">没有匹配的 Agent</li>
         ) : isFiltering ? (
           visibleAgents.map(renderRow)

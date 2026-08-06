@@ -5,6 +5,7 @@ import type {
   AgentInstanceViewModel,
   AgentProviderId,
   AttentionItemId,
+  AttentionItemViewModel,
   AttentionTarget,
   CommandResult,
   ConfirmationId,
@@ -31,12 +32,15 @@ import type {
 import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
 import { ACTIVITY_KIND_CHIP, activityKindLabel } from './activity-display'
 import { CONNECTION_CHIP, CONNECTION_STATUS_LABEL } from './connection-display'
+import { providerLabel, RUNTIME_STATE_LABEL, isActiveRunState } from './agent-display'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { StatusChip } from './status-chip'
+import { ProviderIcon } from './provider-icon'
 import { ContextPane } from './context-pane'
+import { Sidebar } from './sidebar'
 import { HomeSurface } from './home-surface'
 import { ProjectSwitchBar } from './project-switch-bar'
 import { DispatchPicker } from './dispatch-picker'
@@ -197,70 +201,6 @@ function useWorkbench(port: WorkbenchPort) {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const SURFACES: Array<{ surface: ProjectSurface; label: string }> = [
-  { surface: 'overview', label: '概览' },
-  { surface: 'agents', label: 'Agent' },
-  { surface: 'tasks', label: '任务' },
-  { surface: 'knowledge', label: '知识' },
-  { surface: 'handoffs', label: '交接' },
-  { surface: 'activity', label: '活动' },
-  { surface: 'settings', label: '设置' }
-]
-
-/**
- * Icon-nav order of the frozen A command-center shell (#65): six workspace
- * surfaces in the rail body; Attention and Settings sit at the rail bottom.
- * Glyphs are decorative only — accessible names stay the Chinese labels,
- * which come from SURFACES so the two lists can never drift apart.
- */
-const NAV_ITEMS: Array<{
-  surface: ProjectSurface
-  glyph: string
-}> = [
-  { surface: 'overview', glyph: '⌂' },
-  { surface: 'agents', glyph: '⌘' },
-  { surface: 'tasks', glyph: '✓' },
-  { surface: 'knowledge', glyph: '◇' },
-  { surface: 'handoffs', glyph: '⇄' },
-  { surface: 'activity', glyph: '≋' },
-  { surface: 'settings', glyph: '⚙' }
-]
-
-/**
- * App-level tier of the two-tier left navigation (#76): the three global
- * entries moved out of the header (#75's switch bar owns the header now),
- * and 首页 is the persistent landing page. Text-first rows — the glyphs
- * stay with the Project tier so the two tiers read differently.
- */
-const APP_NAV_ITEMS: Array<{
-  surface: GlobalSurface
-  label: string
-}> = [
-  { surface: 'home', label: '首页' },
-  { surface: 'connections', label: '连接' },
-  { surface: 'provider-health', label: 'Provider 健康' },
-  { surface: 'global-settings', label: '全局设置' }
-]
-
-/**
- * Shared rail-item styling of the frozen A shell (#65) — one definition so
- * surface items and the Attention entry can never drift apart.
- */
-const navRailItemClass = (isActive: boolean): string =>
-  `grid min-h-[50px] w-full shrink-0 place-items-center gap-0.5 rounded-lg px-0.5 py-[5px] text-[10px] transition-colors ${
-    isActive
-      ? 'bg-nav-active text-nav'
-      : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
-  }`
-
-/** App-tier rows of the #76 two-tier rail: text-first, no glyph column. */
-const appNavItemClass = (isActive: boolean): string =>
-  `grid min-h-[30px] w-full shrink-0 place-items-center rounded-lg px-0.5 text-center text-[10px] leading-tight transition-colors ${
-    isActive
-      ? 'bg-nav-active font-semibold text-nav'
-      : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
-  }`
 
 /**
  * The frameless titlebar leaves room for the macOS traffic lights only on
@@ -864,42 +804,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     return result
   }
 
-  /**
-   * Icon-rail item of the frozen A shell (#65). Glyphs are decorative; the
-   * accessible name stays the Chinese label so existing queries keep
-   * matching. Disabled only when no Project exists at all.
-   */
-  const renderNavItem = (surface: ProjectSurface, glyph: string) => {
-    const isActive = !inGlobalView && project?.currentSurface === surface
-    const label =
-      SURFACES.find((s) => s.surface === surface)?.label ?? surface
-    return (
-      <button
-        key={surface}
-        aria-current={isActive ? 'page' : undefined}
-        disabled={!project}
-        className={navRailItemClass(isActive)}
-        onClick={() => {
-          if (!project) return
-          // The permissions deep link is one-shot: manual surface navigation
-          // consumes it so later Settings visits open on the default section.
-          void sendExplicitNavigation(
-            () => navigate(project.projectId, surface),
-            () => setPermissionsNavNonce(0)
-          )
-        }}
-      >
-        <span
-          aria-hidden="true"
-          className="grid h-[22px] w-[22px] place-items-center text-[15px] font-bold"
-        >
-          {glyph}
-        </span>
-        <span>{label}</span>
-      </button>
-    )
-  }
-
   return (
     <div className="flex h-full flex-col bg-paper text-ink">
       {/* #92: Unified 44px bar — merges the former 38px titlebar + 44px
@@ -993,65 +897,43 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           }
         }}
       >
-        {/* Two-tier 82px left navigation (#76, evolving the #65 rail):
-            brand mark, the App-level tier (首页 + the three global entries
-            that left the header), then the Project tier's seven surfaces;
-            Attention stays pinned at the bottom. */}
-        <nav
-          aria-label="主导航"
-          className="flex w-[82px] shrink-0 flex-col items-center gap-[5px] overflow-y-auto overflow-x-hidden bg-nav px-2 pb-2.5 pt-3"
+        {/* #92 spec 2: unified ~220px sidebar — merges the former 82px
+            icon rail and 244px context pane into one column. The Sidebar
+            owns brand + nav + attention; the ContextPane (Agent Directory)
+            is passed as children in project view. */}
+        <Sidebar
+          inGlobalView={inGlobalView}
+          activeGlobalSurface={snapshot.activeGlobalSurface}
+          project={project}
+          onNavigateGlobal={(surface) =>
+            void sendExplicitNavigation(() => navigateGlobal(surface))
+          }
+          onNavigateSurface={(surface) => {
+            if (!project) return
+            void sendExplicitNavigation(
+              () => navigate(project.projectId, surface),
+              () => setPermissionsNavNonce(0)
+            )
+          }}
+          showAttention={showAttention}
+          attentionCount={snapshot.global.attentionCount}
+          onOpenAttention={() => setShowAttention(true)}
         >
-          <div
-            aria-hidden="true"
-            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-xl bg-brand text-[11px] font-extrabold tracking-[0.06em] text-paper"
-          >
-            HQ
-          </div>
-          <div
-            role="group"
-            aria-label="App 级"
-            className="flex w-full flex-col items-center gap-[3px]"
-          >
-            {APP_NAV_ITEMS.map(({ surface, label }) => {
-              const isActive =
-                inGlobalView && snapshot.activeGlobalSurface === surface
-              return (
-                <button
-                  key={surface}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={appNavItemClass(isActive)}
-                  onClick={() => {
-                    void sendExplicitNavigation(() => navigateGlobal(surface))
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-          <div
-            aria-hidden="true"
-            className="my-1 h-px w-[30px] shrink-0 bg-nav-line"
-          />
-          <div
-            role="group"
-            aria-label="项目工作面"
-            className="flex w-full flex-col items-center gap-[5px]"
-          >
-            {NAV_ITEMS.map((item) => renderNavItem(item.surface, item.glyph))}
-          </div>
-          <div aria-hidden="true" className="flex-1" />
-          <button
-            aria-label="Global Attention"
-            className={navRailItemClass(showAttention)}
-            onClick={() => setShowAttention(true)}
-          >
-            <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-attention-red px-1 text-[10px] font-bold text-paper">
-              {snapshot.global.attentionCount}
-            </span>
-            <span>关注</span>
-          </button>
-        </nav>
+          {project && !inGlobalView && (
+            <ContextPane
+              key={project.projectId}
+              project={project}
+              snapshot={snapshot}
+              agents={projectAgents}
+              openAttentionTargets={openAttentionTargets}
+              sendCommand={sendCommandWithLayoutIntent}
+              sendLayout={sendLayout}
+              registerAgentButton={registerDirectoryAgentButton}
+              searchInputRef={directorySearchInput}
+              newAgentButtonRef={directoryNewAgentButton}
+            />
+          )}
+        </Sidebar>
 
         {inGlobalView ? (
           <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
@@ -1089,23 +971,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
           )}
           </main>
         ) : project ? (
-          <>
-            {/* Fixed 244px context directory pane of the frozen A shell
-                (#66) — visible on every Project surface; since #75 it is a
-                pure context display (project identity + Agent Directory),
-                project switching lives in the top switch bar. */}
-            <ContextPane
-              key={project.projectId}
-              project={project}
-              snapshot={snapshot}
-              agents={projectAgents}
-              openAttentionTargets={openAttentionTargets}
-              sendCommand={sendCommandWithLayoutIntent}
-              sendLayout={sendLayout}
-              registerAgentButton={registerDirectoryAgentButton}
-              searchInputRef={directorySearchInput}
-              newAgentButtonRef={directoryNewAgentButton}
-            />
             <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-wash p-4">
             {deepLinkNotice && (
               <div
@@ -1129,10 +994,18 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             {project.currentSurface === 'overview' && (
               <OverviewSurface
                 project={project}
+                agents={projectAgents}
                 agentCount={projectAgents.length}
                 connection={connection}
+                providers={snapshot.global.providers}
+                attentionItems={snapshot.attentionItems.filter(
+                  (item) =>
+                    item.state === 'open' &&
+                    item.target.projectId === project.projectId
+                )}
                 activity={projectActivity.slice(0, 5)}
                 onDispatch={() => setShowPicker(true)}
+                onOpenAttention={() => setShowAttention(true)}
               />
             )}
             {project.currentSurface === 'activity' && (
@@ -1229,7 +1102,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             {/* #69: every ProjectSurface variant has a real surface above —
                 the old 尚未实现 placeholder branch is gone for good. */}
           </main>
-          </>
         ) : (
           <main className="flex min-h-0 flex-1 items-center justify-center bg-wash text-muted">
             没有可用的 Project
@@ -1340,24 +1212,35 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
 // Project surfaces
 // ---------------------------------------------------------------------------
 
+/** #92 spec 4: Dashboard Overview — answers "what needs my attention?" */
 function OverviewSurface({
   project,
+  agents,
   agentCount,
   connection,
+  providers,
+  attentionItems,
   activity,
-  onDispatch
+  onDispatch,
+  onOpenAttention
 }: {
   project: ProjectViewModel
+  agents: AgentInstanceViewModel[]
   agentCount: number
   connection?: WorkbenchViewModel['global']['connections'][number]
+  providers: WorkbenchViewModel['global']['providers']
+  attentionItems: AttentionItemViewModel[]
   activity: ActivityEntry[]
   onDispatch: () => void
+  onOpenAttention: () => void
 }) {
+  // Agents with active work — running, starting, finishing, queued.
+  const activeRunAgents = agents.filter((a) => isActiveRunState(a.runtimeState))
+  const queuedAgents = agents.filter((a) => a.runtimeState === 'queued')
+
   return (
     <section role="region" aria-label="项目概览" className="space-y-4">
-      {/* #69: the frozen baseline's card language — header with the single
-          primary action, big-number stat cards, a double-encoded status
-          card and the recent-activity card. */}
+      {/* Header with project name + primary action */}
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-ink">{project.name}</h2>
         <button className="btn btn-primary" onClick={onDispatch}>
@@ -1365,13 +1248,117 @@ function OverviewSurface({
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StatCard value={agentCount} label="Agent" />
-        <StatCard value={project.activeRunCount} label="活动运行" />
-        <StatCard value={project.queuedRunCount} label="排队" />
-        <StatCard value={project.attentionCount} label="关注" />
+      {/* Compact stat strip — at-a-glance numbers */}
+      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-raised px-3 py-2 text-[11px]">
+        <span className="flex items-baseline gap-1">
+          <strong className="text-base font-bold text-ink">{agentCount}</strong>
+          <span className="text-muted">Agent</span>
+        </span>
+        <span className="flex items-baseline gap-1">
+          <strong className="text-base font-bold text-ink">
+            {project.activeRunCount}
+          </strong>
+          <span className="text-muted">活动运行</span>
+        </span>
+        <span className="flex items-baseline gap-1">
+          <strong className="text-base font-bold text-ink">
+            {project.queuedRunCount}
+          </strong>
+          <span className="text-muted">排队</span>
+        </span>
+        <span className="flex items-baseline gap-1">
+          <strong className="text-base font-bold text-ink">
+            {project.attentionCount}
+          </strong>
+          <span className="text-muted">关注</span>
+        </span>
       </div>
 
+      {/* Provider status pills — horizontal row */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="section-label shrink-0">Provider</span>
+        {providers
+          .filter((p) => p.enabled !== false)
+          .map((p) => (
+            <span
+              key={p.providerId}
+              className={`chip ${
+                p.status === 'ready' ? '' : 'chip-warn'
+              }`}
+            >
+              {p.displayName}
+              <span aria-hidden="true" className="ml-1">
+                {p.status === 'ready' ? '✓' : '⚠'}
+              </span>
+            </span>
+          ))}
+      </div>
+
+      {/* Two-column dashboard: Active Runs + Attention Queue */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {/* Active Runs card */}
+        <div className="card">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
+            <h3 className="section-label">Agent 运行</h3>
+            <span className="text-[10px] text-muted">
+              {activeRunAgents.length} 运行中 · {queuedAgents.length} 排队
+            </span>
+          </div>
+          {activeRunAgents.length === 0 && queuedAgents.length === 0 ? (
+            <p className="px-3 py-3 text-xs text-muted">
+              暂无活动 Run — 所有 Agent 均处于空闲状态
+            </p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {activeRunAgents.map((agent) => (
+                <DashboardAgentRow key={agent.agentInstanceId} agent={agent} />
+              ))}
+              {queuedAgents.map((agent) => (
+                <DashboardAgentRow key={agent.agentInstanceId} agent={agent} />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Attention Queue card */}
+        <div className="card">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
+            <h3 className="section-label">待处理</h3>
+            <span className="text-[10px] text-muted">
+              {attentionItems.length} 项
+            </span>
+          </div>
+          {attentionItems.length === 0 ? (
+            <p className="px-3 py-3 text-xs text-muted">
+              没有待处理事项 🎉
+            </p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {attentionItems.slice(0, 6).map((item) => (
+                <li
+                  key={item.attentionItemId}
+                  className="flex items-center gap-2 px-3 py-2 text-xs"
+                >
+                  <span aria-hidden="true" className="shrink-0 text-amber">
+                    ⚠
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-ink">
+                    {item.title}
+                  </span>
+                  <button
+                    className="mini-button shrink-0"
+                    onClick={onOpenAttention}
+                  >
+                    处理
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Project status — compact strip */}
       <div className="card max-w-[560px]">
         <div className="border-b border-line bg-raised px-3 py-2">
           <h3 className="section-label">状态</h3>
@@ -1414,6 +1401,7 @@ function OverviewSurface({
         </ul>
       </div>
 
+      {/* Recent activity */}
       <div className="card">
         <div className="border-b border-line bg-raised px-3 py-2">
           <h3 className="section-label">最近活动</h3>
@@ -1429,6 +1417,29 @@ function OverviewSurface({
         )}
       </div>
     </section>
+  )
+}
+
+/** Dashboard active-run row: provider icon + name + state + task summary. */
+function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
+  const isActive = isActiveRunState(agent.runtimeState)
+  return (
+    <li className="flex items-center gap-2.5 px-3 py-2">
+      <ProviderIcon providerId={agent.providerId} size={28} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate font-mono text-[11px] font-semibold text-ink">
+            {agent.name}
+          </span>
+          <StatusChip tone={isActive ? 'brand' : 'neutral'}>
+            {RUNTIME_STATE_LABEL[agent.runtimeState]}
+          </StatusChip>
+        </div>
+        <span className="mt-0.5 block truncate text-[10px] text-muted">
+          {agent.currentTaskSummary ?? providerLabel(agent.providerId) + ' · ' + RUNTIME_STATE_LABEL[agent.runtimeState]}
+        </span>
+      </div>
+    </li>
   )
 }
 

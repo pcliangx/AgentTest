@@ -403,7 +403,7 @@ describe('Agents surface — unique Agent Tab', () => {
   it('closing the last tab shows the empty workspace state', async () => {
     const { user } = await gotoAgentsSurface()
     await user.click(screen.getByRole('button', { name: '关闭标签 cc_data' }))
-    expect(await screen.findByText(/尚未打开任何 Agent/)).toBeVisible()
+    expect(await screen.findByText(/尚未打开 Agent/)).toBeVisible()
   })
 })
 
