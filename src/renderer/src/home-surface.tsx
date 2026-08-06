@@ -34,9 +34,9 @@ export function HomeSurface({
 }) {
   return (
     <section role="region" aria-label="首页" className="mx-auto max-w-[860px] space-y-5">
-      {/* #88 Hero — gradient brand panel that makes the product promise
-          visible at a glance. #90: entrance stagger animates each block. */}
-      <div className="stagger-up relative overflow-hidden rounded-2xl border border-brand-border bg-gradient-to-br from-brand via-brand to-brand-ink px-6 py-8 text-paper shadow-panel-focus" style={{ animationDelay: '0ms' }}>
+      {/* #88 Hero — gradient brand panel. #90: children stagger via
+          .stagger-up nth-child (no inline styles needed). */}
+      <div className="relative overflow-hidden rounded-2xl border border-brand-border bg-gradient-to-br from-brand via-brand to-brand-ink px-6 py-8 text-paper shadow-panel-focus">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-paper/10 blur-2xl"
@@ -45,8 +45,8 @@ export function HomeSurface({
           aria-hidden="true"
           className="pointer-events-none absolute -bottom-20 -left-10 h-48 w-48 rounded-full bg-paper/10 blur-3xl"
         />
-        <div className="relative">
-          <div className="stagger-up flex items-center gap-2.5" style={{ animationDelay: '40ms' }}>
+        <div className="stagger-up relative">
+          <div className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
               className="grid h-9 w-9 place-items-center rounded-xl bg-paper/15 text-xs font-extrabold tracking-[0.08em] backdrop-blur"
@@ -57,14 +57,14 @@ export function HomeSurface({
               本地多 Agent 工作台
             </span>
           </div>
-          <h2 className="stagger-up mt-4 text-[26px] font-semibold leading-tight tracking-tight" style={{ animationDelay: '80ms' }}>
+          <h2 className="mt-4 text-[26px] font-semibold leading-tight tracking-tight">
             Agent Squad HQ
           </h2>
-          <p className="stagger-up mt-1.5 max-w-[46ch] text-[13px] leading-relaxed text-paper/85" style={{ animationDelay: '120ms' }}>
+          <p className="mt-1.5 max-w-[46ch] text-[13px] leading-relaxed text-paper/85">
             在一个工作区内编排 Claude Code、Codex 与 Kimi Code，共享项目上下文、
             互相对接交接。快速建项目，或从最近项目继续。
           </p>
-          <div className="stagger-up mt-4 flex gap-5 text-[11px] text-paper/90" style={{ animationDelay: '160ms' }}>
+          <div className="mt-4 flex gap-5 text-[11px] text-paper/90">
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-paper" aria-hidden="true" />
               {projects.length} 个项目
@@ -81,12 +81,12 @@ export function HomeSurface({
         </div>
       </div>
 
-      <div className="stagger-up" style={{ animationDelay: '200ms' }}>
+      <div className="stagger-up">
         <QuickCreateCard sendCommand={sendCommand} />
       </div>
 
       {projects.length > 0 && (
-        <div className="stagger-up" style={{ animationDelay: '240ms' }}>
+        <div className="stagger-up">
           <RecentProjectsCard
             projects={projects}
             onOpenProject={onOpenProject}

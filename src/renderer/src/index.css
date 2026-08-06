@@ -70,27 +70,30 @@
 
   /* #90: App Wash — pre-blurred pastel brand blobs painted at body level.
      Zero backdrop-filter cost; panels use transparent veils to let the wash
-     glow through. Degrades to flat --color-wash under reduced-transparency. */
-  --wash-brand: rgba(61, 104, 245, 0.10);
-  --wash-teal: rgba(15, 138, 131, 0.08);
-  --wash-amber: rgba(173, 106, 0, 0.06);
+     glow through. */
+  --wash-brand: rgba(61, 104, 245, 0.14);
+  --wash-teal: rgba(15, 138, 131, 0.12);
+  --wash-amber: rgba(173, 106, 0, 0.10);
   --app-wash:
     radial-gradient(48% 42% at 8% -4%, var(--wash-brand) 0%, transparent 68%),
     radial-gradient(40% 36% at 92% 4%, var(--wash-teal) 0%, transparent 66%),
     radial-gradient(44% 40% at 88% 96%, var(--wash-amber) 0%, transparent 64%),
-    radial-gradient(52% 46% at 10% 104%, var(--wash-brand) 0%, transparent 70%),
     linear-gradient(var(--color-wash), var(--color-wash));
 
   /* #90: Glass material for floating/sticky layers (titlebar, switch bar,
-       sticky headers). Frosted surface + backdrop blur; degrades to solid
-       under reduced-transparency or missing backdrop-filter support. */
+       sticky headers). Frosted surface + backdrop blur. */
   --glass-regular: rgba(248, 249, 252, 0.72);
   --glass-blur: 20px;
   --glass-backdrop: blur(var(--glass-blur)) saturate(1.5);
 
+  /* #90: Text hierarchy — five levels from strong to faint. */
+  --color-ink-secondary: #3d4a63;
+  --color-soft: #8a96ab;
+  --color-faint: #b4bccd;
+
   /* #90: Motion duration scale — three tiers replacing the flat 120ms. */
   --dur-quick: 100ms;
-  --dur-normal: 180ms;
+  --dur-normal: 200ms;
   --dur-gentle: 300ms;
   --ease-product: cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -107,7 +110,6 @@
     font: 13px/1.5 var(--font-sans);
     color: var(--color-ink);
     background: var(--app-wash);
-    background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -118,11 +120,10 @@
     backdrop-filter: var(--glass-backdrop);
   }
 
-  /* #90: Degrade wash + glass under reduced-transparency. */
-  @media (prefers-reduced-transparency: reduce) {
-    body {
-      background: var(--color-wash);
-    }
+  /* #90: Degrade glass to solid where backdrop-filter is unsupported
+     (Chromium/Electron always supports it, but the fallback keeps the
+     contract honest for any web-embed context). */
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     .glass-surface {
       background: var(--color-raised);
       -webkit-backdrop-filter: none;
@@ -477,9 +478,8 @@
     }
   }
 
-  /* #90: Hero / section entrance stagger. Each element fades and slides up
-     with the product ease curve; the delay is set per-element via inline
-     style or utility class. Reduced-motion is covered by the global kill. */
+  /* #90: Single-element entrance (chat messages, cards entering on view
+     switch). Reduced-motion is covered by the global kill-switch. */
   @keyframes entrance-up {
     from {
       opacity: 0;
@@ -491,9 +491,21 @@
     }
   }
 
-  .stagger-up {
+  .enter-up {
     animation: entrance-up 350ms var(--ease-product) both;
   }
+
+  /* #90: Staggered list entrance — use on a parent that wraps N children;
+     each child gets an incremental delay via nth-child. */
+  .stagger-up > * {
+    animation: entrance-up 350ms var(--ease-product) both;
+  }
+  .stagger-up > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-up > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger-up > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger-up > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger-up > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger-up > *:nth-child(6) { animation-delay: 200ms; }
 
   /* --- Tab drag-and-drop (#77) -----------------------------------------
      Shared classes for the pointer drag insertion indicator and target
