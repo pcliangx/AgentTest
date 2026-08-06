@@ -130,12 +130,12 @@ describe('Context pane — Agent Directory content (#66)', () => {
     expect(within(list).getByText('全部实例')).toBeVisible()
   })
 
-  it('renders rows with provider avatar, mono name, secondary label and the shared status dot', async () => {
+  it('renders rows with provider icon, mono name, secondary label and the shared status dot', async () => {
     const { directory } = await renderShell()
     const row = within(directory).getByRole('button', { name: /^cc_data/ })
-    // 31px mono avatar with the provider code (decorative; the accessible
-    // name still starts with the Agent Name).
-    expect(within(row).getByText('CC')).toBeInTheDocument()
+    // #79: Provider brand icon replaces the old CC text avatar; the icon
+    // is aria-hidden and the accessible name still starts with the Agent Name.
+    expect(row.querySelector('svg')).not.toBeNull()
     // Secondary label names provider and state in text (non-color cue).
     expect(row).toHaveTextContent('Claude Code · 等待权限')
     // The single global status-dot implementation (#65), attention family.

@@ -18,6 +18,7 @@ import {
   RUNTIME_STATE_LABEL
 } from './agent-display'
 import { StatusDot, statusDotState } from './status-dot'
+import { ProviderIcon } from './provider-icon'
 import type { SendCommand } from './agents-surface'
 
 /**
@@ -214,16 +215,12 @@ export function ContextPane({
           {/* Decorative avatar — the Provider is already named in the
               secondary label, so the button's accessible name still starts
               with the Agent Name. */}
-          <span
-            aria-hidden="true"
-            className={`grid h-[31px] w-[31px] place-items-center rounded-lg font-mono text-[9px] font-bold ${
-              isSelected
-                ? 'bg-brand text-paper'
-                : 'bg-brand-soft text-brand-ink'
-            }`}
-          >
-            {providerCode(agent.providerId)}
-          </span>
+          {/* #79: Provider brand icon — original SVG abstraction. */}
+          <ProviderIcon
+            providerId={agent.providerId}
+            size={31}
+            className={isSelected ? 'ring-2 ring-brand' : ''}
+          />
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               <span className="truncate font-mono text-[11px] font-semibold text-ink">
