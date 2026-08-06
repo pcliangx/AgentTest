@@ -36,25 +36,58 @@ export function createStandardScenario(
       providerId: claudeCode,
       displayName: 'Claude Code',
       status: 'ready',
-      models: [{ modelId: 'claude-sonnet-4', displayName: 'Claude Sonnet 4' }]
+      models: [{ modelId: 'claude-sonnet-4', displayName: 'Claude Sonnet 4' }],
+      version: '1.2.0',
+      modelSource: 'live-list',
+      installState: 'installed',
+      enabled: true,
+      vendorDescription: 'Anthropic — Claude AI 编码助手'
     },
     {
       providerId: codex,
       displayName: 'Codex',
       status: 'ready',
-      models: [{ modelId: 'gpt-5-codex', displayName: 'GPT-5 Codex' }]
+      models: [{ modelId: 'gpt-5-codex', displayName: 'GPT-5 Codex' }],
+      version: '0.8.1',
+      modelSource: 'cli-default',
+      installState: 'installed',
+      enabled: true,
+      vendorDescription: 'OpenAI — Codex CLI 编码工具'
     },
     {
       providerId: kimiCode,
       displayName: 'Kimi Code',
       status: 'ready',
-      models: [{ modelId: 'kimi-k2', displayName: 'Kimi K2' }]
+      models: [
+        { modelId: 'kimi-k2', displayName: 'Kimi K2' },
+        { modelId: 'kimi-k3', displayName: 'Kimi K3 (current)' }
+      ],
+      version: '0.4.2',
+      modelSource: 'live-list',
+      installState: 'installed',
+      enabled: true,
+      vendorDescription: 'Moonshot AI — Kimi 编码 CLI'
     },
     {
       providerId: id('gemini-cli', 'AgentProviderId'),
       displayName: 'Gemini CLI',
       status: 'blocked',
-      models: []
+      models: [],
+      version: '0.1.0',
+      modelSource: 'cli-default',
+      installState: 'installed',
+      enabled: true,
+      vendorDescription: 'Google — Gemini CLI 编码工具'
+    },
+    {
+      providerId: id('qwen-coder', 'AgentProviderId'),
+      displayName: 'Qwen Coder',
+      status: 'ready',
+      models: [],
+      installState: 'installable',
+      enabled: false,
+      installCommand: 'pip install qwen-coder-cli',
+      vendorDescription: 'Alibaba — 通义千问编码 CLI'
     }
   ]
 

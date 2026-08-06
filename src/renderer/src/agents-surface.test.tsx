@@ -179,7 +179,8 @@ describe('Agents surface — New Agent', () => {
 
     await user.selectOptions(provider, 'kimi-code')
     expect(model).toHaveValue('kimi-k2')
-    expect(within(model).getAllByRole('option')).toHaveLength(1)
+    // #80: Kimi Code now ships a live-list with two models.
+    expect(within(model).getAllByRole('option')).toHaveLength(2)
 
     await user.selectOptions(provider, 'claude-code')
     expect(model).toHaveValue('claude-sonnet-4')
