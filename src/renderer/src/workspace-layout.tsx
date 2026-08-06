@@ -1767,7 +1767,7 @@ function ChatState({
           ) : (
             <article
               key={entry.entryId}
-              className={`mb-3 max-w-[72ch] ${
+              className={`stagger-up mb-3 max-w-[72ch] ${
                 entry.kind === 'user'
                   ? 'ml-auto rounded-2xl rounded-br-md bg-brand px-4 py-2.5 text-paper shadow-sm'
                   : 'rounded-2xl rounded-bl-md bg-paper px-4 py-2.5 shadow-card'
