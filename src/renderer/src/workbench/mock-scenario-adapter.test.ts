@@ -170,6 +170,16 @@ describe('MockScenarioAdapter — navigate', () => {
     await adapter.dispatch(navigate(cmdId(4), mid.revision, 'tasks'))
     snap = await adapter.getSnapshot()
     expect(snap.projects[0].lastOpenedAt).toBe(3_000)
+
+    // Switching to ANOTHER Project stamps that one (PR #82 round 2).
+    now = 4_000
+    await adapter.dispatch(
+      navigate(cmdId(5), snap.revision, 'overview', id('proj-research', 'ProjectId'))
+    )
+    snap = await adapter.getSnapshot()
+    expect(snap.projects[1].lastOpenedAt).toBe(4_000)
+    // …and the one left behind keeps its own stamp.
+    expect(snap.projects[0].lastOpenedAt).toBe(3_000)
   })
 })
 
