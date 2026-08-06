@@ -912,7 +912,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         className="h-0.5 shrink-0 bg-gradient-to-r from-brand via-brand-ink to-teal"
       />
       <header
-        inert={showPicker ? true : undefined}
         className="titlebar glass-surface flex h-11 shrink-0 items-center gap-2 border-b border-line pr-3"
       >
         {RESERVE_TRAFFIC_LIGHT_AREA && (
