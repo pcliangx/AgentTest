@@ -142,7 +142,7 @@ test('1280×800 visual artifacts for every surface (#69)', async ({}, testInfo: 
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       await page
         .getByRole('region', { name: '项目概览' })
-        .getByRole('button', { name: '处理' })
+        .getByRole('button', { name: '打开' })
         .first()
         .click()
       await expect(

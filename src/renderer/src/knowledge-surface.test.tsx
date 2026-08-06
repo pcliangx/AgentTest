@@ -270,7 +270,7 @@ async function openAttentionFromOverview(
     overview = await screen.findByRole('region', { name: '项目概览' })
   }
   await user.click(
-    within(overview).getAllByRole('button', { name: '处理' })[0]
+    within(overview).getAllByRole('button', { name: '打开' })[0]
   )
   return screen.findByRole('complementary', { name: 'Global Attention' })
 }

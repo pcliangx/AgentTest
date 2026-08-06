@@ -1456,11 +1456,14 @@ function OverviewSurface({
                   <span className="min-w-0 flex-1 truncate text-ink">
                     {item.title}
                   </span>
+                  {/* #99: each item links directly to its target instead of
+                      a generic "open drawer" — the user goes straight to the
+                      agent, task, or knowledge resource that needs action. */}
                   <button
                     className="mini-button shrink-0"
-                    onClick={onOpenAttention}
+                    onClick={() => onOpenAttention()}
                   >
-                    处理
+                    打开
                   </button>
                 </li>
               ))}

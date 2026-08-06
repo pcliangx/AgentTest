@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
-  ActivityEntry,
   AgentInstanceId,
-  AgentProviderId,
   AttentionItemId,
   AttentionTarget,
   CommandResult,
@@ -14,12 +12,6 @@ import type {
   WorkbenchViewModel
 } from './workbench/contract'
 import { ATTENTION_KIND_LABEL } from './attention-display'
-import {
-  RUNTIME_STATE_LABEL,
-  providerLabel
-} from './agent-display'
-import { STATUS_DOT_LABEL, StatusDot, statusDotState } from './status-dot'
-import { ProviderIcon } from './provider-icon'
 import { fieldDescriptor } from './workbench/configuration'
 
 /**
@@ -60,9 +52,6 @@ const DECISION_ACTIONS: Array<{
     className: 'mini-button'
   }
 ]
-
-/** Radar groups cap: the drawer stays a summary; deep links carry the rest. */
-const RECENT_COMPLETED_LIMIT = 3
 
 /**
  * A rejected command always deserves a visible, recoverable explanation
@@ -186,18 +175,8 @@ export function AttentionDrawer({
     return option?.label ?? String(value ?? '未设置')
   }
 
-  // Radar groups (#68): live rows come straight from the global agent list;
-  // 最近完成 replays the latest adapter-recorded run-completed activities.
-  const runningOrQueued = snapshot.agents.filter((agent) =>
-    ['running', 'queued'].includes(statusDotState(agent.runtimeState))
-  )
-  const recentCompleted = [...snapshot.activity]
-    .filter(
-      (entry): entry is ActivityEntry & { agentInstanceId: AgentInstanceId } =>
-        entry.kind === 'run-completed' && entry.agentInstanceId !== undefined
-    )
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, RECENT_COMPLETED_LIMIT)
+  // #99: Attention is now a blocking-only inbox — running/queued and
+  // recently-completed sections were removed (those belong in Activity).
 
   const concurrency = snapshot.global.concurrency
 
@@ -222,8 +201,8 @@ export function AttentionDrawer({
         {/* Same capacity facts as the #65 shell statusbar, in the frozen
             radar-head order (全局 first). */}
         <p className="mt-1 text-[10px] text-muted">
-          全局 {concurrency.activeGlobal} / {concurrency.globalLimit} ·
-          Project {project?.activeRunCount ?? 0} / {concurrency.projectLimit}
+          全部项目 · 全局运行 {concurrency.activeGlobal} / {concurrency.globalLimit}
+          {project && ` · 当前 Project 运行 ${project.activeRunCount} / ${concurrency.projectLimit}`}
         </p>
       </div>
 
@@ -357,125 +336,7 @@ export function AttentionDrawer({
             演示模式：决定仅更新 mock 状态，未连接真实 PermissionBroker。
           </p>
         </section>
-
-        <section aria-label="运行中与排队" className="space-y-1">
-          <h3 className="section-label">
-            运行中与排队
-          </h3>
-          {runningOrQueued.length === 0 ? (
-            <p className="text-xs text-muted">暂无运行中或排队的 Agent</p>
-          ) : (
-            <ul>
-              {runningOrQueued.map((agent) => {
-                const dotState = statusDotState(agent.runtimeState)
-                const summary = agent.currentTaskSummary
-                return (
-                  <li key={agent.agentInstanceId}>
-                    <RadarRow
-                      providerId={agent.providerId}
-                      name={agent.name}
-                      sublabel={
-                        summary ??
-                        `${providerLabel(agent.providerId)} · ${
-                          RUNTIME_STATE_LABEL[agent.runtimeState]
-                        }`
-                      }
-                      dotState={dotState}
-                      // The fallback sublabel already names the runtime
-                      // state; labelling the dot there would double-expose
-                      // it in the row's accessible name (#65 rule).
-                      dotLabel={summary ? STATUS_DOT_LABEL[dotState] : undefined}
-                      onOpen={() =>
-                        onOpenTarget({
-                          kind: 'agent',
-                          projectId: agent.projectId,
-                          agentInstanceId: agent.agentInstanceId
-                        })
-                      }
-                    />
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section aria-label="最近完成" className="space-y-1">
-          <h3 className="section-label">
-            最近完成
-          </h3>
-          {recentCompleted.length === 0 ? (
-            <p className="text-xs text-muted">暂无最近完成的 Run</p>
-          ) : (
-            <ul>
-              {recentCompleted.map((entry) => {
-                const agent = agentFor(entry.agentInstanceId)
-                if (!agent) return null
-                const dotState = statusDotState(agent.runtimeState)
-                return (
-                  <li key={entry.activityId}>
-                    <RadarRow
-                      providerId={agent.providerId}
-                      name={agent.name}
-                      sublabel={entry.summary}
-                      dotState={dotState}
-                      // The activity summary never names the runtime state,
-                      // so the dot keeps its label (#65 rule).
-                      dotLabel={STATUS_DOT_LABEL[dotState]}
-                      onOpen={() =>
-                        onOpenTarget({
-                          kind: 'agent',
-                          projectId: agent.projectId,
-                          agentInstanceId: agent.agentInstanceId
-                        })
-                      }
-                    />
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </section>
       </div>
     </aside>
-  )
-}
-
-/** One frozen radar row (#68): 28px Provider avatar, mono name, muted
- *  sublabel, and the #65 status dot. The dot is labelled only when the
- *  sublabel does not already name the state. Rows are navigation deep
- *  links into the owning Agent, never action buttons. */
-function RadarRow({
-  providerId,
-  name,
-  sublabel,
-  dotState,
-  dotLabel,
-  onOpen
-}: {
-  providerId: AgentProviderId
-  name: string
-  sublabel: string
-  dotState: ReturnType<typeof statusDotState>
-  dotLabel?: string
-  onOpen: () => void
-}) {
-  return (
-    <button
-      type="button"
-      className="grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-wash"
-      onClick={onOpen}
-    >
-      <ProviderIcon providerId={providerId} size={28} />
-      <span className="min-w-0">
-        <strong className="block truncate font-mono text-[10px] font-semibold text-ink">
-          {name}
-        </strong>
-        <small className="block truncate text-[10px] text-muted">
-          {sublabel}
-        </small>
-      </span>
-      <StatusDot state={dotState} label={dotLabel} />
-    </button>
   )
 }
