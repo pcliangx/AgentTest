@@ -195,8 +195,10 @@ describe('ProjectSwitchBar — overflow 更多 menu', () => {
     const trigger = await within(bar).findByRole('button', {
       name: '更多项目（含当前项目）'
     })
-    // The trigger double-encodes that the current project is inside.
+    // The trigger double-encodes that the current project is inside — and
+    // carries aria-current while the menu is closed (PR #81 review).
     expect(trigger.className).toContain('font-semibold')
+    expect(trigger).toHaveAttribute('aria-current', 'page')
     await userEvent.setup().click(trigger)
     const menu = screen.getByRole('menu', { name: '更多项目' })
     const activeItem = within(menu).getByRole('menuitem', {

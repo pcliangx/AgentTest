@@ -36,15 +36,18 @@ const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
 ]
 
 /**
- * One item style shared by the global entries, the Project buttons and the
- * 更多 trigger so the bar can never drift apart. Active state adds weight
- * and a wash background — never color alone (UX-v0.2 §15).
+ * Active/inactive tones of the bar's items — one definition so the global
+ * entries, the Project buttons, the 更多 trigger and its menu items can
+ * never drift apart. Active state adds weight and a wash background —
+ * never color alone (UX-v0.2 §15).
  */
+const ACTIVE_ITEM_TONE = 'bg-wash font-semibold text-ink'
+const INACTIVE_ITEM_TONE = 'text-muted hover:bg-wash hover:text-ink'
+
+/** One item style shared by the global entries, the Project buttons and the 更多 trigger. */
 const switchBarItemClass = (isActive: boolean): string =>
   `h-[29px] shrink-0 rounded-lg px-2 text-[11px] transition-colors ${
-    isActive
-      ? 'bg-wash font-semibold text-ink'
-      : 'text-muted hover:bg-wash hover:text-ink'
+    isActive ? ACTIVE_ITEM_TONE : INACTIVE_ITEM_TONE
   }`
 
 /** Horizontal gap between Project buttons / the 更多 trigger (gap-1). */
@@ -128,6 +131,10 @@ export function ProjectSwitchBar({
 
   const visibleProjects = projects.slice(0, visibleCount)
   const overflowProjects = projects.slice(visibleCount)
+  // Measure the 更多 trigger at its widest (active tone) whenever a project
+  // is current — over-reserving folds one button early, under-reserving
+  // could let the row overflow its container.
+  const moreMeasuredActive = activeProjectId !== undefined
 
   const renderProjectButton = (project: ProjectViewModel) => {
     const isActive = project.projectId === activeProjectId
@@ -184,9 +191,12 @@ export function ProjectSwitchBar({
               />
             )}
           </div>
-          {/* Mirror row for width measurement: identical items, never
-              visible or focusable. jsdom reports zero widths, which
-              computeVisibleProjectCount treats as "show everything". */}
+          {/* Mirror row for width measurement: identical items — same
+              active-state weight and the same 更多 ▾ label as the real
+              trigger, so measured widths match what actually renders
+              (PR #81 review). Never visible or focusable; jsdom reports
+              zero widths, which computeVisibleProjectCount treats as
+              "show everything". */}
           <div
             ref={measureRef}
             aria-hidden="true"
@@ -196,16 +206,18 @@ export function ProjectSwitchBar({
               <span
                 key={project.projectId}
                 data-switch-item
-                className={`${switchBarItemClass(false)} inline-block max-w-[140px]`}
+                className={`${switchBarItemClass(
+                  project.projectId === activeProjectId
+                )} inline-block max-w-[140px]`}
               >
                 <span className="block truncate">{project.name}</span>
               </span>
             ))}
             <span
               data-switch-more
-              className={`${switchBarItemClass(false)} inline-block`}
+              className={`${switchBarItemClass(moreMeasuredActive)} inline-block`}
             >
-              更多
+              更多 ▾
             </span>
           </div>
         </>
@@ -229,6 +241,10 @@ function OverflowMenu({
   const containsActive = projects.some(
     (project) => project.projectId === activeProjectId
   )
+  // The label names the menu's content even when the current Project sits
+  // inside it — the active encoding (weight + background) doubles that
+  // fact for sighted users.
+  const moreLabel = containsActive ? '更多项目（含当前项目）' : '更多项目'
 
   const close = useCallback((returnFocus: boolean) => {
     setOpen(false)
@@ -251,11 +267,15 @@ function OverflowMenu({
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [open, close])
 
-  const focusItem = (index: number) => {
-    const items = menuRef.current?.querySelectorAll<HTMLElement>(
-      '[role="menuitem"]'
+  const menuItems = (): HTMLElement[] =>
+    Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ??
+        []
     )
-    if (!items || items.length === 0) return
+
+  const focusItem = (index: number) => {
+    const items = menuItems()
+    if (items.length === 0) return
     items[Math.max(0, Math.min(index, items.length - 1))]?.focus()
   }
 
@@ -274,11 +294,12 @@ function OverflowMenu({
         data-switch-more
         aria-haspopup="menu"
         aria-expanded={open}
-        // The label names the menu's content even when the current Project
-        // sits inside it — the active encoding (weight + background) doubles
-        // that fact for sighted users.
-        aria-label={containsActive ? '更多项目（含当前项目）' : '更多项目'}
-        title={containsActive ? '更多项目（含当前项目）' : '更多项目'}
+        // While the current Project is folded into the closed menu, the
+        // trigger is the bar's only carrier of that fact — it keeps the
+        // double-encoded highlight AND aria-current (PR #81 review).
+        aria-current={containsActive ? 'page' : undefined}
+        aria-label={moreLabel}
+        title={moreLabel}
         className={switchBarItemClass(containsActive)}
         onClick={() => (open ? close(false) : openMenu(false))}
         onKeyDown={(event) => {
@@ -300,11 +321,7 @@ function OverflowMenu({
           aria-label="更多项目"
           className="absolute right-0 top-full z-30 mt-1 min-w-[160px] rounded-[10px] border border-line bg-paper p-1 shadow-overlay"
           onKeyDown={(event) => {
-            const items = Array.from(
-              menuRef.current?.querySelectorAll<HTMLElement>(
-                '[role="menuitem"]'
-              ) ?? []
-            )
+            const items = menuItems()
             const index = items.findIndex(
               (item) => item === document.activeElement
             )
@@ -338,9 +355,7 @@ function OverflowMenu({
                 aria-current={isActive ? 'page' : undefined}
                 title={project.name}
                 className={`block w-full truncate rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors ${
-                  isActive
-                    ? 'bg-wash font-semibold text-ink'
-                    : 'text-muted hover:bg-wash hover:text-ink'
+                  isActive ? ACTIVE_ITEM_TONE : INACTIVE_ITEM_TONE
                 }`}
                 onClick={() => {
                   onSwitchProject(project.projectId)
