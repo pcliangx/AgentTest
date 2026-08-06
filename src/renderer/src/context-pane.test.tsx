@@ -155,7 +155,9 @@ describe('Context pane — Agent Directory content (#66)', () => {
       within(list)
         .getAllByRole('button')
         .filter(
-          (b) => !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开')
+          (b) =>
+            !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开') &&
+            !b.getAttribute('aria-label')?.startsWith('关闭')
         )
     ).toHaveLength(2)
   })

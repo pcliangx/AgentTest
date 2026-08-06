@@ -26,10 +26,12 @@ function directoryNames(directory: HTMLElement): string[] {
   return (
     within(list)
       .queryAllByRole('button')
-      // Entry rows also carry a secondary "open in new panel" action (#4);
-      // only the primary open button represents the entry itself.
+      // Entry rows also carry secondary actions: "open in new panel" (#4)
+      // and "close" (#78); only the primary open button is the entry itself.
       .filter(
-        (b) => !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开')
+        (b) =>
+          !b.getAttribute('aria-label')?.startsWith('在新 Panel 打开') &&
+          !b.getAttribute('aria-label')?.startsWith('关闭')
       )
       .map((b) => b.textContent ?? '')
   )

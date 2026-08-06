@@ -1588,6 +1588,31 @@ function ChatState({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* #78: read-only archive notice bar with a reopen action. The bar
+          pairs a text label with a border accent so the archived state is
+          recognisable without relying on color alone (§15). */}
+      {agent.runtimeState === 'archived' && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center justify-between gap-3 border-b-2 border-brand border-l-4 border-l-brand bg-brand-soft px-3 py-2"
+        >
+          <span className="text-xs font-semibold text-brand-ink">
+            🔒 已归档 — 只读视图：完整对话与 Run 记录仍可查看，不可发送新指令。
+          </span>
+          <button
+            className="btn btn-primary min-h-[28px]"
+            onClick={() =>
+              void sendCommand({
+                kind: 'restore-instance',
+                projectId: project.projectId,
+                agentInstanceId: agent.agentInstanceId
+              })
+            }
+          >
+            重开实例
+          </button>
+        </div>
+      )}
       <div
         role="log"
         aria-label="对话记录"

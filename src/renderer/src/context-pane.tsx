@@ -259,6 +259,23 @@ export function ContextPane({
         >
           ⇱
         </button>
+        {agent.runtimeState !== 'archived' && (
+          <button
+            aria-label={`关闭 ${agent.name}`}
+            title="关闭（归档）此 Agent 实例"
+            className="shrink-0 rounded-lg px-1.5 text-xs text-muted hover:bg-paper hover:text-danger"
+            onClick={(e) => {
+              e.stopPropagation()
+              void sendCommand({
+                kind: 'archive-instance',
+                projectId: project.projectId,
+                agentInstanceId: agent.agentInstanceId
+              })
+            }}
+          >
+            ✕
+          </button>
+        )}
       </li>
     )
   }
