@@ -763,6 +763,17 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
     return result
   }
 
+  // Entering a Project on its own last surface — one path shared by the #75
+  // switch bar and the #76 home page's recent list (PR #82 review).
+  const openProject = (targetId: ProjectId): void => {
+    const target = snapshot.projects.find((p) => p.projectId === targetId)
+    if (!target) return
+    void sendExplicitNavigation(
+      () => navigate(targetId, target.currentSurface),
+      () => setPermissionsNavNonce(0)
+    )
+  }
+
   // Permanent policy is never created from a request; the Permission Center
   // only navigates into the Settings permissions section (UX-v0.2 §10).
   // Local state (drawer close, section remount) commits only after the
@@ -913,16 +924,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         <ProjectSwitchBar
           projects={snapshot.projects}
           activeProjectId={inGlobalView ? undefined : project?.projectId}
-          onSwitchProject={(targetId) => {
-            const target = snapshot.projects.find(
-              (p) => p.projectId === targetId
-            )
-            if (!target) return
-            void sendExplicitNavigation(
-              () => navigate(targetId, target.currentSurface),
-              () => setPermissionsNavNonce(0)
-            )
-          }}
+          onSwitchProject={openProject}
         />
         <div className="flex shrink-0 items-center gap-2">
           {project && (
@@ -1041,16 +1043,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
             <HomeSurface
               projects={snapshot.projects}
               sendCommand={sendCommand}
-              onOpenProject={(targetId) => {
-                const target = snapshot.projects.find(
-                  (p) => p.projectId === targetId
-                )
-                if (!target) return
-                void sendExplicitNavigation(
-                  () => navigate(targetId, target.currentSurface),
-                  () => setPermissionsNavNonce(0)
-                )
-              }}
+              onOpenProject={openProject}
             />
           )}
           {snapshot.activeGlobalSurface === 'connections' && (

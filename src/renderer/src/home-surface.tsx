@@ -128,7 +128,7 @@ function QuickCreateCard({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={!name.trim() || submitting}
+            disabled={!name.trim() || !rootPath.trim() || submitting}
           >
             创建并进入
           </button>

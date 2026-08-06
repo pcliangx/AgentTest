@@ -124,6 +124,7 @@ describe('Home — quick create (#76)', () => {
   it('lists the created project on top of 最近项目', async () => {
     const { user, home } = await renderShell()
     await user.type(within(home).getByLabelText('项目名称'), '增长实验平台')
+    await user.type(within(home).getByLabelText('根目录'), '~/Projects/growth-lab')
     await user.click(
       within(home).getByRole('button', { name: '创建并进入' })
     )
@@ -136,15 +137,22 @@ describe('Home — quick create (#76)', () => {
     ).getAllByRole('button')
     expect(rows).toHaveLength(3)
     expect(rows[0]).toHaveTextContent('增长实验平台')
-    expect(rows[0]).toHaveTextContent('—') // no root path given
+    expect(rows[0]).toHaveTextContent('~/Projects/growth-lab')
   })
 
-  it('keeps the create button disabled until a name is given', async () => {
+  it('keeps the create button disabled until both name and root path are given', async () => {
     const { user, home } = await renderShell()
     const submit = within(home).getByRole('button', { name: '创建并进入' })
     expect(submit).toBeDisabled()
+    // Whitespace-only name does not count.
     await user.type(within(home).getByLabelText('项目名称'), '  ')
     expect(submit).toBeDisabled()
+    // A real name alone is not enough — 根目录 is also required (#76 spec).
+    await user.clear(within(home).getByLabelText('项目名称'))
+    await user.type(within(home).getByLabelText('项目名称'), '增长实验平台')
+    expect(submit).toBeDisabled()
+    await user.type(within(home).getByLabelText('根目录'), '~/Projects/growth-lab')
+    expect(submit).toBeEnabled()
   })
 })
 
@@ -164,6 +172,7 @@ describe('Home — empty state (#76)', () => {
 
     // Creating the very first project still lands straight inside it.
     await user.type(within(home).getByLabelText('项目名称'), '第一个项目')
+    await user.type(within(home).getByLabelText('根目录'), '~/Projects/first')
     await user.click(
       within(home).getByRole('button', { name: '创建并进入' })
     )
