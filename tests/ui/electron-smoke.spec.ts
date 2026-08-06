@@ -56,7 +56,12 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
       await expect(page).toHaveTitle('Agent Squad HQ')
       await expect(page.getByText('Agent Squad HQ', { exact: true })).toBeVisible()
       await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
-      await expect(page.getByLabel('切换项目')).toHaveValue('proj-sales')
+      // #75: the persistent switch bar marks the current project.
+      await expect(
+        page
+          .getByRole('navigation', { name: '快捷切换' })
+          .getByRole('button', { name: '销售数据分析', exact: true })
+      ).toHaveAttribute('aria-current', 'page')
       await expect(page.getByRole('region', { name: '项目概览' })).toBeVisible()
       expect(await activeSession!.app.evaluate(({ app }) => app.getPath('userData'))).toBe(
         activeSession!.userDataPath

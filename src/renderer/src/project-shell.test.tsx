@@ -21,6 +21,11 @@ function waitForLoad() {
   return screen.findByRole('button', { name: '概览' })
 }
 
+/** Helper: the persistent top quick-switch bar (#75). */
+function switchBar() {
+  return screen.getByRole('navigation', { name: '快捷切换' })
+}
+
 describe('ProjectShell — snapshot rendering', () => {
   it('renders the active project name as a heading', async () => {
     render(<ProjectShell port={new MockScenarioAdapter()} />)
@@ -191,35 +196,39 @@ describe('ProjectShell — no side effects', () => {
     await user.click(screen.getByRole('button', { name: '任务' }))
     await user.click(screen.getByRole('button', { name: '活动' }))
     await user.click(screen.getByRole('button', { name: '概览' }))
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '用户研究' })
     )
     expect(apiSpy).not.toHaveBeenCalled()
   })
 })
 
-describe('ProjectShell — project switcher', () => {
-  it('renders a select with both projects', async () => {
+describe('ProjectShell — project switcher (#75)', () => {
+  it('renders a persistent bar button per project', async () => {
     render(<ProjectShell port={new MockScenarioAdapter()} />)
-    const select = await screen.findByRole('combobox', { name: '切换项目' })
-    const options = within(select).getAllByRole('option')
-    expect(options).toHaveLength(2)
-    expect(select).toHaveTextContent('销售数据分析')
-    expect(select).toHaveTextContent('用户研究')
+    await waitForLoad()
+    const buttons = within(switchBar())
+      .getAllByRole('button')
+      .filter((button) => button.hasAttribute('data-switch-item'))
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0]).toHaveTextContent('销售数据分析')
+    expect(buttons[1]).toHaveTextContent('用户研究')
   })
 
   it('switches active project on selection', async () => {
     const user = userEvent.setup()
     render(<ProjectShell port={new MockScenarioAdapter()} />)
     await screen.findByRole('heading', { name: '销售数据分析', level: 2 })
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '用户研究' })
     )
     expect(
       await screen.findByRole('heading', { name: '用户研究', level: 2 })
     ).toBeVisible()
+    // The new current project carries the double-encoded active state.
+    expect(
+      within(switchBar()).getByRole('button', { name: '用户研究' })
+    ).toHaveAttribute('aria-current', 'page')
   })
 
   it('preserves the target project surface when switching', async () => {
@@ -234,21 +243,38 @@ describe('ProjectShell — project switcher', () => {
     ).toBeVisible()
 
     // Switch to 用户研究 — should show its own overview, not tasks
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '用户研究' })
     )
     expect(
       await screen.findByRole('region', { name: '项目概览' })
     ).toBeVisible()
 
     // Switch back to sales — should still show tasks
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '切换项目' }),
-      '销售数据分析'
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '销售数据分析' })
     )
     expect(
       await screen.findByRole('region', { name: '任务' })
+    ).toBeVisible()
+  })
+
+  it('keeps the switch bar visible inside global views', async () => {
+    const user = userEvent.setup()
+    render(<ProjectShell port={new MockScenarioAdapter()} />)
+    await waitForLoad()
+    await user.click(screen.getByRole('button', { name: '连接' }))
+    await screen.findByRole('region', { name: '全局连接' })
+    // One click from any global work surface back into a project — the
+    // retired ← 返回项目 button is gone for good (#75).
+    expect(
+      screen.queryByRole('button', { name: /返回项目/ })
+    ).not.toBeInTheDocument()
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '销售数据分析' })
+    )
+    expect(
+      await screen.findByRole('region', { name: '项目概览' })
     ).toBeVisible()
   })
 })
@@ -393,7 +419,11 @@ describe('ProjectShell — global surfaces', () => {
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: '连接' }))
     await screen.findByRole('region', { name: '全局连接' })
-    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    // #75: the switch bar replaced ← 返回项目 — one click on the current
+    // project's bar button returns to its surface.
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '销售数据分析' })
+    )
     // Should return to tasks surface, not overview
     expect(
       await screen.findByRole('region', { name: '任务' })
@@ -478,7 +508,9 @@ describe('ProjectShell — no side effects (global + confirmation)', () => {
     await user.click(screen.getAllByRole('button', { name: '删除' })[0])
     await screen.findByRole('dialog')
     await user.click(screen.getByRole('button', { name: '取消' }))
-    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '销售数据分析' })
+    )
     expect(apiSpy).not.toHaveBeenCalled()
   })
 })
@@ -606,7 +638,9 @@ describe('ProjectShell — provider recovery', () => {
 
     // Back in the project the revived agent is usable again — readiness and
     // the composer recover with it, history and tabs survive.
-    await user.click(screen.getByRole('button', { name: '← 返回项目' }))
+    await user.click(
+      within(switchBar()).getByRole('button', { name: '销售数据分析' })
+    )
     const restoredDirectory = await screen.findByRole('region', {
       name: 'Agent 目录'
     })

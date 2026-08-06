@@ -43,6 +43,22 @@ async function openDrawer(user: User) {
   return { trigger, drawer }
 }
 
+/** #75: project switching lives in the persistent top switch bar. */
+function switchBar() {
+  return screen.getByRole('navigation', { name: '快捷切换' })
+}
+
+async function switchToProject(user: User, name: '销售数据分析' | '用户研究') {
+  await user.click(within(switchBar()).getByRole('button', { name }))
+}
+
+/** The current project is the bar button carrying aria-current. */
+function expectCurrentProject(name: string) {
+  expect(
+    within(switchBar()).getByRole('button', { name })
+  ).toHaveAttribute('aria-current', 'page')
+}
+
 describe('Global Attention — shell entry (#9)', () => {
   it('shows the global pending count on the trigger', async () => {
     await renderShell()
@@ -143,7 +159,7 @@ describe('Global Attention — deep links (#9)', () => {
     ).toBeVisible()
 
     // Returning to the previous project restores its own surface state.
-    await user.selectOptions(screen.getByLabelText('切换项目'), 'proj-sales')
+    await switchToProject(user, '销售数据分析')
     const back = await screen.findByRole('region', { name: '项目概览' })
     expect(
       within(back).getByRole('heading', { name: '销售数据分析' })
@@ -435,16 +451,13 @@ describe('Permission Center — decisions (#9)', () => {
         })
       ).toHaveAttribute('aria-current', 'page')
       if (navigationKind === 'project') {
-        expect(screen.getByLabelText('切换项目')).toHaveValue('proj-sales')
+        expectCurrentProject('销售数据分析')
       }
 
       if (navigationKind === 'surface') {
         await user.click(screen.getByRole('button', { name: '任务' }))
       } else {
-        await user.selectOptions(
-          screen.getByLabelText('切换项目'),
-          'proj-research'
-        )
+        await switchToProject(user, '用户研究')
       }
 
       expect(screen.getByRole('region', { name: '项目设置' })).toBeVisible()
@@ -918,7 +931,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
 
     await user.click(screen.getByRole('button', { name: '连接' }))
     await screen.findByRole('region', { name: '全局连接' })
-    await user.click(screen.getByRole('button', { name: /返回项目/ }))
+    await switchToProject(user, '销售数据分析')
     await screen.findByRole('region', { name: 'Agent 工作区' })
 
     expect(screen.queryByText(/已保留目标：Run run-etl-001/)).toBeNull()
@@ -987,10 +1000,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
       if (navigationKind === 'surface') {
         await user.click(screen.getByRole('button', { name: '任务' }))
       } else if (navigationKind === 'project') {
-        await user.selectOptions(
-          screen.getByLabelText('切换项目'),
-          'proj-research'
-        )
+        await switchToProject(user, '用户研究')
       } else {
         const { drawer } = await openDrawer(user)
         const card = within(drawer).getByRole('region', { name: /cc_data/ })
@@ -1008,7 +1018,7 @@ describe('Global Attention — retained target lifetime (#9 review)', () => {
       ).toBeVisible()
       expect(screen.getByText(/已保留目标：Run run-etl-001/)).toBeVisible()
       if (navigationKind === 'project') {
-        expect(screen.getByLabelText('切换项目')).toHaveValue('proj-sales')
+        expectCurrentProject('销售数据分析')
       }
     }
   )

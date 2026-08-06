@@ -37,6 +37,7 @@ import { AttentionDrawer } from './attention-drawer'
 import { describeAttentionTarget } from './attention-display'
 import { StatusChip } from './status-chip'
 import { ContextPane } from './context-pane'
+import { ProjectSwitchBar } from './project-switch-bar'
 import { DispatchPicker } from './dispatch-picker'
 import { SettingsSurface } from './settings-surface'
 import { KnowledgeSurface } from './knowledge-surface'
@@ -234,12 +235,6 @@ const navRailItemClass = (isActive: boolean): string =>
       ? 'bg-nav-active text-nav'
       : 'text-nav-muted hover:bg-nav-soft hover:text-nav-text'
   }`
-
-const GLOBAL_ENTRIES: Array<{ surface: GlobalSurface; label: string }> = [
-  { surface: 'connections', label: '连接' },
-  { surface: 'provider-health', label: 'Provider 健康' },
-  { surface: 'global-settings', label: '全局设置' }
-]
 
 /**
  * The frameless titlebar leaves room for the macOS traffic lights only on
@@ -879,50 +874,33 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         </div>
       </header>
 
-      {/* Window-level entries keep their pre-#65 positions and accessible
-          names (连接 / Provider 健康 / 全局设置 / Global Attention /
-          派发给 Agent / 关闭窗口 / 退出). The 切换项目 select moved into
-          the context pane's Project switch card in #66. */}
+      {/* Persistent quick-switch bar (#75): global entries + one button per
+          Project, identical on every surface so any destination is one
+          click away. It replaces the context pane's 切换项目 select and the
+          global view's ← 返回项目 button; 派发给 Agent / 关闭窗口 / 退出 keep
+          their pre-#65 positions and accessible names on the right. */}
       <header
         inert={showPicker ? true : undefined}
         className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line bg-paper px-3"
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex items-center gap-1">
-            {GLOBAL_ENTRIES.map(({ surface, label }) => {
-              const isActive =
-                inGlobalView && snapshot.activeGlobalSurface === surface
-              return (
-                <button
-                  key={surface}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`h-[29px] rounded-lg px-2 text-[11px] transition-colors ${
-                    isActive
-                      ? 'bg-wash font-semibold text-ink'
-                      : 'text-muted hover:bg-wash hover:text-ink'
-                  }`}
-                  onClick={() => {
-                    void sendExplicitNavigation(() => navigateGlobal(surface))
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-          {inGlobalView && project && (
-            <button
-              className="mini-button"
-              onClick={() => {
-                void sendExplicitNavigation(() =>
-                  navigate(project.projectId, project.currentSurface)
-                )
-              }}
-            >
-              ← 返回项目
-            </button>
-          )}
-        </div>
+        <ProjectSwitchBar
+          projects={snapshot.projects}
+          activeProjectId={inGlobalView ? undefined : project?.projectId}
+          activeGlobalSurface={snapshot.activeGlobalSurface}
+          onSwitchProject={(targetId) => {
+            const target = snapshot.projects.find(
+              (p) => p.projectId === targetId
+            )
+            if (!target) return
+            void sendExplicitNavigation(
+              () => navigate(targetId, target.currentSurface),
+              () => setPermissionsNavNonce(0)
+            )
+          }}
+          onNavigateGlobal={(surface) => {
+            void sendExplicitNavigation(() => navigateGlobal(surface))
+          }}
+        />
         <div className="flex shrink-0 items-center gap-2">
           {project && (
             <button
@@ -1030,8 +1008,9 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         ) : project ? (
           <>
             {/* Fixed 244px context directory pane of the frozen A shell
-                (#66) — visible on every Project surface; today it carries
-                the Project switch card and the single Agent Directory. */}
+                (#66) — visible on every Project surface; since #75 it is a
+                pure context display (project identity + Agent Directory),
+                project switching lives in the top switch bar. */}
             <ContextPane
               key={project.projectId}
               project={project}
@@ -1040,16 +1019,6 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
               openAttentionTargets={openAttentionTargets}
               sendCommand={sendCommandWithLayoutIntent}
               sendLayout={sendLayout}
-              onSwitchProject={(targetId) => {
-                const target = snapshot.projects.find(
-                  (p) => p.projectId === targetId
-                )
-                if (!target) return
-                void sendExplicitNavigation(
-                  () => navigate(targetId, target.currentSurface),
-                  () => setPermissionsNavNonce(0)
-                )
-              }}
               registerAgentButton={registerDirectoryAgentButton}
               searchInputRef={directorySearchInput}
               newAgentButtonRef={directoryNewAgentButton}

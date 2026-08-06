@@ -8,9 +8,10 @@ import { MockScenarioAdapter } from './workbench/mock-scenario-adapter'
 /**
  * The fixed context directory pane (#66): 244px between the icon rail and
  * the workspace, visible on every Project surface, carrying the Project
- * switch card and the single Agent Directory (需要处理 / 全部实例 groups,
- * run-summary footer). Geometry (244px, panel minimums) is covered by the
- * Electron smoke specs; these tests observe structure and behaviour only.
+ * identity card and the single Agent Directory (需要处理 / 全部实例 groups,
+ * run-summary footer). Project switching lives in the top switch bar since
+ * #75. Geometry (244px, panel minimums) is covered by the Electron smoke
+ * specs; these tests observe structure and behaviour only.
  */
 
 afterEach(() => cleanup())
@@ -58,26 +59,33 @@ describe('Context pane — fixed presence (#66)', () => {
   })
 })
 
-describe('Context pane — Project switch card (#66)', () => {
-  it('carries the 切换项目 select and the root path summary', async () => {
+describe('Context pane — Project identity card (#75)', () => {
+  it('shows the project name as static text plus the root path summary', async () => {
     const { directory } = await renderShell()
+    // Switching moved to the persistent top switch bar in #75 — the pane
+    // keeps context display only, no 切换项目 select remains.
     expect(
-      within(directory).getByRole('combobox', { name: '切换项目' })
-    ).toHaveValue('proj-sales')
+      within(directory).queryByRole('combobox', { name: '切换项目' })
+    ).not.toBeInTheDocument()
+    expect(
+      within(directory).getByText('销售数据分析')
+    ).toBeVisible()
     // Card summary + footer both show the contract-owned root path.
     expect(
       within(directory).getAllByText('~/Projects/sales-analysis')
     ).toHaveLength(2)
   })
 
-  it('keeps the switch behaviour from the pane', async () => {
-    const { user, directory } = await renderShell()
-    await user.selectOptions(
-      within(directory).getByRole('combobox', { name: '切换项目' }),
-      '用户研究'
+  it('follows the project switched from the top bar', async () => {
+    const { user } = await renderShell()
+    await user.click(
+      within(
+        screen.getByRole('navigation', { name: '快捷切换' })
+      ).getByRole('button', { name: '用户研究' })
     )
     // The pane remounts per Project — re-query before asserting.
     const next = await screen.findByRole('region', { name: 'Agent 目录' })
+    expect(within(next).getByText('用户研究')).toBeVisible()
     expect(
       within(next).getByRole('button', { name: /^cc_report/ })
     ).toBeInTheDocument()

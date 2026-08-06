@@ -7,7 +7,6 @@ import type {
   AgentWorktreeMode,
   CommandResult,
   LayoutOperation,
-  ProjectId,
   ProjectViewModel,
   WorkbenchViewModel
 } from './workbench/contract'
@@ -33,10 +32,12 @@ const isAttentionAgent = (agent: AgentInstanceViewModel): boolean =>
 /**
  * The fixed 244px context directory pane of the frozen A command-center
  * shell (#66, UX-v0.2 §4.2): it sits between the icon nav rail and the
- * workspace and is visible on every Project surface. Today its content is
- * the Project switch card plus the Agent Directory (the only directory the
- * frozen baseline defines); per-surface directories (任务清单、知识空间…)
- * land with their own surface issues.
+ * workspace and is visible on every Project surface. Since #75 project
+ * switching lives in the persistent top switch bar — this pane is a pure
+ * context display: the Project identity card (name + root path) plus the
+ * Agent Directory (the only directory the frozen baseline defines);
+ * per-surface directories (任务清单、知识空间…) land with their own
+ * surface issues.
  *
  * The pane is the SINGLE Agent Directory — the Agents surface no longer
  * keeps an internal column, so filter logic exists exactly once. All facts
@@ -51,7 +52,6 @@ export function ContextPane({
   openAttentionTargets,
   sendCommand,
   sendLayout,
-  onSwitchProject,
   registerAgentButton,
   searchInputRef,
   newAgentButtonRef
@@ -63,8 +63,6 @@ export function ContextPane({
   openAttentionTargets: Set<string>
   sendCommand: SendCommand
   sendLayout: (operation: LayoutOperation) => Promise<CommandResult>
-  /** Switch the active Project — same navigation as the pre-#66 header. */
-  onSwitchProject: (targetId: ProjectId) => void
   registerAgentButton: (
     agentInstanceId: AgentInstanceId,
     element: HTMLButtonElement | null
@@ -281,8 +279,9 @@ export function ContextPane({
       aria-label="Agent 目录"
       className="flex w-[244px] shrink-0 flex-col border-r border-line bg-raised"
     >
-      {/* Project switch card (#66): 36px brand mark, project name via the
-          existing 切换项目 select and the root path summary. */}
+      {/* Project identity card: 36px brand mark, the project name as static
+          text and the root path summary. Switching moved to the persistent
+          top switch bar in #75 — this card is context display only. */}
       <div className="px-2.5 pt-2.5">
         <div className="flex items-center gap-2 rounded-[10px] border border-line bg-paper px-2 py-1.5">
           <span
@@ -292,20 +291,9 @@ export function ContextPane({
             {project.name.slice(0, 1)}
           </span>
           <div className="min-w-0 flex-1">
-            <select
-              aria-label="切换项目"
-              className="h-[24px] w-full cursor-pointer truncate rounded-md bg-paper text-[12px] font-semibold text-ink"
-              value={project.projectId}
-              onChange={(e) =>
-                onSwitchProject(id(e.target.value, 'ProjectId'))
-              }
-            >
-              {snapshot.projects.map((p) => (
-                <option key={p.projectId} value={p.projectId}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <span className="block truncate px-1 text-[12px] font-semibold text-ink">
+              {project.name}
+            </span>
             <span className="block truncate px-1 text-[10px] text-muted">
               {project.rootPath ?? '—'}
             </span>
