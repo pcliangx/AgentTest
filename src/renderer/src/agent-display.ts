@@ -52,6 +52,11 @@ export const RUNTIME_STATE_LABEL: Record<AgentRuntimeState, string> = {
   archived: '已归档'
 }
 
+/** Whether the state represents an active structured run in progress. */
+export function isActiveRunState(state: AgentRuntimeState): boolean {
+  return state === 'running' || state === 'starting' || state === 'finishing'
+}
+
 export const TERMINAL_STATE_LABEL: Record<
   'closed' | 'opening' | 'active' | 'failed',
   string

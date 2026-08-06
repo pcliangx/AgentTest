@@ -5,6 +5,7 @@ import type {
   AgentInstanceViewModel,
   AgentProviderId,
   AttentionItemId,
+  AttentionItemViewModel,
   AttentionTarget,
   CommandResult,
   ConfirmationId,
@@ -31,7 +32,7 @@ import type {
 import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
 import { ACTIVITY_KIND_CHIP, activityKindLabel } from './activity-display'
 import { CONNECTION_CHIP, CONNECTION_STATUS_LABEL } from './connection-display'
-import { providerLabel, RUNTIME_STATE_LABEL } from './agent-display'
+import { providerLabel, RUNTIME_STATE_LABEL, isActiveRunState } from './agent-display'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
 import { AttentionDrawer } from './attention-drawer'
@@ -1004,6 +1005,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 )}
                 activity={projectActivity.slice(0, 5)}
                 onDispatch={() => setShowPicker(true)}
+                onOpenAttention={() => setShowAttention(true)}
               />
             )}
             {project.currentSurface === 'activity' && (
@@ -1219,24 +1221,21 @@ function OverviewSurface({
   providers,
   attentionItems,
   activity,
-  onDispatch
+  onDispatch,
+  onOpenAttention
 }: {
   project: ProjectViewModel
   agents: AgentInstanceViewModel[]
   agentCount: number
   connection?: WorkbenchViewModel['global']['connections'][number]
   providers: WorkbenchViewModel['global']['providers']
-  attentionItems: { attentionItemId: AttentionItemId; title: string; state: string }[]
+  attentionItems: AttentionItemViewModel[]
   activity: ActivityEntry[]
   onDispatch: () => void
+  onOpenAttention: () => void
 }) {
   // Agents with active work — running, starting, finishing, queued.
-  const activeRunAgents = agents.filter(
-    (a) =>
-      a.runtimeState === 'running' ||
-      a.runtimeState === 'starting' ||
-      a.runtimeState === 'finishing'
-  )
+  const activeRunAgents = agents.filter((a) => isActiveRunState(a.runtimeState))
   const queuedAgents = agents.filter((a) => a.runtimeState === 'queued')
 
   return (
@@ -1346,6 +1345,12 @@ function OverviewSurface({
                   <span className="min-w-0 flex-1 truncate text-ink">
                     {item.title}
                   </span>
+                  <button
+                    className="mini-button shrink-0"
+                    onClick={onOpenAttention}
+                  >
+                    处理
+                  </button>
                 </li>
               ))}
             </ul>
@@ -1417,10 +1422,7 @@ function OverviewSurface({
 
 /** Dashboard active-run row: provider icon + name + state + task summary. */
 function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
-  const isActive =
-    agent.runtimeState === 'running' ||
-    agent.runtimeState === 'starting' ||
-    agent.runtimeState === 'finishing'
+  const isActive = isActiveRunState(agent.runtimeState)
   return (
     <li className="flex items-center gap-2.5 px-3 py-2">
       <ProviderIcon providerId={agent.providerId} size={28} />
@@ -1434,7 +1436,7 @@ function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
           </StatusChip>
         </div>
         <span className="mt-0.5 block truncate text-[10px] text-muted">
-          {agent.currentTaskSummary ?? providerLabel(agent.providerId)}
+          {agent.currentTaskSummary ?? providerLabel(agent.providerId) + ' · ' + RUNTIME_STATE_LABEL[agent.runtimeState]}
         </span>
       </div>
     </li>

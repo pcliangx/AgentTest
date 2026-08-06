@@ -44,11 +44,11 @@ const NAV_ITEMS: Array<{ surface: ProjectSurface; glyph: string }> = [
   { surface: 'settings', glyph: '⚙' }
 ]
 
-const APP_NAV_ITEMS: Array<{ surface: GlobalSurface; label: string }> = [
-  { surface: 'home', label: '首页' },
-  { surface: 'connections', label: '连接' },
-  { surface: 'provider-health', label: 'Provider 健康' },
-  { surface: 'global-settings', label: '全局设置' }
+const APP_NAV_ITEMS: Array<{ surface: GlobalSurface; label: string; glyph: string }> = [
+  { surface: 'home', label: '首页', glyph: '⌂' },
+  { surface: 'connections', label: '连接', glyph: '🔗' },
+  { surface: 'provider-health', label: 'Provider 健康', glyph: '📡' },
+  { surface: 'global-settings', label: '全局设置', glyph: '⚙' }
 ]
 
 /** Light-theme sidebar nav item: horizontal icon+text, 32px min-height. */
@@ -106,7 +106,7 @@ export function Sidebar({
           aria-label="App 级"
           className="flex flex-col gap-0.5"
         >
-          {APP_NAV_ITEMS.map(({ surface, label }) => {
+          {APP_NAV_ITEMS.map(({ surface, label, glyph }) => {
             const isActive =
               inGlobalView && activeGlobalSurface === surface
             return (
@@ -116,6 +116,12 @@ export function Sidebar({
                 className={sidebarItemClass(isActive)}
                 onClick={() => onNavigateGlobal(surface)}
               >
+                <span
+                  aria-hidden="true"
+                  className="grid h-4 w-4 shrink-0 place-items-center text-[14px] font-bold"
+                >
+                  {glyph}
+                </span>
                 <span>{label}</span>
               </button>
             )

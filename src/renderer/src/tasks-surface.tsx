@@ -508,12 +508,30 @@ export function TasksSurface({
           本地 Project Task
         </h3>
         {projectLocalTasks.length === 0 ? (
-          // #92 spec 5: empty task list — guided entry
-          <div className="rounded-lg border border-dashed border-line bg-raised px-4 py-3 text-center">
+          // #92 spec 5: empty task list — guided entry with action buttons
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-line bg-raised px-4 py-4 text-center">
             <p className="text-xs text-muted">还没有本地任务</p>
-            <p className="mt-1 text-[11px] text-soft">
-              从飞书同步 External Task，或点击「新建本地 Task」手动创建
+            <p className="text-[11px] text-soft">
+              从飞书同步 External Task，或手动创建本地 Task
             </p>
+            <div className="mt-1 flex gap-2">
+              <button
+                className="mini-button"
+                onClick={() =>
+                  setNotice('飞书同步功能将在后续阶段上线，当前为演示模式')
+                }
+              >
+                从飞书同步
+              </button>
+              <button
+                className="mini-button mini-button-primary"
+                onClick={() =>
+                  setNotice('本地任务创建将在后续阶段上线，当前为演示模式')
+                }
+              >
+                新建本地 Task
+              </button>
+            </div>
           </div>
         ) : (
           projectLocalTasks.map(renderLocalTask)

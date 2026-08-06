@@ -356,9 +356,9 @@ export function ContextPane({
         className="min-h-0 flex-1 space-y-0.5 overflow-auto px-2 pb-2"
       >
         {agents.length === 0 ? (
-          // #92 spec 5: empty Agent list — guided entry with Provider cues.
-          // Only shows when the project has zero instances, not on filter miss.
-          <li className="flex flex-col items-center gap-2 px-2 py-6 text-center">
+          // #92 spec 5: empty Agent list — guided entry with clickable
+          // Provider cards. Only shows when the project has zero instances.
+          <li className="flex flex-col items-center gap-3 px-2 py-6 text-center">
             <div
               aria-hidden="true"
               className="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-[20px]"
@@ -366,11 +366,24 @@ export function ContextPane({
               ⌘
             </div>
             <span className="text-xs text-muted">
-              还没有 Agent
+              还没有 Agent——选择 Provider 创建第一个
             </span>
-            <span className="text-[10px] text-soft">
-              点击「新建 Agent」选择 Provider 创建第一个实例
-            </span>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {snapshot.global.providers
+                .filter((p) => p.enabled !== false && p.status === 'ready')
+                .map((p) => (
+                  <button
+                    key={p.providerId}
+                    className="flex items-center gap-1.5 rounded-lg border border-line bg-paper px-2 py-1 text-[10px] text-ink transition-colors hover:bg-wash"
+                    onClick={() => {
+                      setShowNewAgent(true)
+                    }}
+                  >
+                    <ProviderIcon providerId={p.providerId} size={20} />
+                    {p.displayName}
+                  </button>
+                ))}
+            </div>
           </li>
         ) : visibleAgents.length === 0 ? (
           <li className="px-1 py-2 text-xs text-muted">没有匹配的 Agent</li>
