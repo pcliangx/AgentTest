@@ -374,4 +374,25 @@
       transform: rotate(360deg);
     }
   }
+
+  /* --- Tab drag-and-drop (#77) -----------------------------------------
+     Shared classes for the pointer drag insertion indicator and target
+     strip highlight. The indicator is a 2px brand line (shape, not just
+     color); the strip highlight pairs a brand tint with a bottom inset
+     ring so the active drop target is recognisable without relying on
+     color alone (UX-v0.2 §15). */
+  .tab-insertion-indicator {
+    height: 1.25rem;
+    width: 2px;
+    flex-shrink: 0;
+    align-self: center;
+    border-radius: 9999px;
+    background: var(--color-brand);
+  }
+
+  .tab-strip-drop-target {
+    background: var(--color-brand-soft);
+    box-shadow: inset 0 -2px 0 0 var(--color-brand);
+    transition: background-color 120ms ease;
+  }
 }

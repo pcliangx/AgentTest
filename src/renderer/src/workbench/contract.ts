@@ -769,7 +769,18 @@ export type LayoutOperation =
   | { kind: 'open-tab'; panelId: PanelId; agentInstanceId: AgentInstanceId }
   | { kind: 'activate-tab'; panelId: PanelId; agentInstanceId: AgentInstanceId }
   | { kind: 'close-tab'; panelId: PanelId; agentInstanceId: AgentInstanceId }
-  | { kind: 'move-tab'; agentInstanceId: AgentInstanceId; targetPanelId: PanelId }
+  | {
+      kind: 'move-tab'
+      agentInstanceId: AgentInstanceId
+      targetPanelId: PanelId
+      /**
+       * Insertion position within the target panel's tab strip (#77). When
+       * omitted the tab lands at the end (existing behaviour); when present
+       * the tab is inserted at that index — enabling pointer drag-and-drop
+       * reordering within and across panels.
+       */
+      insertionIndex?: number
+    }
   | {
       kind: 'open-tab-in-new-panel'
       agentInstanceId: AgentInstanceId

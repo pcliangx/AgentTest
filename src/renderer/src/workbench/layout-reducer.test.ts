@@ -336,6 +336,75 @@ describe('layout-reducer — move-tab', () => {
     )
     expect(badTab.ok).toBe(false)
   })
+
+  // #77: insertionIndex for pointer drag-and-drop reordering.
+  it('reorders tabs within the same panel at a given insertion index', () => {
+    const layout = singlePanelLayout(P(1), [A('a'), A('b'), A('c')])
+    // Move 'c' to position 0 → [c, a, b]
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'move-tab', agentInstanceId: A('c'), targetPanelId: P(1), insertionIndex: 0 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('c'), A('a'), A('b')])
+    expect(result.layout.panels[P(1)].activeTabId).toEqual(A('c'))
+  })
+
+  it('reorders within same panel moving a tab to the end', () => {
+    const layout = singlePanelLayout(P(1), [A('a'), A('b'), A('c')])
+    // Move 'a' to position 3 (end) → [b, c, a]
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'move-tab', agentInstanceId: A('a'), targetPanelId: P(1), insertionIndex: 3 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('b'), A('c'), A('a')])
+  })
+
+  it('treats a no-op same-panel insertion as activation only', () => {
+    const layout = singlePanelLayout(P(1), [A('a'), A('b'), A('c')])
+    // Move 'b' to index 1 — it's already at index 1.
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'move-tab', agentInstanceId: A('b'), targetPanelId: P(1), insertionIndex: 1 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('a'), A('b'), A('c')])
+  })
+
+  it('inserts at a specific index when moving across panels', () => {
+    const layout = twoPanelLayout()
+    const p2 = id('panel-new-1', 'PanelId')
+    // P1 has [a, b], P2 has [c]. Move 'a' from P1 to P2 at index 0 → [a, c].
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'move-tab', agentInstanceId: A('a'), targetPanelId: p2, insertionIndex: 0 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.panels[p2].tabs).toEqual([A('a'), A('c')])
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('b')])
+  })
+
+  it('clamps an out-of-range insertion index', () => {
+    const layout = singlePanelLayout(P(1), [A('a'), A('b')])
+    // insertionIndex 99 clamps to 2 (end after removal).
+    const result = applyLayoutOperation(
+      layout,
+      { kind: 'move-tab', agentInstanceId: A('a'), targetPanelId: P(1), insertionIndex: 99 },
+      makeIds()
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.layout.panels[P(1)].tabs).toEqual([A('b'), A('a')])
+  })
 })
 
 // ---------------------------------------------------------------------------

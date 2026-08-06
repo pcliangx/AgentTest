@@ -29,6 +29,8 @@ const SCENARIO = {
     'three Panel baseline',
     'fourth Panel scroll and operation',
     'Tab keyboard move',
+    'Tab pointer drag reorder (#77)',
+    'Tab pointer drag cross-panel (#77)',
     'divider keyboard resize',
     'Focus restore',
     'deterministic relaunch'
@@ -261,6 +263,36 @@ test('1280×800 deterministic Electron smoke covers the core workspace', async (
           .filter({ has: page.getByRole('tab', { name: /^cc_data\b/ }) })
           .filter({ has: page.getByRole('tab', { name: /^cx_review\b/ }) })
       ).toHaveCount(1)
+    })
+
+    await recordedStep(evidence, 'reorder and cross-panel move a Tab with pointer drag (#77)', async () => {
+      // After Focus restore: 4 panels. P0 has [cc_data, cx_review].
+      const sourcePanel = panels.filter({
+        has: page.getByRole('tab', { name: /^cc_data\b/ })
+      })
+      await expect(sourcePanel.getByRole('tab', { name: /^cx_review\b/ })).toBeVisible()
+
+      // Within-panel reorder: drag cc_data onto cx_review so the order
+      // flips to [cx_review, cc_data]. dragTo drops at the target's centre,
+      // which lands past cx_review's midpoint → insertionIndex = 2.
+      const ccDataTab = sourcePanel.getByRole('tab', { name: /^cc_data\b/ })
+      const cxReviewTab = sourcePanel.getByRole('tab', { name: /^cx_review\b/ })
+      await ccDataTab.dragTo(cxReviewTab)
+      // Both tabs still in the same panel — order swapped.
+      await expect(sourcePanel.getByRole('tab', { name: /^cc_data\b/ })).toBeVisible()
+      await expect(sourcePanel.getByRole('tab', { name: /^cx_review\b/ })).toBeVisible()
+
+      // Cross-panel drag: drag cx_review into kimi_visual's panel.
+      const targetPanel = panels.filter({
+        has: page.getByRole('tab', { name: /^kimi_visual\b/ })
+      })
+      const dragTab = sourcePanel.getByRole('tab', { name: /^cx_review\b/ })
+      const dropStrip = targetPanel.getByRole('tablist', { name: 'Agent 标签' })
+      await dragTab.dragTo(dropStrip)
+
+      // cx_review is now alongside kimi_visual; the source panel keeps cc_data.
+      await expect(targetPanel.getByRole('tab', { name: /^cx_review\b/ })).toBeVisible()
+      await expect(sourcePanel.getByRole('tab', { name: /^cx_review\b/ })).toHaveCount(0)
     })
 
     await expectNoRendererErrors(page, activeSession, evidence)
