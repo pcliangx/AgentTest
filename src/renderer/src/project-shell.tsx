@@ -32,11 +32,12 @@ import type {
 import { commandMayProduceLayoutTargetEffect, id } from './workbench/contract'
 import { ACTIVITY_KIND_CHIP, activityKindLabel } from './activity-display'
 import { CONNECTION_CHIP, CONNECTION_STATUS_LABEL } from './connection-display'
-import { providerLabel, RUNTIME_STATE_LABEL, isActiveRunState } from './agent-display'
+import { providerLabel } from './agent-display'
 import {
   agentDisplayState,
   AGENT_DISPLAY_STATE_LABEL,
-  deriveProjectAgentStats
+  deriveProjectAgentStats,
+  isActiveRun
 } from './agent-state-selectors'
 import { AgentsSurface } from './agents-surface'
 import type { SendCommand } from './agents-surface'
@@ -951,7 +952,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         className="relative flex min-h-0 flex-1"
         onKeyDown={(e) => {
           // Escape is the keyboard exit from temporary Focus — normalised
-          // to the same focus-panel command as the 退出 Focus button. It
+          // to the same focus-panel command as the 退出独占 button. It
           // lives on the shell row because the context-pane directory is a
           // sibling of the workspace: Escape must work even when focus is
           // inside the directory (#24 round-3 review; lifted in #66).
@@ -1238,11 +1239,9 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
         )}
         <span className="shrink-0">布局自动保存</span>
         <span className="ml-auto shrink-0">
-          {inGlobalView ? '全部' : '当前'} Project{' '}
-          {project?.activeRunCount ?? 0} /{' '}
-          {snapshot.global.concurrency.projectLimit} · 全部{' '}
-          {snapshot.global.concurrency.activeGlobal} /{' '}
-          {snapshot.global.concurrency.globalLimit}
+          {inGlobalView
+            ? `全局 ${snapshot.global.concurrency.activeGlobal} / ${snapshot.global.concurrency.globalLimit}`
+            : `当前 Project ${project?.activeRunCount ?? 0} / ${snapshot.global.concurrency.projectLimit} · 全局 ${snapshot.global.concurrency.activeGlobal} / ${snapshot.global.concurrency.globalLimit}`}
         </span>
       </footer>
 
@@ -1342,9 +1341,11 @@ function OverviewSurface({
   onOpenAttention: () => void
 }) {
   // #97: all project display counts come from the single deriveProjectAgentStats
-  // selector — no ad-hoc filters or contract-owned counts for display.
+  // selector. Dashboard agent rows are also filtered through the same
+  // isActiveRun predicate to keep the displayed rows consistent with the
+  // stat strip's count.
   const stats = deriveProjectAgentStats(agents)
-  const activeRunAgents = agents.filter((a) => isActiveRunState(a.runtimeState))
+  const activeRunAgents = agents.filter((a) => isActiveRun(a.runtimeState))
   const queuedAgents = agents.filter((a) => a.runtimeState === 'queued')
 
   return (
@@ -1537,7 +1538,7 @@ function OverviewSurface({
 /** Dashboard active-run row: provider icon + name + state + task summary. */
 function DashboardAgentRow({ agent }: { agent: AgentInstanceViewModel }) {
   const ds = agentDisplayState(agent.runtimeState)
-  const isActive = isActiveRunState(agent.runtimeState)
+  const isActive = isActiveRun(agent.runtimeState)
   return (
     <li className="flex items-center gap-2.5 px-3 py-2">
       <ProviderIcon providerId={agent.providerId} size={28} />

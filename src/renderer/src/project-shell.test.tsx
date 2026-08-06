@@ -125,10 +125,10 @@ describe('ProjectShell — shell chrome (#65)', () => {
     await waitForLoad()
     await enterProject(user)
     const statusbar = document.querySelector('footer')
-    // #98: capacity labels scope-annotated ("当前" project vs "全部" global).
+    // #98: capacity labels scope-annotated.
     expect(statusbar).toHaveTextContent('当前 Project')
     expect(statusbar).toHaveTextContent('2 / 3')
-    expect(statusbar).toHaveTextContent('全部')
+    expect(statusbar).toHaveTextContent('全局')
     expect(statusbar).toHaveTextContent('2 / 6')
   })
 })

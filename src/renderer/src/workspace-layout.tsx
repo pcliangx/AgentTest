@@ -23,7 +23,6 @@ import { activityKindLabel } from './activity-display'
 import { clampRatio } from './workbench/layout-reducer'
 import {
   providerLabel,
-  RUNTIME_STATE_LABEL,
   TERMINAL_STATE_LABEL,
   WORKTREE_MODE_LABEL
 } from './agent-display'
