@@ -195,16 +195,16 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     })
 
     await recordedStep(evidence, 'non-color runtime state labels in Agent Directory', async () => {
-      // cc_data is permission-requested → text label "等待权限"
-      // cc_sql is needs-input → "需要输入"
+      // #97: directory now uses unified 6-state display labels (SSOT).
+      // cc_data is permission-requested → "等待权限"
+      // cc_sql is needs-input → "等待用户"
       // cc_etl is failed → "失败"
       // cx_forecast is queued → "排队中"
       // kimi_docs is unavailable → "不可用"
-      // cx_review is ready → "就绪"
-      // These labels are inside a compound text node like "Claude Code · 等待权限".
+      // cx_review is ready → "已完成"
       const list = page.getByRole('list', { name: 'Agent 列表' })
       for (const expected of [
-        '等待权限', '需要输入', '失败', '排队中', '不可用', '就绪'
+        '等待权限', '等待用户', '失败', '排队中', '不可用', '已完成'
       ]) {
         await expect(list.getByText(expected).first()).toBeVisible()
       }

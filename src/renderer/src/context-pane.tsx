@@ -12,10 +12,11 @@ import type {
 } from './workbench/contract'
 import { id } from './workbench/contract'
 import { resolveProviderModelSelection } from './workbench/provider-capability'
+import { providerLabel } from './agent-display'
 import {
-  providerLabel,
-  RUNTIME_STATE_LABEL
-} from './agent-display'
+  agentDisplayState,
+  AGENT_DISPLAY_STATE_LABEL
+} from './agent-state-selectors'
 import { StatusDot, statusDotState } from './status-dot'
 import { ProviderIcon } from './provider-icon'
 import type { SendCommand } from './agents-surface'
@@ -113,7 +114,7 @@ export function ContextPane({
     for (const agent of agents) seen.add(agent.runtimeState)
     return [...seen].map((value) => ({
       value,
-      label: RUNTIME_STATE_LABEL[value]
+      label: AGENT_DISPLAY_STATE_LABEL[agentDisplayState(value)]
     }))
   }, [agents])
 
@@ -124,7 +125,7 @@ export function ContextPane({
       // the frozen prototype (#66).
       if (q) {
         const haystack =
-          `${agent.name} ${providerLabel(agent.providerId)} ${RUNTIME_STATE_LABEL[agent.runtimeState]}`.toLowerCase()
+          `${agent.name} ${providerLabel(agent.providerId)} ${AGENT_DISPLAY_STATE_LABEL[agentDisplayState(agent.runtimeState)]}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
       if (providerFilter !== 'all' && agent.providerId !== providerFilter) {
@@ -232,7 +233,7 @@ export function ContextPane({
             </span>
             <span className="mt-0.5 block truncate text-[10px] text-muted">
               {providerLabel(agent.providerId)} ·{' '}
-              {RUNTIME_STATE_LABEL[agent.runtimeState]}
+              {AGENT_DISPLAY_STATE_LABEL[agentDisplayState(agent.runtimeState)]}
               {viewBadges.length > 0 && ` · ${viewBadges.join(' · ')}`}
             </span>
           </span>
