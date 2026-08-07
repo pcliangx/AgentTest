@@ -1072,6 +1072,7 @@ export function ProjectShell({ port }: { port: WorkbenchPort }) {
                 activity={projectActivity.slice(0, 5)}
                 onDispatch={() => setShowPicker(true)}
                 onOpenAttention={() => setShowAttention(true)}
+                onOpenAttentionTarget={(target) => void openAttentionTarget(target)}
               />
             )}
             {project.currentSurface === 'activity' && (
@@ -1328,7 +1329,8 @@ function OverviewSurface({
   attentionItems,
   activity,
   onDispatch,
-  onOpenAttention
+  onOpenAttention,
+  onOpenAttentionTarget
 }: {
   project: ProjectViewModel
   agents: AgentInstanceViewModel[]
@@ -1339,6 +1341,8 @@ function OverviewSurface({
   activity: ActivityEntry[]
   onDispatch: () => void
   onOpenAttention: () => void
+  /** #99: deep-link a specific attention item to its target. */
+  onOpenAttentionTarget: (target: AttentionTarget) => void
 }) {
   // #97: all project display counts come from the single deriveProjectAgentStats
   // selector. Dashboard agent rows are also filtered through the same
@@ -1436,9 +1440,19 @@ function OverviewSurface({
         <div className="card">
           <div className="flex items-center justify-between border-b border-line bg-raised px-3 py-2">
             <h3 className="section-label">待处理</h3>
-            <span className="text-[10px] text-muted">
-              {attentionItems.length} 项
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted">
+                {attentionItems.length} 项
+              </span>
+              {/* #99: drawer entry for permission resolution — always
+                  accessible alongside the per-item deep-links. */}
+              <button
+                className="text-[10px] text-brand hover:underline"
+                onClick={onOpenAttention}
+              >
+                查看全部事项
+              </button>
+            </div>
           </div>
           {attentionItems.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted">
@@ -1457,14 +1471,13 @@ function OverviewSurface({
                   <span className="min-w-0 flex-1 truncate text-ink">
                     {item.title}
                   </span>
-                  {/* #99: each item links directly to its target instead of
-                      a generic "open drawer" — the user goes straight to the
-                      agent, task, or knowledge resource that needs action. */}
+                  {/* #99: deep-link straight to the target — agent, task,
+                      knowledge or handoff. One click, no detour. */}
                   <button
                     className="mini-button shrink-0"
-                    onClick={() => onOpenAttention()}
+                    onClick={() => onOpenAttentionTarget(item.target)}
                   >
-                    打开
+                    跳转
                   </button>
                 </li>
               ))}

@@ -318,7 +318,7 @@ test('surfaces and accessibility coverage', async ({}, testInfo: TestInfo) => {
     await recordedStep(evidence, 'Attention drawer with permission requests and items', async () => {
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       const overview = page.getByRole('region', { name: '项目概览' })
-      const attentionBtn = overview.getByRole('button', { name: '打开' }).first()
+      const attentionBtn = overview.getByRole('button', { name: '查看全部事项' }).first()
       await attentionBtn.click()
       const drawer = page.getByRole('complementary', { name: 'Global Attention' })
       await expect(drawer).toBeVisible()

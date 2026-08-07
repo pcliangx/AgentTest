@@ -45,7 +45,7 @@ async function openDrawer(user: User) {
     await user.click(await screen.findByRole('button', { name: '概览' }))
     overview = await screen.findByRole('region', { name: '项目概览' })
   }
-  const trigger = within(overview).getAllByRole('button', { name: '打开' })[0]
+  const trigger = within(overview).getByRole('button', { name: '查看全部事项' })
   await user.click(trigger)
   const drawer = await screen.findByRole('complementary', {
     name: 'Global Attention'
