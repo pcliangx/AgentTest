@@ -1,6 +1,6 @@
 # Agent Squad HQ — Claude Code / Codex 续开发文档
 
-> 更新日期：2026-08-04 · 结构化通道基线：`ba49614` · 分支：`main`
+> 更新日期：2026-08-07 · 结构化通道基线：`ba49614` · 分支：`main`
 >
 > 本文是 Claude Code 与 Codex 共用的当前状态说明；实时 HEAD 和工作树状态以
 > `git log` / `git status` 为准。
@@ -73,7 +73,11 @@ PTY 只负责 Terminal 接管**；产品对象决策见
 | OpenDesign 对标视觉提升 #90 | ✅ 已合并（PR #91）：App Wash 品牌氛围背景（body 层 3 色 radial-gradient brand/teal/amber，alpha 0.14/0.12/0.10）；Hero CSS stagger 入场（`.stagger-up > *:nth-child` 级联 0-200ms，产品 ease `cubic-bezier(0.23,1,0.32,1)`，零 inline style）；`.glass-surface` 玻璃材质（blur 20px + saturate 1.5 + rgba 0.72）应用 titlebar/switch bar，`@supports not (backdrop-filter)` 降级；文本层次 5 级 token（ink/ink-secondary/muted/soft/faint）；动效时长 3 级（`--dur-quick` 100ms / `--dur-normal` 200ms / `--dur-gentle` 300ms）；对话消息 `.enter-up` 入场；`--shadow-xs` 边缘描边 |
 | UIUX 布局重构 #92 规格 1/3 合并栏 | ✅ 已合并（[PR #93](https://github.com/pcliangx/agent-squad-hq/pull/93)，两轴评审有条件通过）：38px titlebar + 44px switch bar 合并为一条 44px 统一栏（左 traffic lights 占位 + 品牌 mark + 项目名 + 常驻 ProjectSwitchBar，右 Run 计数/⌘K/派发/关闭/退出，glass 材质与品牌渐变 accent 保留，省 38px）；Panel 36px toolbar + 32px tab strip 合并为 ~40px 一行（P 序号行级前缀于 tablist 之前，⇆/⇅/Analysis 预设/Focus/✕ 右对齐，tablist 仅含 tab、布局操作为其兄弟节点以保 WAI-ARIA 语义，省 ~28px/Panel）；已声明偏离：规格 1 项目切换下拉化未做、随规格 2 处理，P 序号取行级前缀而非 per-tab `P1 · cc_data` |
 | UIUX 布局重构 #92 规格 2/4/5 侧栏合并+Dashboard+空态 | ✅ 已合并（[PR #94](https://github.com/pcliangx/agent-squad-hq/pull/94)）：规格 2 新建 `sidebar.tsx`——82px 深色 icon rail + 244px context pane 合并为一条 220px 统一侧栏（浅色 bg-raised，品牌 mark + App 级/项目级导航 icon+text 横排 32px/项 + Agent Directory 嵌入，省 ~106px 水平）；`context-pane.tsx` 移除固定宽度与项目身份卡（品牌已在侧栏+header），ARIA `navigation[主导航]`/`group[App级]`/`group[项目工作面]`/`region[Agent目录]` 全保留；规格 4 OverviewSurface 改为 Dashboard（紧凑统计条 + Provider pills + 活动运行/待处理双卡 + 项目状态卡 + 最近活动）；规格 5 三处空态引导（空 Agent 目录引导卡 / 空对话区引导卡 / 空任务引导）；已知偏离：Agent Directory 折叠式暂未实现（目录默认展开，折叠能力后续追加）；Recent Artifacts 卡未做（契约无文件改动数据） |
-| 状态栏全局快捷入口 #95 | ✅ 本地完成（待提交）：将「连接 / Provider 健康」从统一侧栏迁移到 27px footer 左侧的独立 `navigation[全局快捷入口]`；按用户复审移除低价值的常驻「关注」入口，Attention 数据与抽屉仍可从 Overview 的具体待处理项进入；两个入口采用参考图风格的等尺寸 48×22px 纯图标按钮、单色线性图标、组内分隔线及非颜色选中反馈，保留明确 `aria-label`/`title` 与 `aria-current`；侧栏 App 级只保留首页/全局设置，Project 七工作面与 Agent Directory 不变；root/branch/布局自动保存/Project·Global 容量事实完整保留，1280×800 Playwright 增加顺序、等宽高、可访问名、事实可见及导航/路径无覆盖断言；无 Workbench contract/adapter 变化 |
+| 状态栏全局快捷入口 #95 | ✅ 已合并（[PR #96](https://github.com/pcliangx/agent-squad-hq/pull/96)）：将「连接 / Provider 健康」从统一侧栏迁移到 27px footer 左侧的独立 `navigation[全局快捷入口]`；按用户复审移除低价值的常驻「关注」入口，Attention 数据与抽屉仍可从 Overview 的具体待处理项进入；两个入口采用参考图风格的等尺寸 48×22px 纯图标按钮、单色线性图标、组内分隔线及非颜色选中反馈，保留明确 `aria-label`/`title` 与 `aria-current`；侧栏 App 级只保留首页/全局设置；无 Workbench contract/adapter 变化 |
+| 统一 Agent 运行状态与全局计数语义 #97 | ✅ 已合并（[PR #111](https://github.com/pcliangx/agent-squad-hq/pull/111)）：新建 `agent-state-selectors.ts`——12 个 `AgentRuntimeState` 折叠为 6 个展示态（运行中 / 等待用户 / 等待权限 / 排队 / 已完成 / 失败）+ `AGENT_DISPLAY_STATE_LABEL` 唯一标签来源 + `deriveProjectAgentStats()` 一致计数；Overview 统计条/ Dashboard / 工作区 Tab / Agent 头卡 / Agent Directory 全部走 SSOT；Header "Run" → "运行中"；后续 review 修正：消除重复 `isActiveRunState` 实现、死 import、矛盾注释、状态栏标签（[PR #115](https://github.com/pcliangx/agent-squad-hq/pull/115)） |
+| 明确全局页面与 Project 页面作用域 #98 | ✅ 已合并（[PR #112](https://github.com/pcliangx/agent-squad-hq/pull/112)）：移除 Header 项目面包屑（与 switch bar 冗余且在全局页面造成作用域歧义；移除后 header 几何在视图切换间保持稳定 #75 AC1）；全局视图暗化项目导航（`opacity-40`，按钮保持可点击）；状态栏全局视图显示"全局视图"而非项目根路径/分支；容量行标注作用域（"当前 Project" / "全局"） |
+| Attention 收缩为阻塞收件箱 #99 | ✅ 已合并（[PR #113](https://github.com/pcliangx/agent-squad-hq/pull/113) + [PR #118](https://github.com/pcliangx/agent-squad-hq/pull/118)）：移除 Attention 抽屉的 Running/Queued 和最近完成雷达区（属 Activity 范畴），只保留需要用户操作的权限请求和阻塞事项；容量行作用域标注；Overview 待处理项每项有"跳转"按钮直接深链到目标 Agent/Task/Knowledge/Handoff（#99 验收"直接聚焦对应事项"），卡片头部"查看全部事项"保留抽屉入口（处理权限请求）；净减 ~190 行 RadarRow 及相关代码 |
+| 修复 Agent 工作区状态冲突与控制清晰度 #100 | ✅ 已合并（[PR #114](https://github.com/pcliangx/agent-squad-hq/pull/114) + [PR #116](https://github.com/pcliangx/agent-squad-hq/pull/116)）：工作区 Tab 和 Agent 头卡使用统一 `AGENT_DISPLAY_STATE_LABEL`（`finishing` → "运行中"、`ready` → "已完成"、`interrupted` → "失败"）；控件中文重命名——"Focus" → "独占"、"退出 Focus" → "退出独占"、"Analysis 预设" → "三栏分析"（消除与键盘 focus 歧义）；Tab 导航区与布局操作区之间加 1px 竖线分隔 |
 | Project、N Agent Instance 与布局持久化 | ⏳ 尚未进入生产实现 |
 | Tasks、Knowledge、Attention、Handoff 与飞书集成 | ⏳ 尚未进入生产实现 |
 | 三家真实 CLI 的 Electron GUI 冒烟验证 | ⏳ 需人工执行 |
@@ -249,6 +253,15 @@ preload 只通过 `contextBridge` 暴露上述受控 API；完整仓库路径不
   命令。
 - vendor 差异只能进入 adapter/decoder/protocol driver，不能进入 router。
 - 结构化事件必须来源于协议；推断事件不得驱动成功生命周期。
+- **#97 SSOT**：Agent 状态标签的唯一来源是 `agent-state-selectors.ts` 的
+  `AGENT_DISPLAY_STATE_LABEL`（6 展示态）。12 个 `AgentRuntimeState` 经
+  `agentDisplayState()` 折叠后展示。`RUNTIME_STATE_LABEL`（12 态）仅保留给目录
+  筛选下拉的 option 文本，不得用于任何新的展示场景。
+- **#98 作用域**：全局视图（首页/连接/Provider 健康/全局设置）中不显示项目面包屑
+  和项目根路径/分支；项目导航暗化（`opacity-40`）但保持可点击。
+- **#99 Attention**：抽屉只承载需要用户决策的阻塞事项（权限请求 + waiting-user +
+  failed）；Running/Queued/最近完成属 Activity 范畴。Overview 每项有"跳转"按钮
+  深链到目标，"查看全部事项"打开抽屉。
 - SessionStore 只记录成功回合，历史最多 20 轮，每条消息最多 12,000 字符。
 - v0.2 Agent Picker 的显式路由使用无歧义边界：`@@name` 只匹配到下一个空白字符，
   含空格或与 `all` 冲突的名称使用 `@@{完整 Agent Name}`；裸 `@@all` 始终广播当前
@@ -299,7 +312,16 @@ src/main/
 src/preload/index.ts           contextBridge API
 src/renderer/src/
   App.tsx                      ProjectShell 入口（Phase 1 起替换旧三槽 UI）
-  project-shell.tsx            Project Shell 组件 + useWorkbench hook
+  project-shell.tsx            Project Shell 组件 + useWorkbench hook + OverviewSurface Dashboard
+  sidebar.tsx                  #92 统一 220px 侧栏（品牌 + App/项目导航 + Agent Directory 嵌入）
+  context-pane.tsx             Agent Directory（搜索/过滤/列表/footer，嵌入侧栏）
+  agent-display.ts             Provider 标签/缩写 + RUNTIME_STATE_LABEL（12 态，目录筛选下拉用）
+  agent-state-selectors.ts     #97 SSOT：6 展示态映射 + AGENT_DISPLAY_STATE_LABEL + deriveProjectAgentStats
+  status-dot.tsx               StatusDot 六族视觉组件 + statusDotState 折叠函数
+  status-chip.tsx              通用状态徽章（tone + icon + text 三编码）
+  provider-icon.tsx            Provider 品牌图标（原创 SVG 几何标记）
+  attention-drawer.tsx         #99 阻塞收件箱抽屉（仅权限请求 + 阻塞事项）
+  workspace-layout.tsx         工作区 split tree + Panel/Tab + Agent 视图 + 队列/composer
   workbench/
     contract.ts                WorkbenchPort 合同（品牌化 ID、ViewModel、Command、Event）
     dispatch-planner.ts        revision 绑定的容量与 Project 队位规划
