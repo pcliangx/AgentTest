@@ -1157,6 +1157,10 @@ function PanelView({ panelId, ctx }: { panelId: PanelId; ctx: LayoutRenderContex
             />
           )}
         </div>{/* end tablist */}
+        {/* #100: visual divider between navigation (tabs) and layout actions. */}
+        {canEditLayout && (
+          <div aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-line" />
+        )}
         {/* #92: layout actions — siblings of the tablist, not inside it. */}
         {canEditLayout && (
           <>
