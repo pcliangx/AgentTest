@@ -36,7 +36,7 @@ async function openAttentionFromOverview(user: User) {
   await user.click(screen.getByRole('button', { name: '概览' }))
   const overview = await screen.findByRole('region', { name: '项目概览' })
   await user.click(
-    within(overview).getAllByRole('button', { name: '打开' })[0]
+    within(overview).getByRole('button', { name: '查看全部事项' })
   )
   return screen.findByRole('complementary', { name: 'Global Attention' })
 }

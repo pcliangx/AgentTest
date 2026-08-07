@@ -92,7 +92,7 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
       await nav().getByRole('button', { name: '概览', exact: true }).click()
       await page
         .getByRole('region', { name: '项目概览' })
-        .getByRole('button', { name: '打开' })
+        .getByRole('button', { name: '查看全部事项' })
         .first()
         .click()
       return page.getByRole('complementary', { name: 'Global Attention' })
