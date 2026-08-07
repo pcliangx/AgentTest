@@ -111,13 +111,12 @@ test('workflow operations and visual state coverage', async ({}, testInfo: TestI
     await recordedStep(evidence, 'visual: ready, queued, needs-input, permission-requested, failed, unavailable, archived', async () => {
       await nav().getByRole('button', { name: 'Agent', exact: true }).click()
       const list = page.getByRole('list', { name: 'Agent 列表' })
-      // Each runtime state has a text label visible in the directory.
-      // Labels are inside compound text nodes like "Claude Code · 就绪".
+      // #97: directory uses unified 6-state display labels (SSOT).
       for (const label of [
-        '就绪',         // ready
+        '已完成',       // ready → completed
         '排队中',       // queued
-        '需要输入',     // needs-input
-        '等待权限',     // permission-requested
+        '等待用户',     // needs-input → waiting-user
+        '等待权限',     // permission-requested → waiting-permission
         '失败',         // failed
         '不可用',       // unavailable
         '已归档'        // archived

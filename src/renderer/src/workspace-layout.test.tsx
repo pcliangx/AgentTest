@@ -1247,7 +1247,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       agentName: 'cc_data',
       // #9 attention items badge entries with open agent-targeted items.
       badge: '',
-      directoryLabel: '收尾中',
+      directoryLabel: '运行中',
       displayLabel: '运行中',
       chatText: '新指令将进入第 1 位',
       terminalDisabled: true
@@ -1255,7 +1255,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
     {
       agentName: 'cc_etl',
       badge: ' 有待处理事项',
-      directoryLabel: '已中断',
+      directoryLabel: '失败',
       displayLabel: '失败',
       chatText: '暂无对话记录',
       terminalDisabled: false
@@ -1301,7 +1301,7 @@ describe('Workspace layout — deterministic run lifecycle (#38)', () => {
       await user.click(
         within(directory).getByRole('button', {
           // cx_review carries an open completed attention item (#9).
-          name: /^cx_review 有待处理事项 Codex · 就绪/
+          name: /^cx_review 有待处理事项 Codex · 已完成/
         })
       )
 

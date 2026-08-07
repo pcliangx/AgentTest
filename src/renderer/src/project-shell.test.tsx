@@ -719,7 +719,7 @@ describe('ProjectShell — provider recovery', () => {
     await waitFor(() => {
       expect(
         within(restoredDirectory).getByRole('button', { name: /^kimi_docs/ })
-      ).toHaveTextContent('就绪')
+      ).toHaveTextContent('已完成')
     })
     await user.click(
       within(restoredDirectory).getByRole('button', { name: /^kimi_docs/ })
